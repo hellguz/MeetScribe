@@ -1,10 +1,15 @@
+# ─── Python worker ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-WORKDIR /worker
-COPY requirements.txt .
+WORKDIR /app
+
+# 1. install deps (layer cached)
+COPY worker/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-COPY worker.py .
 
-CMD ["python", "worker.py"]
+# 2. copy source code
+COPY worker ./worker                 
+COPY backend/app ./app              
 
-
+# 3. start the RQ worker
+CMD ["python", "-u", "worker/worker.py"]

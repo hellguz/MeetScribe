@@ -1,14 +1,18 @@
-version: "3.9"
-
 services:
   nginx:
-    build: ./infra/nginx
+    build: ./frontend
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./frontend/dist:/usr/share/nginx/html
       - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf
+
+  frontend:                              # ← split out build so we can pass build-arg
+    build:
+      context: ./frontend
+      args:
+        - VITE_STRIPE_PUBKEY=${VITE_STRIPE_PUBKEY}
     depends_on:
       - backend
 
@@ -18,17 +22,21 @@ services:
       - .env
     volumes:
       - ./backend/app:/app/app
+      - ./.env:/app/.env:ro   #  ← NEW (read-only)
     depends_on:
       - postgres
       - redis
       - minio
 
   worker:
-    build: ./worker
+    build:
+      context: .                 # ← point build context at repo root
+      dockerfile: worker/Dockerfile
     env_file:
       - .env
     volumes:
       - ./models:/models
+      - ./.env:/app/.env:ro   #  ← NEW (read-only)
     depends_on:
       - redis
       - minio

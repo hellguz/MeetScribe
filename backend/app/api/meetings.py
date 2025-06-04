@@ -15,8 +15,13 @@ def get_db():
         yield s
 
 @router.post("/meetings", response_model=MeetingRead, status_code=201)
-def create(body: MeetingCreate, db: Session = Depends(get_db), user = Depends(current_user)):
-    m = Meeting(**body.dict(), owner_id=user.id)
+def create(
+    body: MeetingCreate,
+    db: Session = Depends(get_db),
+    user = Depends(lambda: None),        # ← auth optional
+):
+    owner_id = user.id if user else uuid.uuid4()
+    m = Meeting(**body.dict(), owner_id=owner_id)
     db.add(m)
     db.commit()
     db.refresh(m)
