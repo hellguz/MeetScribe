@@ -11,16 +11,21 @@ import uuid
 from pathlib import Path
 from typing import List
 
+import av
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import settings
 from .models import Meeting, MeetingCreate, MeetingRead
 
-# ──────────────────────────── set-up ──────────────────────────────────────────
+# ────────────────────────────── setup ─────────────────────────────────────────
 LOGGER = logging.getLogger("meetscribe")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")  # noqa: E501
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 openai.api_key = settings.openai_api_key
 
@@ -38,7 +43,7 @@ _whisper = WhisperModel(
     compute_type="int8",
 )
 
-# ────────────────────────── helpers ──────────────────────────────────────────
+# ─────────────────────────── helpers ─────────────────────────────────────────
 def transcribe(path: Path) -> str:
     segments, _ = _whisper.transcribe(str(path), beam_size=5)
     return " ".join(s.text for s in segments)
@@ -46,7 +51,7 @@ def transcribe(path: Path) -> str:
 
 def summarise(text: str) -> str:
     rsp = openai.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini-2025-04-14",
         temperature=0.3,
         messages=[
             {"role": "system", "content": "You summarise meetings into markdown."},
@@ -56,7 +61,7 @@ def summarise(text: str) -> str:
     return rsp.choices[0].message.content.strip()
 
 
-# ─────────────────────── FastAPI application ─────────────────────────────────
+# ─────────────────── FastAPI application ─────────────────────────────────────
 app = FastAPI(title="MeetScribe MVP")
 
 
@@ -82,6 +87,10 @@ async def upload_chunk(
         if not mtg:
             raise HTTPException(404, "meeting not found")
 
+        if mtg.done:
+            LOGGER.info("⏩  meeting %s already done – chunk %s ignored", meeting_id, chunk_id)
+            return {"ok": True, "ignored": True}
+
         # save file
         mtg_dir = AUDIO_DIR / str(meeting_id)
         mtg_dir.mkdir(parents=True, exist_ok=True)
@@ -92,15 +101,25 @@ async def upload_chunk(
         size_kb = chunk_path.stat().st_size / 1024
         LOGGER.info("⬆️  chunk %s for %s (%.1f kB)", chunk_id, meeting_id, size_kb)
 
-        # transcribe
-        text = transcribe(chunk_path)
+        if size_kb < 4:
+            LOGGER.warning("⚠️  chunk %s too small – skipped", chunk_id)
+            return {"ok": True, "skipped": True}
+
+        try:
+            text = transcribe(chunk_path)
+        except av.error.InvalidDataError:
+            LOGGER.exception("⚠️  chunk %s could not be decoded – skipped", chunk_id)
+            return {"ok": True, "skipped": True}
+
         LOGGER.info("📝  transcribed %.1f kB → %d chars", size_kb, len(text))
-        LOGGER.info("  %s", text[:1000] + ("..." if len(text) > 1000 else ""))
+        LOGGER.info("   %s", text[:120] + ("…" if len(text) > 120 else ""))
         mtg.transcript_text = (mtg.transcript_text or "") + " " + text
         mtg.received_chunks += 1
 
-        # summarise if done
-        if mtg.expected_chunks and mtg.received_chunks >= mtg.expected_chunks:
+        if (
+            mtg.summary_markdown is None
+            and (mtg.expected_chunks is None or mtg.received_chunks >= mtg.expected_chunks)
+        ):
             mtg.summary_markdown = summarise(mtg.transcript_text)
             mtg.done = True
             LOGGER.info("✅  meeting %s summarised", meeting_id)
@@ -120,5 +139,5 @@ def get_meeting(mid: uuid.UUID):
 
 
 @app.get("/healthz")
-def health():
+def health() -> dict[str, str]:
     return {"status": "ok"}
