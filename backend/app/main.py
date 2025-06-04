@@ -14,6 +14,7 @@ from typing import List
 import av
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -98,6 +99,14 @@ def summarise(text: str) -> str:
 
 # ─────────────────── FastAPI application ─────────────────────────────────────
 app = FastAPI(title="MeetScribe MVP")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 
 @app.post("/api/meetings", response_model=MeetingRead, status_code=201)
