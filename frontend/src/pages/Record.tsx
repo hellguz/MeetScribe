@@ -39,7 +39,7 @@ export default function Record() {
   /* ───────────── helpers ─────────────────────────────────────────────── */
 
   async function createMeeting() {
-    const res = await fetch("/api/meetings", {
+    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
@@ -63,7 +63,7 @@ export default function Record() {
     
     try {
       console.log(`Uploading chunk ${index}, size: ${blob.size} bytes, final: ${isFinal}`);
-      const response = await fetch("/api/chunks", { method: "POST", body: fd });
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/chunks`, { method: "POST", body: fd });
       const result = await response.json();
       
       if (result.ok && !result.skipped) {
