@@ -1,12 +1,60 @@
+############################
+#  Python / FastAPI stack  #
+############################
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
 *.egg-info/
-.env
+dist/
+build/
+.eggs/
 env/
+.venv/
 venv/
+pip-wheel-metadata/
+.ipynb_checkpoints/
+
+############################
+#  Node / Vite front-end   #
+############################
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 frontend/dist/
-/models/
+frontend/.vite/
+*.tsbuildinfo
+
+############################
+#  Docker bind-mount data  #
+############################
 data/
-.gpt/response.txt
-.gpt/dump.txt
+postgres_data/
+minio_data/
+models/
+models/*.bin
+
+############################
+#  Environment & secrets   #
+############################
+.env
+.env.*
+
+############################
+#  Logs                    #
+############################
+*.log
+*.log.*
+logs/
+
+############################
+#  IDE / Editor cruft      #
+############################
+.idea/
+.vscode/
+*.sw?
+*.orig
+.DS_Store
+Thumbs.db
