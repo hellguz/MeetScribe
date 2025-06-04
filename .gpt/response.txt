@@ -1,662 +1,423 @@
-<./docker-compose.yml>
-version: "3.9"
+<./frontend/Dockerfile>
+# ─── build stage ───────────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
 
-services:
-  nginx:
-    build: ./infra/nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./frontend/dist:/usr/share/nginx/html
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf
-    depends_on:
-      - backend
-
-  backend:
-    build: ./backend
-    env_file:
-      - .env
-    volumes:
-      - ./backend/app:/app/app
-    depends_on:
-      - postgres
-      - redis
-      - minio
-
-  worker:
-    build: ./worker
-    env_file:
-      - .env
-    volumes:
-      - ./models:/models
-    depends_on:
-      - redis
-      - minio
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres:/docker-entrypoint-initdb.d
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-
-  minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-
-volumes:
-  postgres_data:
-  minio_data:
-
-
-<./.env.example>
-# === App ===
-SECRET_KEY=change-me
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# === Postgres ===
-POSTGRES_USER=meetscribe
-POSTGRES_PASSWORD=meetscribe
-POSTGRES_DB=meetscribe
-DATABASE_URL=postgresql+psycopg://meetscribe:meetscribe@postgres:5432/meetscribe
-
-# === Redis ===
-REDIS_URL=redis://redis:6379/0
-
-# === MinIO / S3 ===
-MINIO_ENDPOINT=minio:9000
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin
-S3_BUCKET=meetscribe-audio
-S3_SECURE=false
-
-# === Stripe ===
-STRIPE_WEBHOOK_SECRET=whsec_dummy
-STRIPE_SECRET_KEY=sk_test_dummy
-
-# === Whisper ===
-WHISPER_MODEL_PATH=/models/ggml-whisper-tiny.en.bin
-
-
-<./README.md>
-# MeetScribe
-
-Self-hosted microphone recorder → transcript → summary.
-
-## Quick start (dev)
-
-    # 1. create env file
-    cp .env.example .env
-    # 2. build containers, download Whisper model and start stack
-    ./scripts/bootstrap.sh
-
-Then open http://localhost.  Stop the stack with:
-
-    docker compose down
-
-
-<./scripts/bootstrap.sh>
-#!/usr/bin/env bash
-set -euo pipefail
-
-[ -f .env ] || { echo "Copy .env.example → .env first"; exit 1; }
-
-echo "Downloading whisper-tiny model…"
-mkdir -p models
-if [ ! -f models/ggml-whisper-tiny.en.bin ]; then
-  curl -L -o models/ggml-whisper-tiny.en.bin \
-       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
-fi
-
-docker compose build
-docker compose up -d
-echo "🚀  Stack is up"
-
-
-<./infra/nginx/Dockerfile>
+# ─── run stage ────────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine
-COPY default.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
 
 
-<./infra/nginx/default.conf>
-server {
-  listen 80;
-  server_name _;
-
-  location /api/ {
-    proxy_pass         http://backend:8000/;
-    proxy_set_header   Host $host;
-    proxy_set_header   X-Real-IP $remote_addr;
-    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-  }
-
-  location / {
-    root   /usr/share/nginx/html;
-    try_files $uri /index.html;
+<./frontend/package.json>
+{
+  "name": "meetscribe-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@stripe/react-stripe-js": "^2.4.0",
+    "@stripe/stripe-js": "^2.4.0",
+    "axios": "^1.7.3",
+    "idb-keyval": "^6.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.1.8",
+    "react-router-dom": "^6.23.1",
+    "react-use-websocket": "^4.5.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.40",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.0",
+    "vite": "^5.2.0"
   }
 }
 
 
-<./infra/postgres/01_init.sql>
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+<./frontend/tsconfig.json>
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}
 
 
-<./backend/Dockerfile>
-FROM python:3.12-slim
+<./frontend/vite.config.ts>
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-
-<./backend/requirements.txt>
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-python-jose==3.3.0
-passlib[bcrypt]==1.7.4
-sqlmodel==0.0.16
-asyncpg==0.29.0
-redis==5.0.4
-rq==1.16.1
-boto3==1.34.113
-pydantic-settings==2.3.1
-stripe==10.5.0
-python-multipart==0.0.9
+export default defineConfig({
+  plugins: [react()],
+  server: { proxy: { "/api": "http://localhost:8000" } }
+});
 
 
-<./backend/app/__init__.py>
+<./frontend/public/index.html>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MeetScribe</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
 
 
-<./backend/app/db.py>
-from sqlmodel import SQLModel, create_engine
-from app.config import settings
+<./frontend/src/main.tsx>
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import App from "./App";
 
-engine = create_engine(settings.database_url, echo=False)
-
-def init_db() -> None:
-    import app.models  # noqa: F401
-    SQLModel.metadata.create_all(engine)
-
-
-<./backend/app/config.py>
-from functools import lru_cache
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    secret_key: str
-    access_token_expire_minutes: int = 30
-
-    database_url: str
-    redis_url: str
-
-    # S3
-    s3_bucket: str
-    minio_endpoint: str
-    minio_root_user: str
-    minio_root_password: str
-    s3_secure: bool = False
-
-    # Stripe
-    stripe_secret_key: str
-    stripe_webhook_secret: str
-
-    whisper_model_path: str
-
-@lru_cache
-def get_settings() -> "Settings":
-    return Settings()
-
-settings = get_settings()
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <BrowserRouter>
+    <App />
+  </BrowserRouter>
+);
 
 
-<./backend/app/main.py>
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+<./frontend/src/App.tsx>
+import React from "react";
+import { Route, Routes, Navigate } from "react-router-dom";
+import Record from "./pages/Record";
+import Summary from "./pages/Summary";
+import Checkout from "./pages/Checkout";
 
-from app.api import auth, ingest, meetings, billing
-from app.db import init_db
-
-app = FastAPI(title="MeetScribe API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(auth.router, prefix="/api")
-app.include_router(ingest.router, prefix="/api")
-app.include_router(meetings.router, prefix="/api")
-app.include_router(billing.router, prefix="/api")
-
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-
-@app.get("/healthz")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/record" replace />} />
+      <Route path="/record" element={<Record />} />
+      <Route path="/summary/:mid" element={<Summary />} />
+      <Route path="/checkout" element={<Checkout />} />
+    </Routes>
+  );
+}
 
 
-<./backend/app/api/__init__.py>
+<./frontend/src/api/client.ts>
+import axios from "axios";
+
+const api = axios.create({
+  baseURL: "/api",
+  withCredentials: true
+});
+
+export function setAuth(token: string | null) {
+  if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
+  else delete api.defaults.headers.common.Authorization;
+}
+
+export default api;
 
 
-<./backend/app/api/auth.py>
-from datetime import datetime, timedelta
-from typing import Annotated
+<./frontend/src/hooks/useRecorder.ts>
+import { useCallback, useEffect, useRef, useState } from "react";
+import { set, get } from "idb-keyval";
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt, JWTError
-from passlib.context import CryptContext
-from sqlmodel import Session, select
+export interface ChunkMeta {
+  id: string;
+  blob: Blob;
+}
 
-from app.config import settings
-from app.models.user import User, UserCreate
-from app.db import engine
+export default function useRecorder(chunkMs = 30_000) {
+  const [isRecording, setIsRecording] = useState(false);
+  const [chunks, setChunks] = useState<ChunkMeta[]>([]);
+  const mediaRef = useRef<MediaRecorder | null>(null);
 
-router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
-ALGORITHM = "HS256"
+  const start = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    mediaRef.current = rec;
 
-def get_db():
-    with Session(engine) as session:
-        yield session
+    rec.ondataavailable = async e => {
+      if (e.data.size === 0) return;
+      const id = crypto.randomUUID();
+      const meta: ChunkMeta = { id, blob: e.data };
+      setChunks(prev => [...prev, meta]);
+      await set(id, e.data); // persist
+    };
 
-def verify_pw(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    rec.start(chunkMs);
+    setIsRecording(true);
+  }, [chunkMs]);
 
-def hash_pw(pw: str) -> str:
-    return pwd_context.hash(pw)
+  const stop = useCallback(() => {
+    mediaRef.current?.stop();
+    mediaRef.current = null;
+    setIsRecording(false);
+  }, []);
 
-def create_token(data: dict, minutes: int) -> str:
-    payload = data.copy()
-    payload["exp"] = datetime.utcnow() + timedelta(minutes=minutes)
-    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+  const clearPersisted = useCallback(async () => {
+    for (const c of chunks) await set(c.id, undefined);
+    setChunks([]);
+  }, [chunks]);
 
-def auth_user(db: Session, email: str, pw: str) -> User | None:
-    user = db.exec(select(User).where(User.email == email)).first()
-    if user and verify_pw(pw, user.hashed_password):
-        return user
-    return None
+  useEffect(() => {
+    // restore chunks from previous session
+    (async () => {
+      const keys = await get<any>("__keys__").catch(() => []);
+      if (keys?.length) {
+        const restored: ChunkMeta[] = [];
+        for (const k of keys) {
+          const blob = await get<Blob>(k);
+          if (blob) restored.push({ id: k, blob });
+        }
+        setChunks(restored);
+      }
+    })();
+  }, []);
 
-@router.post("/signup", status_code=201)
-def signup(body: UserCreate, db: Session = Depends(get_db)):
-    user = User(email=body.email, hashed_password=hash_pw(body.password))
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return {"msg": "created"}
+  return { isRecording, chunks, start, stop, clearPersisted };
+}
 
-@router.post("/token")
-def token(form: Annotated[OAuth2PasswordRequestForm, Depends()], db: Session = Depends(get_db)):
-    user = auth_user(db, form.username, form.password)
-    if not user:
-        raise HTTPException(status_code=401, detail="bad creds")
-    return {
-        "access_token": create_token({"sub": str(user.id)}, settings.access_token_expire_minutes),
-        "token_type": "bearer",
+
+<./frontend/src/hooks/useUploader.ts>
+import { useEffect, useState } from "react";
+import useWebSocket from "react-use-websocket";
+import api from "../api/client";
+import { ChunkMeta } from "./useRecorder";
+
+export function useUploader(meetingId: string, chunks: ChunkMeta[]) {
+  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+  const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(
+    `/api/ws?meeting_id=${meetingId}`,
+    { share: true, shouldReconnect: () => true }
+  );
+
+  // fallback REST upload when WS not ready
+  useEffect(() => {
+    (async () => {
+      if (readyState !== 1) return;
+      for (const c of chunks) {
+        if (sentIds.has(c.id)) continue;
+        sendJsonMessage({ id: c.id, size: c.blob.size });
+        await api.postForm(
+          "/chunks",
+          { meeting_id: meetingId, chunk_id: c.id, file: c.blob },
+          { headers: { "Content-Type": "multipart/form-data" } }
+        );
+        setSentIds(prev => new Set(prev).add(c.id));
+      }
+    })();
+  }, [chunks, readyState, sentIds, meetingId, sendJsonMessage]);
+
+  useEffect(() => {
+    if (lastJsonMessage?.acked) {
+      setSentIds(prev => new Set([...prev, ...lastJsonMessage.acked]));
     }
-
-def current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Session = Depends(get_db)) -> User:
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        uid = payload.get("sub")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="bad token")
-    user = db.get(User, uid)
-    if not user:
-        raise HTTPException(status_code=401, detail="user gone")
-    return user
-
-
-<./backend/app/api/ingest.py>
-import uuid
-from typing import Annotated
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
-from sqlmodel import Session
-
-from app.api.auth import current_user
-from app.db import engine
-from app.models.meeting import Meeting
-from app.models.chunk import Chunk
-from app.services import hashing, s3
-from app.tasks.queue import enqueue_transcription
-
-router = APIRouter()
-
-def get_db():
-    with Session(engine) as s:
-        yield s
-
-@router.post("/chunks")
-async def chunk(
-    meeting_id: uuid.UUID,
-    chunk_id: str,
-    file: Annotated[UploadFile, File(...)],
-    bg: BackgroundTasks,
-    user = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    meeting = db.get(Meeting, meeting_id)
-    if not meeting or meeting.owner_id != user.id:
-        raise HTTPException(404)
-
-    blob = await file.read()
-    key = f"{meeting_id}/{chunk_id}.webm"
-    s3.put_object(key, blob)
-
-    db.add(
-        Chunk(
-            id=chunk_id,
-            meeting_id=meeting_id,
-            checksum=hashing.sha256_digest(blob),
-            size=len(blob),
-        )
-    )
-    db.commit()
-
-    bg.add_task(enqueue_transcription, meeting_id, chunk_id, key)
-    return {"status": "queued"}
-
-
-<./backend/app/api/meetings.py>
-import uuid
-from typing import List
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-
-from app.api.auth import current_user
-from app.db import engine
-from app.models.meeting import Meeting, MeetingCreate, MeetingRead
-
-router = APIRouter()
-
-def get_db():
-    with Session(engine) as s:
-        yield s
-
-@router.post("/meetings", response_model=MeetingRead, status_code=201)
-def create(body: MeetingCreate, db: Session = Depends(get_db), user = Depends(current_user)):
-    m = Meeting(**body.dict(), owner_id=user.id)
-    db.add(m)
-    db.commit()
-    db.refresh(m)
-    return m
-
-@router.get("/meetings", response_model=List[MeetingRead])
-def mine(db: Session = Depends(get_db), user = Depends(current_user)):
-    return db.exec(select(Meeting).where(Meeting.owner_id == user.id)).all()
-
-@router.get("/meetings/{mid}", response_model=MeetingRead)
-def one(mid: uuid.UUID, db: Session = Depends(get_db), user = Depends(current_user)):
-    m = db.get(Meeting, mid)
-    if not m or m.owner_id != user.id:
-        raise HTTPException(404)
-    return m
-
-
-<./backend/app/api/billing.py>
-import stripe
-from fastapi import APIRouter, Header, HTTPException, Request
-
-from app.config import settings
-
-router = APIRouter()
-stripe.api_key = settings.stripe_secret_key
-
-@router.post("/stripe/webhook")
-async def webhook(request: Request, stripe_signature: str = Header(None)):
-    payload = await request.body()
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, settings.stripe_webhook_secret
-        )
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(400, "bad sig")
-
-    # TODO: handle event.type and update DB
-    return {"ok": True}
-
-
-<./backend/app/models/__init__.py>
-from app.models.user import User
-from app.models.meeting import Meeting
-from app.models.chunk import Chunk
-
-
-<./backend/app/models/user.py>
-import uuid
-from sqlmodel import SQLModel, Field
-
-class User(SQLModel, table=True):
-    id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    email: str = Field(unique=True, index=True)
-    hashed_password: str
-    is_active: bool = True
-    customer_id: str | None = None  # stripe
-
-class UserCreate(SQLModel):
-    email: str
-    password: str
-
-
-<./backend/app/models/meeting.py>
-import uuid
-import datetime as dt
-from typing import Optional
-from sqlmodel import SQLModel, Field
-
-class MeetingBase(SQLModel):
-    title: str
-    started_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
-
-class Meeting(MeetingBase, table=True):
-    id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    owner_id: uuid.UUID = Field(foreign_key="user.id")
-    summary_markdown: Optional[str] = None
-    transcript_text: Optional[str] = None
-    done: bool = False
-    expected_chunks: int | None = None
-
-class MeetingCreate(MeetingBase):
-    expected_chunks: int | None = None
-
-class MeetingRead(MeetingBase):
-    id: uuid.UUID
-    summary_markdown: Optional[str]
-    done: bool
-
-
-<./backend/app/models/chunk.py>
-import uuid
-import datetime as dt
-from sqlmodel import SQLModel, Field
-
-class Chunk(SQLModel, table=True):
-    id: str = Field(primary_key=True)
-    meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
-    checksum: str
-    size: int
-    received_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
-
-
-<./backend/app/services/__init__.py>
-
-
-<./backend/app/services/hashing.py>
-import hashlib
-
-def sha256_digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-<./backend/app/services/s3.py>
-import boto3
-from botocore.client import Config
-from app.config import settings
-
-_s3 = boto3.client(
-    "s3",
-    endpoint_url=f"http://{settings.minio_endpoint}",
-    aws_access_key_id=settings.minio_root_user,
-    aws_secret_access_key=settings.minio_root_password,
-    config=Config(signature_version="s3v4"),
-    region_name="us-east-1",
-)
-
-def put_object(key: str, body: bytes):
-    _s3.put_object(Bucket=settings.s3_bucket, Key=key, Body=body)
-
-def stream(key: str):
-    return _s3.get_object(Bucket=settings.s3_bucket, Key=key)["Body"]
-
-
-<./backend/app/tasks/queue.py>
-import uuid
-from redis import Redis
-from rq import Queue
-from app.config import settings
-
-queue = Queue("transcribe", connection=Redis.from_url(settings.redis_url))
-
-def enqueue_transcription(meeting_id: uuid.UUID, chunk_id: str, key: str):
-    queue.enqueue(
-        "worker.worker.process_chunk",
-        meeting_id=str(meeting_id),
-        chunk_id=chunk_id,
-        key=key,
-    )
-
-
-<./worker/Dockerfile>
-FROM python:3.12-slim
-
-WORKDIR /worker
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY worker.py .
-
-CMD ["python", "worker.py"]
-
-
-<./worker/requirements.txt>
-faster-whisper==1.0.1
-openai==1.23.6
-redis==5.0.4
-rq==1.16.1
-boto3==1.34.113
-sqlmodel==0.0.16
-asyncpg==0.29.0
-python-dotenv==1.0.1
-
-
-<./worker/worker.py>
-import os
-import uuid
-import tempfile
-from pathlib import Path
-
-import openai
-from faster_whisper import WhisperModel
-from redis import Redis
-from rq import Worker, Queue, Connection
-from sqlmodel import Session, select
-
-from app.config import settings
-from app.db import engine
-from app.models.meeting import Meeting, Chunk
-from app.services import s3
-
-openai.api_key = os.getenv("OPENAI_API_KEY", "dummy")
-
-whisper = WhisperModel(
-    settings.whisper_model_path,
-    device="cpu",
-    compute_type="int8",
-)
-
-def transcribe(path: Path) -> str:
-    segments, _ = whisper.transcribe(str(path))
-    return " ".join(s.text for s in segments)
-
-def summarise(text: str) -> str:
-    rsp = openai.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You summarise meetings."},
-            {"role": "user", "content": f"Summarise:\n{text}"},
-        ],
-        temperature=0.3,
-    )
-    return rsp.choices[0].message.content.strip()
-
-def process_chunk(meeting_id: str, chunk_id: str, key: str):
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(s3.stream(key).read())
-        tmp_path = Path(tmp.name)
-
-    text = transcribe(tmp_path)
-    tmp_path.unlink(missing_ok=True)
-
-    with Session(engine) as db:
-        mtg = db.get(Meeting, uuid.UUID(meeting_id))
-        mtg.transcript_text = (mtg.transcript_text or "") + " " + text
-        db.add(mtg)
-        db.commit()
-
-        # naive completion check
-        if (
-            mtg.expected_chunks and
-            len(
-                db.exec(
-                    select(Chunk).where(Chunk.meeting_id == mtg.id)
-                ).all()
-            ) >= mtg.expected_chunks
-        ):
-            mtg.summary_markdown = summarise(mtg.transcript_text)
-            mtg.done = True
-            db.add(mtg)
-            db.commit()
-
-if __name__ == "__main__":
-    with Connection(Redis.from_url(os.getenv("REDIS_URL", settings.redis_url))):
-        Worker([Queue("transcribe")]).work()
-
-
-<./.gitignore>
-__pycache__/
-*.py[cod]
-*.egg-info/
-.env
-env/
-venv/
-node_modules/
-frontend/dist/
-models/
-data/
+  }, [lastJsonMessage]);
+
+  return { sent: sentIds.size, total: chunks.length };
+}
+
+
+<./frontend/src/pages/Record.tsx>
+import React, { useState } from "react";
+import useRecorder from "../hooks/useRecorder";
+import { useNavigate } from "react-router-dom";
+import api from "../api/client";
+import RecorderButton from "../components/RecorderButton";
+import UploadProgress from "../components/UploadProgress";
+
+export default function Record() {
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const rec = useRecorder();
+  const navigate = useNavigate();
+
+  const handleStart = async () => {
+    const { data } = await api.post("/meetings", { title: "Untitled" });
+    setMeetingId(data.id);
+    rec.start();
+  };
+
+  const handleStop = () => {
+    rec.stop();
+    if (meetingId) navigate(`/summary/${meetingId}`);
+  };
+
+  return (
+    <div className="p-6 space-y-6 max-w-xl mx-auto">
+      <h1 className="text-3xl font-bold">MeetScribe Recorder</h1>
+      {!rec.isRecording ? (
+        <RecorderButton label="Start" onClick={handleStart} />
+      ) : (
+        <RecorderButton label="Stop" onClick={handleStop} danger />
+      )}
+      {meetingId && (
+        <UploadProgress meetingId={meetingId} chunks={rec.chunks} />
+      )}
+      <button
+        className="border px-3 py-1 rounded"
+        onClick={() => rec.clearPersisted()}
+        disabled={rec.isRecording}
+      >
+        Clear saved chunks
+      </button>
+    </div>
+  );
+}
+
+
+<./frontend/src/pages/Summary.tsx>
+import React, { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import api from "../api/client";
+
+export default function Summary() {
+  const { mid } = useParams();
+  const [md, setMd] = useState<string>("Loading…");
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await api.get(`/meetings/${mid}`);
+      setMd(data.summary_markdown || "⏳ Summarising… refresh in a bit.");
+    })();
+  }, [mid]);
+
+  return (
+    <div className="prose mx-auto p-6">
+      <ReactMarkdown>{md}</ReactMarkdown>
+    </div>
+  );
+}
+
+
+<./frontend/src/pages/Checkout.tsx>
+import React from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements } from "@stripe/react-stripe-js";
+import api from "../api/client";
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBKEY!);
+
+export default function Checkout() {
+  const handleClick = async () => {
+    const { data } = await api.post("/billing/checkout");
+    window.location.href = data.url;
+  };
+
+  return (
+    <div className="p-6 text-center space-y-4">
+      <h1 className="text-3xl font-bold">Subscribe</h1>
+      <p>Unlimited transcriptions • €3 / month</p>
+      <Elements stripe={stripePromise}>
+        <button
+          className="bg-black text-white px-4 py-2 rounded"
+          onClick={handleClick}
+        >
+          Continue to Stripe
+        </button>
+      </Elements>
+    </div>
+  );
+}
+
+
+<./frontend/src/components/RecorderButton.tsx>
+import React from "react";
+
+export default function RecorderButton({
+  label,
+  onClick,
+  danger = false
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-6 py-3 rounded text-white ${
+        danger ? "bg-red-600" : "bg-green-600"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+
+<./frontend/src/components/UploadProgress.tsx>
+import React from "react";
+import { useUploader } from "../hooks/useUploader";
+import { ChunkMeta } from "../hooks/useRecorder";
+
+export default function UploadProgress({
+  meetingId,
+  chunks
+}: {
+  meetingId: string;
+  chunks: ChunkMeta[];
+}) {
+  const { sent, total } = useUploader(meetingId, chunks);
+  return (
+    <div>
+      Uploaded {sent}/{total} chunks
+    </div>
+  );
+}
+
+
+<./frontend/src/components/PaywallGuard.tsx>
+import React, { PropsWithChildren, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../api/client";
+
+export default function PaywallGuard({ children }: PropsWithChildren) {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/me");
+        setAllowed(data.subscription_active);
+        if (!data.subscription_active) navigate("/checkout");
+      } catch {
+        navigate("/checkout");
+      }
+    })();
+  }, [navigate]);
+
+  if (allowed === null) return null;
+  return <>{children}</>;
+}
+
+
+<./frontend/src/components/TemplateBadge.tsx>
+import React from "react";
+
+export default function TemplateBadge({ type }: { type: string }) {
+  return (
+    <span className="border rounded px-2 py-0.5 text-xs bg-gray-100">
+      {type}
+    </span>
+  );
+}
