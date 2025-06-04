@@ -6,7 +6,7 @@ env/
 venv/
 node_modules/
 frontend/dist/
-models/
+/models/
 data/
 .gpt/response.txt
 .gpt/dump.txt

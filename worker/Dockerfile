@@ -1,15 +1,23 @@
-# ─── Python worker ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
+# Set working directory
 WORKDIR /app
 
-# 1. install deps (layer cached)
-COPY worker/requirements.txt ./requirements.txt
+# Copy and install Python dependencies for the worker
+COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 2. copy source code
-COPY worker ./worker                 
-COPY backend/app ./app              
+# Copy the backend application code so that "app" module is available
+COPY backend/app /app/app
 
-# 3. start the RQ worker
-CMD ["python", "-u", "worker/worker.py"]
+# Copy the worker entrypoint
+COPY worker/worker.py /app/worker.py
+
+# Set number of threads for faster-whisper (optional)
+ENV OMP_NUM_THREADS=4
+
+# Ensure the working directory is on PYTHONPATH
+ENV PYTHONPATH=/app
+
+# Run the RQ worker
+CMD ["python", "worker.py"]
