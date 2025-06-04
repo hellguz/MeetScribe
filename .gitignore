@@ -48,4 +48,4 @@ docker-compose*.override.yml
 .DS_Store
 Thumbs.db
 
-.gpt/*.txt
+/.gpt/*.txt
