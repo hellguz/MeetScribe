@@ -15,7 +15,7 @@ build/
 coverage.*
 htmlcov/
 *.sqlite3
-.env                              # local secrets copied from .env.example
+.env
 data/
 ############################
 # Node / Vite / React
