@@ -48,5 +48,7 @@ class MeetingRead(SQLModel):
     title: str
     started_at: dt.datetime
     summary_markdown: Optional[str]
-    transcript_text: Optional[str]   # <— added so the frontend can display it
+    transcript_text: Optional[str]
     done: bool
+    received_chunks: int
+    expected_chunks: Optional[int]
