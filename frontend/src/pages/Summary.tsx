@@ -10,7 +10,7 @@ export default function Summary() {
   useEffect(() => {
     // poll until meeting is done
     const iv = setInterval(async () => {
-      const res = await fetch(`/api/meetings/${mid}`);
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.done) {
