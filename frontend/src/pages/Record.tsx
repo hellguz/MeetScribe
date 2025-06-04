@@ -177,11 +177,16 @@ export default function Record() {
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Send final signal
-    if (chunks.length > 0) {
-      console.log(`Finalizing recording with ${chunks.length} chunks`);
-      const finalBlob = new Blob([], { type: "audio/webm" });
-      await uploadChunk(finalBlob, chunks.length, true);
-    }
+    // We always want to send a final signal, even if no chunks were captured (e.g. user clicks start then immediately stop)
+    // The backend expects a final chunk to trigger summarization.
+    // The `chunks.length` will determine the index for this final empty blob.
+    // If `chunks.length` is 0, it means no actual audio chunks were processed and added to the array yet.
+    // In this case, the final empty blob will be sent as chunk_index 0.
+    // If `chunks.length` is 1, it means one audio chunk was processed, and its index was 0.
+    // The final empty blob will be sent as chunk_index 1. This seems correct.
+    console.log(`Finalizing recording. Current frontend chunk count: ${chunks.length}. Sending final signal with index ${chunks.length}.`);
+    const finalBlob = new Blob([], { type: "audio/webm" });
+    await uploadChunk(finalBlob, chunks.length, true);
 
     setRecording(false);
     
