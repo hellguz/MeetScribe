@@ -10,6 +10,7 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import List
+import datetime as dt  # Added for date/time in summaries
 
 import av
 import openai
@@ -23,7 +24,6 @@ from .config import settings
 from .models import Meeting, MeetingCreate, MeetingRead
 
 # ────────────────────────────── setup ─────────────────────────────────────────
-
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -50,34 +50,28 @@ _whisper = WhisperModel(
 LOGGER.info("✅ Whisper model loaded.")
 
 # ─────────────────────────── helpers ─────────────────────────────────────────
-def transcribe_webm_chunk(chunk_path: Path, first_chunk_path: Path = None) -> str:
+def transcribe_webm_chunk(chunk_path: Path, first_chunk_path: Path | None = None) -> str:
     """
-    Transcribe a WebM chunk. For non-first chunks, we need to prepend the first chunk's header.
+    Transcribe a WebM chunk. For non-first chunks, prepend the first chunk's header.
     """
     try:
         if first_chunk_path and chunk_path != first_chunk_path:
-            # For subsequent chunks, create a temporary file with proper headers
+            # Create a temporary file containing the header + this chunk's data
             temp_path = chunk_path.parent / f"temp_{chunk_path.name}"
-            
-            # Read first chunk header (first 1KB usually contains headers)
+
             with first_chunk_path.open("rb") as first_file:
                 header_data = first_file.read(1024)
-            
-            # Combine header with current chunk data
+
             with temp_path.open("wb") as temp_file:
                 temp_file.write(header_data)
                 with chunk_path.open("rb") as chunk_file:
                     temp_file.write(chunk_file.read())
-            
-            # Transcribe the temporary file
+
             segments, _ = _whisper.transcribe(str(temp_path), beam_size=5)
             result = " ".join(s.text for s in segments)
-            
-            # Clean up
             temp_path.unlink(missing_ok=True)
             return result
         else:
-            # First chunk or standalone - transcribe directly
             segments, _ = _whisper.transcribe(str(chunk_path), beam_size=5)
             return " ".join(s.text for s in segments)
     except Exception as e:
@@ -85,16 +79,250 @@ def transcribe_webm_chunk(chunk_path: Path, first_chunk_path: Path = None) -> st
         return ""
 
 
-def summarise(text: str) -> str:
+def summarise(text: str, started_at: dt.datetime) -> str:
+    """
+    Summarise the full transcript into a Markdown document using one of the
+    predefined templates. Key rules:
+
+    • Pick the template that best fits the meeting (or craft a similar one).
+    • Detect the predominant language and write the summary—including headings—in
+      that language.
+    • Insert the actual current date & time into the summary.
+    • Delete any section/field whose content is empty (even if the template
+      didn't mark it “(if available)”).
+    • Unless the first “Type” line adds real value, omit it entirely.
+    • Output only the completed Markdown—no additional commentary.
+    """
     if not text or len(text.strip()) < 10:
         return "Recording too short to generate meaningful summary."
-    
+
+    date_str = started_at.strftime("%Y-%m-%d")
+    time_range = f"{started_at.strftime('%H:%M')} - {dt.datetime.utcnow().strftime('%H:%M')}"
+
+    # The raw templates (exactly as specified by the user)
+    TEMPLATES = """
+1. General Meeting Summary Template
+# Meeting Summary
+
+**Type:** [General Meeting / Consultation / Project Meeting / Project Presentation]
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+**Location:** [Physical/Virtual Location, if available]
+
+## Participants (if available)
+- [Name 1, if available]
+- [Name 2, if available]
+
+## Agenda/Objectives (if available)
+- [Objective 1, if available]
+- [Objective 2, if available]
+
+## Key Discussion Points
+- [Topic 1]
+  - [Summary/Details]
+- [Topic 2]
+  - [Summary/Details]
+
+## Decisions Made (if available)
+- [Decision 1, if available]
+- [Decision 2, if available]
+
+## Action Items (if available)
+| Task         | Owner   | Deadline   |
+|--------------|---------|------------|
+| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
+| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
+
+## Next Steps (if available)
+- [Next Step 1, if available]
+- [Next Step 2, if available]
+
+## Additional Notes
+[Any other relevant information or context]
+
+2. Consultation Session Template
+# Consultation Session Summary
+
+**Type:** Consultation
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+**Client:** [Client Name, if available]
+
+## Attendees (if available)
+- [Consultant Name, if available]
+- [Client Name/Representative, if available]
+- [Other Participants, if available]
+
+## Topics Discussed
+- [Topic 1]
+  - [Summary]
+- [Topic 2]
+  - [Summary]
+
+## Recommendations (if available)
+- [Recommendation 1, if available]
+- [Recommendation 2, if available]
+
+## Follow-Up Actions (if available)
+- [Action 1, if available]
+- [Action 2, if available]
+
+## Next Steps (if available)
+- [Next Step 1, if available]
+- [Next Step 2, if available]
+
+3. Project Meeting Template
+# Project Meeting Summary
+
+**Type:** Project Meeting
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+**Project:** [Project Name, if available]
+
+## Participants (if available)
+- [Team Member 1, if available]
+- [Team Member 2, if available]
+
+## Agenda (if available)
+- [Agenda Item 1, if available]
+- [Agenda Item 2, if available]
+
+## Progress Updates
+- [Update 1]
+- [Update 2]
+
+## Issues/Risks Identified (if available)
+- [Issue/Risk 1, if available]
+- [Issue/Risk 2, if available]
+
+## Decisions (if available)
+- [Decision 1, if available]
+- [Decision 2, if available]
+
+## Action Items (if available)
+| Task         | Owner   | Deadline   |
+|--------------|---------|------------|
+| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
+| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
+
+## Next Steps (if available)
+- [Next Step 1, if available]
+- [Next Step 2, if available]
+
+4. Project Presentation Summary Template
+# Project Presentation Summary
+
+**Type:** Project Presentation
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+**Presenter:** [Presenter Name, if available]
+
+## Attendees (if available)
+- [Attendee 1, if available]
+- [Attendee 2, if available]
+
+## Presentation Topics
+- [Topic 1]
+  - [Key Points]
+- [Topic 2]
+  - [Key Points]
+
+## Questions & Answers (if available)
+- **Q:** [Question, if available]
+  - **A:** [Answer, if available]
+- **Q:** [Question, if available]
+  - **A:** [Answer, if available]
+
+## Feedback/Next Steps (if available)
+- [Feedback 1, if available]
+- [Next Step 1, if available]
+
+5. Brainstorming Session Template
+# Brainstorming Session Summary
+
+**Type:** Brainstorming
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+
+## Participants (if available)
+- [Participant 1, if available]
+- [Participant 2, if available]
+
+## Goals (if available)
+- [Goal 1, if available]
+- [Goal 2, if available]
+
+## Ideas Generated
+- [Idea 1]
+- [Idea 2]
+
+## Top Ideas (Voted/Selected, if available)
+- [Top Idea 1, if available]
+- [Top Idea 2, if available]
+
+## Next Steps (if available)
+- [Next Step 1, if available]
+- [Next Step 2, if available]
+
+6. Retrospective/Review Meeting Template
+# Retrospective Meeting Summary
+
+**Type:** Retrospective/Review
+
+**Date:** [YYYY-MM-DD, if available]
+**Time:** [HH:MM - HH:MM, if available]
+**Project/Team:** [Name, if available]
+
+## Participants (if available)
+- [Participant 1, if available]
+- [Participant 2, if available]
+
+## What Went Well
+- [Positive 1]
+- [Positive 2]
+
+## What Could Be Improved
+- [Improvement 1]
+- [Improvement 2]
+
+## Action Items (if available)
+- [Action 1, if available]
+- [Action 2, if available]
+
+## Next Steps (if available)
+- [Next Step 1, if available]
+- [Next Step 2, if available]
+"""
+
+    system_prompt = f"""
+You are a meeting-summary generator.
+
+RULES
+• Decide which template (1–6) suits the meeting. If none is perfect, adapt one.
+• Detect the dominant language of the transcript and translate ALL headings,
+  labels and fixed table headers into that language. Summarise in that language.
+• Substitute {date_str} for any [YYYY-MM-DD] placeholder.
+• Substitute {time_range} for any [HH:MM - HH:MM] placeholder.
+• Strip every section/field that ends up empty—regardless of “(if available)”.
+• Omit the initial “**Type:** …” line unless it communicates meaningful info.
+• Remove ALL leftover placeholders/brackets.
+• Return ONLY the filled Markdown, no extra prose.
+
+TEMPLATES
+{TEMPLATES}
+"""
+
     rsp = openai.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.3,
         messages=[
-            {"role": "system", "content": "You summarise meetings into markdown. Provide a concise but comprehensive summary."},
-            {"role": "user", "content": f"Summarise this meeting transcript:\n{text}"},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Here is the full transcript:\n{text}"},
         ],
     )
     return rsp.choices[0].message.content.strip()
@@ -104,10 +332,10 @@ def summarise(text: str) -> str:
 app = FastAPI(title="MeetScribe MVP")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.post("/api/meetings", response_model=MeetingRead, status_code=201)
@@ -133,85 +361,63 @@ async def upload_chunk(
         if not mtg:
             raise HTTPException(404, "meeting not found")
 
-        # Save chunk with proper naming
+        # Save chunk
         mtg_dir = AUDIO_DIR / str(meeting_id)
         mtg_dir.mkdir(parents=True, exist_ok=True)
         chunk_path = mtg_dir / f"chunk_{chunk_index:03d}.webm"
-        
+
         with chunk_path.open("wb") as f:
             shutil.copyfileobj(file.file, f)
 
         size_kb = chunk_path.stat().st_size / 1024
         LOGGER.info("⬆️  chunk %d for %s (%.1f kB) final=%s", chunk_index, meeting_id, size_kb, is_final)
 
-        # Skip tiny chunks (likely empty or corrupted)
+        # Ignore tiny chunks
         if size_kb < 1:
             LOGGER.warning("⚠️  chunk %d too small – skipped", chunk_index)
             chunk_path.unlink(missing_ok=True)
-            
-            # If this tiny chunk is also the final one, we still want to proceed to normal finalization
-            # So, only return early if it's NOT the final chunk.
             if not is_final:
-                db.add(mtg) # Save any potential previous changes to mtg
-                db.commit()
+                db.add(mtg); db.commit()
                 return {"ok": True, "skipped": True, "done": mtg.done}
-            else:
-                # It IS the final chunk, but it's tiny. Log it and let the main summarization logic handle it.
-                # We don't do `db.add(mtg)` or `db.commit()` here to avoid overwriting data
-                # before the main summarization logic if mtg.transcript_text was updated by a previous chunk
-                # in the same session but not yet committed.
-                LOGGER.info("🗑️  Final chunk was tiny/empty, proceeding to finalize meeting %s", meeting_id)
-                # The function will now continue to the main summarization block
+            LOGGER.info("🗑️  tiny final chunk ignored, continuing")
 
-        # **REAL-TIME TRANSCRIPTION**: Process each chunk immediately
+        # Real-time transcription
         try:
-            # Find the first chunk for header reference
-            first_chunk_path = mtg_dir / "chunk_000.webm"
-            if not first_chunk_path.exists():
-                first_chunk_path = chunk_path  # This is the first chunk
-            
-            # Transcribe this chunk
-            LOGGER.info("🎤  Transcribing chunk %d in real-time...", chunk_index)
-            chunk_text = transcribe_webm_chunk(chunk_path, first_chunk_path)
-            
+            first_chunk = mtg_dir / "chunk_000.webm"
+            if not first_chunk.exists():
+                first_chunk = chunk_path
+            chunk_text = transcribe_webm_chunk(chunk_path, first_chunk)
+
             if chunk_text.strip():
-                LOGGER.info("📝  chunk %d transcribed → %d chars: %s", 
-                           chunk_index, len(chunk_text), chunk_text[:100] + ("…" if len(chunk_text) > 100 else ""))
-                
-                # Append to running transcript
-                if mtg.transcript_text:
-                    mtg.transcript_text += " " + chunk_text.strip()
-                else:
-                    mtg.transcript_text = chunk_text.strip()
+                LOGGER.info("📝  chunk %d transcribed (%d chars)", chunk_index, len(chunk_text))
+                mtg.transcript_text = (mtg.transcript_text + " " if mtg.transcript_text else "") + chunk_text.strip()
             else:
-                LOGGER.warning("⚠️  chunk %d produced no transcription", chunk_index)
-                
+                LOGGER.warning("⚠️  chunk %d produced no text", chunk_index)
         except Exception as e:
-            LOGGER.error("❌  Failed to transcribe chunk %d: %s", chunk_index, str(e))
-            # Continue anyway - don't fail the whole process
+            LOGGER.error("❌  transcription failure on chunk %d: %s", chunk_index, e)
 
         mtg.received_chunks += 1
 
-        # Generate summary if this is the final chunk and we have transcript
+        # Final summary
         if is_final and mtg.transcript_text and not mtg.summary_markdown:
             try:
-                LOGGER.info("📋  Generating final summary...")
-                mtg.summary_markdown = summarise(mtg.transcript_text)
+                LOGGER.info("📋  Generating summary …")
+                mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
                 mtg.done = True
-                LOGGER.info("✅  meeting %s completed with %d chunks", meeting_id, mtg.received_chunks)
+                LOGGER.info("✅  meeting %s summarised", meeting_id)
             except Exception as e:
-                LOGGER.error("❌  Failed to generate summary: %s", str(e))
+                LOGGER.error("❌  summary generation failed: %s", e)
 
         db.add(mtg)
         db.commit()
         db.refresh(mtg)
-        
+
         return {
-            "ok": True, 
+            "ok": True,
             "received_chunks": mtg.received_chunks,
             "done": mtg.done,
             "has_transcript": bool(mtg.transcript_text and mtg.transcript_text.strip()),
-            "latest_chunk_text": chunk_text if 'chunk_text' in locals() else None
+            "latest_chunk_text": chunk_text if 'chunk_text' in locals() else None,
         }
 
 

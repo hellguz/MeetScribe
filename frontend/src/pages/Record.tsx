@@ -165,6 +165,7 @@ export default function Record() {
     if (!recorder || !stream) return;
 
     console.log("Stopping recording...");
+    setRecording(false); // <--- Moved here
     setIsProcessing(true);
 
     // Stop the recorder and get final chunk
@@ -188,7 +189,7 @@ export default function Record() {
     const finalBlob = new Blob([], { type: "audio/webm" });
     await uploadChunk(finalBlob, chunks.length, true);
 
-    setRecording(false);
+    // setRecording(false); // <--- Removed from here
     
     // Navigate to summary
     setTimeout(() => {
