@@ -1,79 +1,18 @@
-version: '3.8'
+version: "3.8"
 services:
-  nginx:
-    build:
-      context: .
-      dockerfile: infra/nginx/Dockerfile
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      - frontend
-      - backend
-
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        - VITE_STRIPE_PUBKEY=${VITE_STRIPE_PUBKEY}
-
   backend:
     build: ./backend
-    env_file:
-      - .env
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    volumes:
-      - ./backend/app:/app/app
-      - ./.env:/app/.env:ro
-    depends_on:
-      - postgres
-      - redis
-      - minio
-
-  worker:
-    build:
-      context: .
-      dockerfile: worker/Dockerfile
-    env_file:
-      - .env
-    command: python worker/worker.py
-    volumes:
-      - ./models:/models
-      - ./.env:/app/.env:ro
-    depends_on:
-      - redis
-      - minio
-      - postgres
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres:/docker-entrypoint-initdb.d
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-
-  minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "8000:8000"
     volumes:
-      - minio_data:/data
+      - ./data:/app/data         # audio + sqlite
+    env_file:
+      - .env
 
-volumes:
-  postgres_data:
-  minio_data:
-
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
 

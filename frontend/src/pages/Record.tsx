@@ -1,46 +1,75 @@
-import React, { useState } from "react";
-import useRecorder from "../hooks/useRecorder";
-import { useNavigate } from "react-router-dom";
-import api from "../api/client";
-import RecorderButton from "../components/RecorderButton";
-import UploadProgress from "../components/UploadProgress";
+import React, { useRef, useState } from "react";
 
+/**
+ * Simple recorder page:
+ *  – records mic in 30 000 ms chunks
+ *  – flushes the final <30 s fragment on stop()
+ *  – uploads sequentially to the backend
+ */
 export default function Record() {
-  const [meetingId, setMeetingId] = useState<string | null>(null);
-  const rec = useRecorder();
-  const navigate = useNavigate();
+  const [isRecording, setRecording] = useState(false);
+  const [chunks, setChunks] = useState<Blob[]>([]);
+  const meetingId = useRef<string | null>(null);
+  const mediaRef = useRef<MediaRecorder | null>(null);
 
-  const handleStart = async () => {
-    const { data } = await api.post("/meetings", { title: "Untitled" });
-    setMeetingId(data.id);
-    rec.start();
-  };
+  async function start() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    mediaRef.current = rec;
 
-  const handleStop = () => {
+    rec.ondataavailable = (e) => {
+      if (e.data.size) setChunks((prev) => [...prev, e.data]);
+    };
+    rec.start(30_000);
+    setRecording(true);
+
+    // create meeting on backend
+    const res = await fetch("/api/meetings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Untitled", expected_chunks: null }),
+    });
+    const data = await res.json();
+    meetingId.current = data.id;
+  }
+
+  async function stop() {
+    const rec = mediaRef.current;
+    if (!rec) return;
+
+    // wait until final <30 s slice is emitted
+    const stopped = new Promise<void>((resolve) =>
+      rec.addEventListener("stop", () => resolve())
+    );
     rec.stop();
-    if (meetingId) navigate(`/summary/${meetingId}`);
-  };
+    await stopped;
+    setRecording(false);
+
+    if (!meetingId.current) return;
+
+    // upload chunks sequentially
+    for (const [idx, blob] of chunks.entries()) {
+      const fd = new FormData();
+      fd.append("meeting_id", meetingId.current);
+      fd.append("chunk_id", String(idx));
+      fd.append("file", blob, `chunk-${idx}.webm`);
+      await fetch("/api/chunks", { method: "POST", body: fd });
+    }
+
+    window.location.href = `/summary/${meetingId.current}`;
+  }
 
   return (
-    <div className="p-6 space-y-6 max-w-xl mx-auto">
-      <h1 className="text-3xl font-bold">MeetScribe Recorder</h1>
-      {!rec.isRecording ? (
-        <RecorderButton label="Start" onClick={handleStart} />
+    <div style={{ padding: 24, maxWidth: 600, margin: "0 auto" }}>
+      <h1>MeetScribe Recorder</h1>
+
+      {!isRecording ? (
+        <button onClick={start}>Start</button>
       ) : (
-        <RecorderButton label="Stop" onClick={handleStop} danger />
+        <button onClick={stop}>Stop</button>
       )}
-      {meetingId && (
-        <UploadProgress meetingId={meetingId} chunks={rec.chunks} />
-      )}
-      <button
-        className="border px-3 py-1 rounded"
-        onClick={() => rec.clearPersisted()}
-        disabled={rec.isRecording}
-      >
-        Clear saved chunks
-      </button>
+
+      <p>Recorded chunks: {chunks.length}</p>
     </div>
   );
 }
-
-

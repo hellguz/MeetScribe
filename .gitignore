@@ -1,60 +1,49 @@
 ############################
-#  Python / FastAPI stack  #
+# Python
 ############################
 __pycache__/
 *.py[cod]
-*.pyo
 *.pyd
 *.so
+*.egg
 *.egg-info/
+.eggs/
 dist/
 build/
-.eggs/
-env/
-.venv/
-venv/
-pip-wheel-metadata/
-.ipynb_checkpoints/
-
+.mypy_cache/
+.pytest_cache/
+coverage.*
+htmlcov/
+*.sqlite3
+.env                              # local secrets copied from .env.example
+data/
 ############################
-#  Node / Vite front-end   #
+# Node / Vite / React
 ############################
 node_modules/
 npm-debug.log*
 yarn-debug.log*
-pnpm-debug.log*
-frontend/dist/
-frontend/.vite/
-*.tsbuildinfo
+yarn-error.log*
+.vite/
+dist/
 
 ############################
-#  Docker bind-mount data  #
+# Editors / IDEs
 ############################
-data/
-postgres_data/
-minio_data/
-models/
-models/*.bin
-
-############################
-#  Environment & secrets   #
-############################
-.env
-.env.*
-
-############################
-#  Logs                    #
-############################
-*.log
-*.log.*
-logs/
-
-############################
-#  IDE / Editor cruft      #
-############################
-.idea/
 .vscode/
+.idea/
 *.sw?
-*.orig
+*~
+
+############################
+# Docker artefacts
+############################
+*.tar
+**/data/                        # SQLite & audio mounted by docker-compose
+docker-compose*.override.yml
+
+############################
+# OS cruft
+############################
 .DS_Store
 Thumbs.db

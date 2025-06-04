@@ -1,28 +1,124 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+"""
+FastAPI backend for MeetScribe MVP.
+Handles meeting creation, chunk uploads, transcription and summarisation.
+"""
 
-from app.api import auth, ingest, meetings, billing
-from app.db import init_db
+from __future__ import annotations
 
-app = FastAPI(title="MeetScribe API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+import logging
+import shutil
+import uuid
+from pathlib import Path
+from typing import List
+
+import openai
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from sqlmodel import Session, SQLModel, create_engine
+
+from .config import settings
+from .models import Meeting, MeetingCreate, MeetingRead
+
+# ──────────────────────────── set-up ──────────────────────────────────────────
+LOGGER = logging.getLogger("meetscribe")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")  # noqa: E501
+
+openai.api_key = settings.openai_api_key
+
+engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
+SQLModel.metadata.create_all(engine)
+
+AUDIO_DIR = Path("data/audio")
+AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+from faster_whisper import WhisperModel  # noqa: E402
+
+_whisper = WhisperModel(
+    settings.whisper_model_size,
+    device="cpu",
+    compute_type="int8",
 )
 
-app.include_router(auth.router, prefix="/api")
-app.include_router(ingest.router, prefix="/api")
-app.include_router(meetings.router, prefix="/api")
-app.include_router(billing.router, prefix="/api")
+# ────────────────────────── helpers ──────────────────────────────────────────
+def transcribe(path: Path) -> str:
+    segments, _ = _whisper.transcribe(str(path), beam_size=5)
+    return " ".join(s.text for s in segments)
 
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
+
+def summarise(text: str) -> str:
+    rsp = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": "You summarise meetings into markdown."},
+            {"role": "user", "content": f"Summarise:\n{text}"},
+        ],
+    )
+    return rsp.choices[0].message.content.strip()
+
+
+# ─────────────────────── FastAPI application ─────────────────────────────────
+app = FastAPI(title="MeetScribe MVP")
+
+
+@app.post("/api/meetings", response_model=MeetingRead, status_code=201)
+def create_meeting(body: MeetingCreate):
+    with Session(engine) as db:
+        mtg = Meeting(**body.dict())
+        db.add(mtg)
+        db.commit()
+        db.refresh(mtg)
+        LOGGER.info("🆕  meeting %s created (expected_chunks=%s)", mtg.id, mtg.expected_chunks)
+        return mtg
+
+
+@app.post("/api/chunks")
+async def upload_chunk(
+    meeting_id: uuid.UUID = Form(...),
+    chunk_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    with Session(engine) as db:
+        mtg = db.get(Meeting, meeting_id)
+        if not mtg:
+            raise HTTPException(404, "meeting not found")
+
+        # save file
+        mtg_dir = AUDIO_DIR / str(meeting_id)
+        mtg_dir.mkdir(parents=True, exist_ok=True)
+        chunk_path = mtg_dir / f"{chunk_id}.webm"
+        with chunk_path.open("wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        size_kb = chunk_path.stat().st_size / 1024
+        LOGGER.info("⬆️  chunk %s for %s (%.1f kB)", chunk_id, meeting_id, size_kb)
+
+        # transcribe
+        text = transcribe(chunk_path)
+        LOGGER.info("📝  transcribed %.1f kB → %d chars", size_kb, len(text))
+        LOGGER.info("  %s", text[:1000] + ("..." if len(text) > 1000 else ""))
+        mtg.transcript_text = (mtg.transcript_text or "") + " " + text
+        mtg.received_chunks += 1
+
+        # summarise if done
+        if mtg.expected_chunks and mtg.received_chunks >= mtg.expected_chunks:
+            mtg.summary_markdown = summarise(mtg.transcript_text)
+            mtg.done = True
+            LOGGER.info("✅  meeting %s summarised", meeting_id)
+
+        db.add(mtg)
+        db.commit()
+        return {"ok": True}
+
+
+@app.get("/api/meetings/{mid}", response_model=MeetingRead)
+def get_meeting(mid: uuid.UUID):
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404)
+        return mtg
+
 
 @app.get("/healthz")
-def health() -> dict[str, str]:
+def health():
     return {"status": "ok"}
-
-

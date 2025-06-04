@@ -1,14 +1,13 @@
-# ─── build stage ───
+# ─── build ────────────────────────────────────────────────────────────────────
 FROM node:18-alpine AS build
-WORKDIR /app
+WORKDIR /web
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-ARG VITE_STRIPE_PUBKEY
-ENV VITE_STRIPE_PUBKEY=${VITE_STRIPE_PUBKEY}
 RUN npm run build
 
-# ─── production stage ───
-FROM nginx:stable-alpine AS production
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY default.conf /etc/nginx/conf.d/default.conf
+# ─── runtime ──────────────────────────────────────────────────────────────────
+FROM nginx:stable-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /web/dist /usr/share/nginx/html
+

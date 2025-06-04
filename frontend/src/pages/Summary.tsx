@@ -1,24 +1,25 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import api from "../api/client";
 
 export default function Summary() {
   const { mid } = useParams();
-  const [md, setMd] = useState<string>("Loading…");
+  const [md, setMd] = useState("⏳ Waiting for summary…");
 
   useEffect(() => {
-    (async () => {
-      const { data } = await api.get(`/meetings/${mid}`);
-      setMd(data.summary_markdown || "⏳ Summarising… refresh in a bit.");
-    })();
+    const iv = setInterval(async () => {
+      const res = await fetch(`/api/meetings/${mid}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.done) {
+          setMd(data.summary_markdown || "No summary");
+          clearInterval(iv);
+        }
+      }
+    }, 5000);
+    return () => clearInterval(iv);
   }, [mid]);
 
   return (
-    <div className="prose mx-auto p-6">
-      <ReactMarkdown>{md}</ReactMarkdown>
-    </div>
+    <div style={{ whiteSpace: "pre-wrap", padding: 24 }}>{md}</div>
   );
 }
-
-
