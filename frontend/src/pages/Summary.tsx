@@ -33,7 +33,7 @@ export default function Summary() {
 
   return (
     <div style={{ ...fontStyle, maxWidth: 800, margin: "0 auto", padding: 24 }}>
-      <h1 style={{ marginTop: 0 }}>Meeting Summary</h1>
+      {/* <h1 style={{ marginTop: 0 }}>Meeting Summary</h1> */}
 
       {/* markdown summary */}
       <ReactMarkdown>{summary}</ReactMarkdown>
