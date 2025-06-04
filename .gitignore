@@ -8,3 +8,5 @@ node_modules/
 frontend/dist/
 models/
 data/
+.gpt/response.txt
+.gpt/dump.txt
