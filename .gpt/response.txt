@@ -1,24 +1,611 @@
-<./worker\Dockerfile>
+````text
+<./docker-compose.yml>
+version: "3.9"
+
+services:
+  nginx:
+    build: ./infra/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    env_file:
+      - .env
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  worker:
+    build: ./worker
+    env_file:
+      - .env
+    volumes:
+      - ./models:/models
+    depends_on:
+      - redis
+      - minio
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  minio_data:
+
+<./.env.example>
+# === App ===
+SECRET_KEY=change-me
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# === Postgres ===
+POSTGRES_USER=meetscribe
+POSTGRES_PASSWORD=meetscribe
+POSTGRES_DB=meetscribe
+DATABASE_URL=postgresql+psycopg://meetscribe:meetscribe@postgres:5432/meetscribe
+
+# === Redis ===
+REDIS_URL=redis://redis:6379/0
+
+# === MinIO / S3 ===
+MINIO_ENDPOINT=minio:9000
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+S3_BUCKET=meetscribe-audio
+S3_SECURE=false
+
+# === Stripe ===
+STRIPE_WEBHOOK_SECRET=whsec_dummy
+STRIPE_SECRET_KEY=sk_test_dummy
+
+# === Whisper ===
+WHISPER_MODEL_PATH=/models/ggml-whisper-tiny.en.bin
+
+<./README.md>
+# MeetScribe
+
+Self-hosted microphone recorder → transcript → summary.
+
+## Quick start (dev)
+
+```bash
+cp .env.example .env
+./scripts/bootstrap.sh           # downloads model & starts stack
+`````
+
+Open [http://localhost](http://localhost).  Stop with `docker compose down`.
+
+<./scripts/bootstrap.sh>
+\#!/usr/bin/env bash
+set -euo pipefail
+
+\[ -f .env ] || { echo "Copy .env.example → .env first"; exit 1; }
+
+echo "Downloading whisper-tiny model…"
+mkdir -p models
+\[ -f models/ggml-whisper-tiny.en.bin ] ||&#x20;
+curl -L -o models/ggml-whisper-tiny.en.bin&#x20;
+[https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin)
+
+docker compose build
+docker compose up -d
+echo "🚀  Stack is up"
+
+<./infra/nginx/Dockerfile>
+FROM nginx:1.27-alpine
+COPY default.conf /etc/nginx/conf.d/default.conf
+
+<./infra/nginx/default.conf>
+server {
+listen 80;
+server\_name \_;
+
+location /api/ {
+proxy\_pass         [http://backend:8000/](http://backend:8000/);
+proxy\_set\_header   Host \$host;
+proxy\_set\_header   X-Real-IP \$remote\_addr;
+proxy\_set\_header   X-Forwarded-For \$proxy\_add\_x\_forwarded\_for;
+}
+
+location / {
+root   /usr/share/nginx/html;
+try\_files \$uri /index.html;
+}
+}
+
+<./infra/postgres/01\_init.sql>
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+<./backend/Dockerfile>
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /app
-
-# Copy and install Python dependencies for the worker
-COPY worker/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the backend application code so that "app" module is available
-COPY backend/app /app/app
+COPY app ./app
+CMD \["uvicorn", "app.main\:app", "--host", "0.0.0.0", "--port", "8000"]
 
-# Copy the Whisper model into the container
-COPY models /models
+<./backend/requirements.txt>
+fastapi==0.111.0
+uvicorn\[standard]==0.29.0
+python-jose==3.3.0
+passlib\[bcrypt]==1.7.4
+sqlmodel==0.0.16
+asyncpg==0.29.0
+redis==5.0.4
+rq==1.16.1
+boto3==1.34.113
+pydantic-settings==2.3.1
+stripe==10.5.0
+python-multipart==0.0.9
 
-# Copy the worker entrypoint
-COPY worker/worker.py /app/worker.py
+<./backend/app/**init**.py>
 
-# Ensure the working directory is on PYTHONPATH (cwd is already in sys.path)
-ENV PYTHONPATH=/app
+<./backend/app/db.py>
+from sqlmodel import SQLModel, create\_engine
+from app.config import settings
 
-# Run the RQ worker
-CMD ["python", "worker.py"]
+engine = create\_engine(settings.database\_url, echo=False)
+
+def init\_db() -> None:
+import app.models  # noqa
+SQLModel.metadata.create\_all(engine)
+
+<./backend/app/config.py>
+from functools import lru\_cache
+from pydantic\_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+model\_config = SettingsConfigDict(env\_file=".env", extra="ignore")
+
+```
+secret_key: str
+access_token_expire_minutes: int = 30
+
+database_url: str
+redis_url: str
+
+# S3
+s3_bucket: str
+minio_endpoint: str
+minio_root_user: str
+minio_root_password: str
+s3_secure: bool = False
+
+# Stripe
+stripe_secret_key: str
+stripe_webhook_secret: str
+
+whisper_model_path: str
+```
+
+@lru\_cache
+def get\_settings() -> "Settings":
+return Settings()
+
+settings = get\_settings()
+
+<./backend/app/main.py>
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import auth, ingest, meetings, billing
+from app.db import init\_db
+
+app = FastAPI(title="MeetScribe API")
+app.add\_middleware(
+CORSMiddleware,
+allow\_origins=\["*"],
+allow\_methods=\["*"],
+allow\_headers=\["\*"],
+)
+
+app.include\_router(auth.router, prefix="/api")
+app.include\_router(ingest.router, prefix="/api")
+app.include\_router(meetings.router, prefix="/api")
+app.include\_router(billing.router, prefix="/api")
+
+@app.on\_event("startup")
+def startup() -> None:
+init\_db()
+
+@app.get("/healthz")
+def health() -> dict\[str, str]:
+return {"status": "ok"}
+
+<./backend/app/api/**init**.py>
+
+<./backend/app/api/auth.py>
+from datetime import datetime, timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+from sqlmodel import Session, select
+
+from app.config import settings
+from app.models.user import User, UserCreate
+from app.db import engine
+
+router = APIRouter()
+pwd\_context = CryptContext(schemes=\["bcrypt"], deprecated="auto")
+oauth2\_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
+ALGORITHM = "HS256"
+
+def get\_db():
+with Session(engine) as session:
+yield session
+
+def verify\_pw(plain: str, hashed: str) -> bool:
+return pwd\_context.verify(plain, hashed)
+
+def hash\_pw(pw: str) -> str:
+return pwd\_context.hash(pw)
+
+def create\_token(data: dict, minutes: int) -> str:
+payload = data.copy()
+payload\["exp"] = datetime.utcnow() + timedelta(minutes=minutes)
+return jwt.encode(payload, settings.secret\_key, algorithm=ALGORITHM)
+
+def auth\_user(db: Session, email: str, pw: str) -> User | None:
+user = db.exec(select(User).where(User.email == email)).first()
+if user and verify\_pw(pw, user.hashed\_password):
+return user
+return None
+
+@router.post("/signup", status\_code=201)
+def signup(body: UserCreate, db: Session = Depends(get\_db)):
+user = User(email=body.email, hashed\_password=hash\_pw(body.password))
+db.add(user); db.commit(); db.refresh(user)
+return {"msg": "created"}
+
+@router.post("/token")
+def token(form: Annotated\[OAuth2PasswordRequestForm, Depends()], db: Session = Depends(get\_db)):
+user = auth\_user(db, form.username, form.password)
+if not user:
+raise HTTPException(status\_code=401, detail="bad creds")
+return {"access\_token": create\_token({"sub": str(user.id)}, settings.access\_token\_expire\_minutes),
+"token\_type": "bearer"}
+
+def current\_user(token: Annotated\[str, Depends(oauth2\_scheme)], db: Session = Depends(get\_db)) -> User:
+try:
+payload = jwt.decode(token, settings.secret\_key, algorithms=\[ALGORITHM])
+uid = payload.get("sub")
+except JWTError:
+raise HTTPException(status\_code=401, detail="bad token")
+user = db.get(User, uid)
+if not user:
+raise HTTPException(status\_code=401, detail="user gone")
+return user
+
+<./backend/app/api/ingest.py>
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from sqlmodel import Session
+
+from app.api.auth import current\_user
+from app.db import engine
+from app.models.meeting import Meeting
+from app.models.chunk import Chunk
+from app.services import hashing, s3
+from app.tasks.queue import enqueue\_transcription
+
+router = APIRouter()
+
+def get\_db():
+with Session(engine) as s:
+yield s
+
+@router.post("/chunks")
+async def chunk(
+meeting\_id: uuid.UUID,
+chunk\_id: str,
+file: Annotated\[UploadFile, File(...)],
+bg: BackgroundTasks,
+user = Depends(current\_user),
+db: Session = Depends(get\_db),
+):
+meeting = db.get(Meeting, meeting\_id)
+if not meeting or meeting.owner\_id != user.id:
+raise HTTPException(404)
+
+```
+blob = await file.read()
+key = f"{meeting_id}/{chunk_id}.webm"
+s3.put_object(key, blob)
+
+db.add(Chunk(id=chunk_id, meeting_id=meeting_id,
+             checksum=hashing.sha256_digest(blob),
+             size=len(blob)))
+db.commit()
+
+bg.add_task(enqueue_transcription, meeting_id, chunk_id, key)
+return {"status": "queued"}
+```
+
+<./backend/app/api/meetings.py>
+import uuid
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
+from app.api.auth import current\_user
+from app.db import engine
+from app.models.meeting import Meeting, MeetingCreate, MeetingRead
+
+router = APIRouter()
+
+def get\_db():
+with Session(engine) as s:
+yield s
+
+@router.post("/meetings", response\_model=MeetingRead, status\_code=201)
+def create(body: MeetingCreate, db: Session = Depends(get\_db), user = Depends(current\_user)):
+m = Meeting(\*\*body.dict(), owner\_id=user.id)
+db.add(m); db.commit(); db.refresh(m)
+return m
+
+@router.get("/meetings", response\_model=List\[MeetingRead])
+def mine(db: Session = Depends(get\_db), user = Depends(current\_user)):
+return db.exec(select(Meeting).where(Meeting.owner\_id == user.id)).all()
+
+@router.get("/meetings/{mid}", response\_model=MeetingRead)
+def one(mid: uuid.UUID, db: Session = Depends(get\_db), user = Depends(current\_user)):
+m = db.get(Meeting, mid)
+if not m or m.owner\_id != user.id:
+raise HTTPException(404)
+return m
+
+<./backend/app/api/billing.py>
+import stripe
+from fastapi import APIRouter, Header, HTTPException, Request
+
+from app.config import settings
+
+router = APIRouter()
+stripe.api\_key = settings.stripe\_secret\_key
+
+@router.post("/stripe/webhook")
+async def webhook(request: Request, stripe\_signature: str = Header(None)):
+payload = await request.body()
+try:
+event = stripe.Webhook.construct\_event(
+payload, stripe\_signature, settings.stripe\_webhook\_secret
+)
+except stripe.error.SignatureVerificationError:
+raise HTTPException(400, "bad sig")
+
+```
+# TODO: handle event.type and update DB
+return {"ok": True}
+```
+
+<./backend/app/models/**init**.py>
+from app.models.user import User
+from app.models.meeting import Meeting
+from app.models.chunk import Chunk
+
+<./backend/app/models/user.py>
+import uuid
+from sqlmodel import SQLModel, Field
+
+class User(SQLModel, table=True):
+id: uuid.UUID | None = Field(default\_factory=uuid.uuid4, primary\_key=True)
+email: str = Field(unique=True, index=True)
+hashed\_password: str
+is\_active: bool = True
+customer\_id: str | None = None  # stripe
+
+class UserCreate(SQLModel):
+email: str
+password: str
+
+<./backend/app/models/meeting.py>
+import uuid, datetime as dt
+from typing import Optional
+from sqlmodel import SQLModel, Field
+
+class MeetingBase(SQLModel):
+title: str
+started\_at: dt.datetime = Field(default\_factory=dt.datetime.utcnow)
+
+class Meeting(MeetingBase, table=True):
+id: uuid.UUID | None = Field(default\_factory=uuid.uuid4, primary\_key=True)
+owner\_id: uuid.UUID = Field(foreign\_key="user.id")
+summary\_markdown: Optional\[str] = None
+transcript\_text: Optional\[str] = None
+done: bool = False
+expected\_chunks: int | None = None
+
+class MeetingCreate(MeetingBase):
+expected\_chunks: int | None = None
+
+class MeetingRead(MeetingBase):
+id: uuid.UUID
+summary\_markdown: Optional\[str]
+done: bool
+
+<./backend/app/models/chunk.py>
+import uuid, datetime as dt
+from sqlmodel import SQLModel, Field
+
+class Chunk(SQLModel, table=True):
+id: str = Field(primary\_key=True)
+meeting\_id: uuid.UUID = Field(foreign\_key="meeting.id")
+checksum: str
+size: int
+received\_at: dt.datetime = Field(default\_factory=dt.datetime.utcnow)
+
+<./backend/app/services/**init**.py>
+
+<./backend/app/services/hashing.py>
+import hashlib
+def sha256\_digest(data: bytes) -> str:
+return hashlib.sha256(data).hexdigest()
+
+<./backend/app/services/s3.py>
+import boto3
+from botocore.client import Config
+from app.config import settings
+
+\_s3 = boto3.client(
+"s3",
+endpoint\_url=f"http\://{settings.minio\_endpoint}",
+aws\_access\_key\_id=settings.minio\_root\_user,
+aws\_secret\_access\_key=settings.minio\_root\_password,
+config=Config(signature\_version="s3v4"),
+region\_name="us-east-1",
+)
+
+def put\_object(key: str, body: bytes):
+\_s3.put\_object(Bucket=settings.s3\_bucket, Key=key, Body=body)
+
+def stream(key: str):
+return \_s3.get\_object(Bucket=settings.s3\_bucket, Key=key)\["Body"]
+
+<./backend/app/tasks/queue.py>
+import uuid
+from redis import Redis
+from rq import Queue
+from app.config import settings
+
+queue = Queue("transcribe", connection=Redis.from\_url(settings.redis\_url))
+
+def enqueue\_transcription(meeting\_id: uuid.UUID, chunk\_id: str, key: str):
+queue.enqueue("worker.worker.process\_chunk",
+meeting\_id=str(meeting\_id), chunk\_id=chunk\_id, key=key)
+
+<./worker/Dockerfile>
+FROM python:3.12-slim
+
+WORKDIR /worker
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY worker.py .
+
+CMD \["python", "worker.py"]
+
+<./worker/requirements.txt>
+faster-whisper==1.0.1
+openai==1.23.6
+redis==5.0.4
+rq==1.16.1
+boto3==1.34.113
+sqlmodel==0.0.16
+asyncpg==0.29.0
+python-dotenv==1.0.1
+
+<./worker/worker.py>
+import os, uuid, tempfile
+from pathlib import Path
+
+import openai
+from faster\_whisper import WhisperModel
+from redis import Redis
+from rq import Worker, Queue, Connection
+from sqlmodel import Session, select
+
+from app.config import settings
+from app.db import engine
+from app.models.meeting import Meeting, Chunk
+from app.services import s3
+
+openai.api\_key = os.getenv("OPENAI\_API\_KEY", "dummy")
+
+whisper = WhisperModel(settings.whisper\_model\_path,
+device="cpu", compute\_type="int8")
+
+def transcribe(path: Path) -> str:
+segments, \_ = whisper.transcribe(str(path))
+return " ".join(s.text for s in segments)
+
+def summarise(text: str) -> str:
+rsp = openai.chat.completions.create(
+model="gpt-4o-mini",
+messages=\[
+{"role": "system", "content": "You summarise meetings."},
+{"role": "user", "content": f"Summarise:\n{text}"},
+],
+temperature=0.3,
+)
+return rsp.choices\[0].message.content.strip()
+
+def process\_chunk(meeting\_id: str, chunk\_id: str, key: str):
+with tempfile.NamedTemporaryFile(delete=False) as tmp:
+tmp.write(s3.stream(key).read())
+tmp\_path = Path(tmp.name)
+
+```
+text = transcribe(tmp_path)
+tmp_path.unlink(missing_ok=True)
+
+with Session(engine) as db:
+    mtg = db.get(Meeting, uuid.UUID(meeting_id))
+    mtg.transcript_text = (mtg.transcript_text or "") + " " + text
+    db.add(mtg); db.commit()
+
+    # naive completion check
+    if mtg.expected_chunks and \
+       len(db.exec(select(Chunk).where(Chunk.meeting_id == mtg.id)).all()) >= mtg.expected_chunks:
+        mtg.summary_markdown = summarise(mtg.transcript_text)
+        mtg.done = True
+        db.add(mtg); db.commit()
+```
+
+if **name** == "**main**":
+with Connection(Redis.from\_url(os.getenv("REDIS\_URL", settings.redis\_url))):
+Worker(\[Queue("transcribe")]).work()
+
+<./.gitignore>
+**pycache**/
+\*.py\[cod]
+\*.egg-info/
+.env
+env/
+venv/
+node\_modules/
+frontend/dist/
+models/
+data/
+
+
+```
