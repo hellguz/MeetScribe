@@ -138,16 +138,20 @@ async def upload_chunk(
         if size_kb < 1:
             LOGGER.warning("⚠️  chunk %d too small – skipped", chunk_index)
             chunk_path.unlink(missing_ok=True)
-            if is_final and mtg.transcript_text:
-                # Generate summary even if final chunk is empty
-                if not mtg.summary_markdown:
-                    mtg.summary_markdown = summarise(mtg.transcript_text)
-                    mtg.done = True
-                    LOGGER.info("✅  meeting %s completed with summary", meeting_id)
             
-            db.add(mtg)
-            db.commit()
-            return {"ok": True, "skipped": True, "done": mtg.done}
+            # If this tiny chunk is also the final one, we still want to proceed to normal finalization
+            # So, only return early if it's NOT the final chunk.
+            if not is_final:
+                db.add(mtg) # Save any potential previous changes to mtg
+                db.commit()
+                return {"ok": True, "skipped": True, "done": mtg.done}
+            else:
+                # It IS the final chunk, but it's tiny. Log it and let the main summarization logic handle it.
+                # We don't do `db.add(mtg)` or `db.commit()` here to avoid overwriting data
+                # before the main summarization logic if mtg.transcript_text was updated by a previous chunk
+                # in the same session but not yet committed.
+                LOGGER.info("🗑️  Final chunk was tiny/empty, proceeding to finalize meeting %s", meeting_id)
+                # The function will now continue to the main summarization block
 
         # **REAL-TIME TRANSCRIPTION**: Process each chunk immediately
         try:
