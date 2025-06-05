@@ -14,12 +14,14 @@ export default function Record() {
 
   /* ─── recording state ───────────────────────────────────────────── */
   const [isRecording, setRecording] = useState(false);
-  const [localChunksCount, setLocalChunksCount] = useState(0); // Number of chunks sent by client
-  const [uploadedChunks, setUploadedChunks] = useState(0); // Number of chunks confirmed received by backend
-  const [expectedTotalChunks, setExpectedTotalChunks] = useState<number | null>(null); // From backend if final sent
+  const [localChunksCount, setLocalChunksCount] = useState(0); // includes header chunk
+  const [uploadedChunks, setUploadedChunks] = useState(0); // counts only non-header chunks from backend
+  const [expectedTotalChunks, setExpectedTotalChunks] = useState<number | null>(null); // counts only non-header
   const [recordingTime, setRecordingTime] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false); // True after stop, until summary is ready
+  const [isProcessing, setIsProcessing] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [transcribedChunks, setTranscribedChunks] = useState(0);
+  const [pollingStarted, setPollingStarted] = useState(false);
 
   const meetingId = useRef<string | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
@@ -28,70 +30,57 @@ export default function Record() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const firstChunkRef = useRef<boolean>(true);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Keep a ref for chunk index so it persists across recorder instances
   const chunkIndexRef = useRef(0);
-
-  // Mirror isRecording into a ref to avoid stale closures
   const isRecordingRef = useRef(false);
+
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
-  /* ─── polling for meeting status, transcript, and summary ───────── */
-  const pollMeetingStatus = useCallback(
-    async () => {
-      if (!meetingId.current) return;
-
-      try {
-        const res = await fetch(
-          `${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}`
-        );
-        if (!res.ok) {
-          console.warn("Polling: Failed to fetch meeting status");
-          return;
-        }
-        const data = await res.json();
-
-        if (typeof data.received_chunks === "number") {
-          setUploadedChunks(data.received_chunks);
-        }
-        if (data.expected_chunks !== null && typeof data.expected_chunks === "number") {
-          setExpectedTotalChunks(data.expected_chunks);
-        }
-
-        if (data.transcript_text && data.transcript_text !== liveTranscript) {
-          setLiveTranscript(data.transcript_text);
-        }
-
-        if (data.done) {
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          setIsProcessing(false); // Stop showing "Processing..." on record page
-          navigate(`/summary/${meetingId.current}`);
-        } else {
-          // If not done, but recording stopped, then we are processing
-          if (!isRecording && meetingId.current) {
-            setIsProcessing(true);
-          }
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
+  /* ─── polling for meeting status, transcript, summary ───────── */
+  const pollMeetingStatus = useCallback(async () => {
+    if (!meetingId.current) return;
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}`
+      );
+      if (!res.ok) {
+        console.warn("Polling: Failed to fetch meeting status");
+        return;
       }
-    },
-    [navigate, liveTranscript, isRecording]
-  );
+      const data = await res.json();
 
-  useEffect(() => {
-    if (meetingId.current && (isRecording || isProcessing)) {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
-    } else {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      // backend now sends "received_chunks" = number of non-header chunks
+      if (typeof data.received_chunks === "number") {
+        setUploadedChunks(data.received_chunks);
+      }
+      if (data.expected_chunks !== null && typeof data.expected_chunks === "number") {
+        setExpectedTotalChunks(data.expected_chunks);
+      }
+
+      // Update live transcript
+      if (data.transcript_text && data.transcript_text !== liveTranscript) {
+        setLiveTranscript(data.transcript_text);
+      }
+
+      // backend also sends how many non-header chunks are already transcribed
+      if (typeof data.transcribed_chunks === "number") {
+        setTranscribedChunks(data.transcribed_chunks);
+      }
+
+      if (data.done) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        setIsProcessing(false);
+        navigate(`/summary/${meetingId.current}`);
+      } else {
+        if (!isRecording && meetingId.current) {
+          setIsProcessing(true);
+        }
+      }
+    } catch (error) {
+      console.error("Polling error:", error);
     }
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
-  }, [isRecording, isProcessing, pollMeetingStatus]);
+  }, [navigate, liveTranscript, isRecording]);
 
   /* ─── timer effect ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -114,7 +103,7 @@ export default function Record() {
     const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }), // expected_chunks can be null initially
+      body: JSON.stringify({ title }),
     });
     if (!res.ok) throw new Error("Failed to create meeting on backend");
     const data = await res.json();
@@ -157,7 +146,6 @@ export default function Record() {
           if (result.expected_chunks !== null && typeof result.expected_chunks === "number") {
             setExpectedTotalChunks(result.expected_chunks);
           }
-          // No live transcript text in immediate response anymore
         } else {
           console.error(`Failed to upload chunk ${index}:`, result.detail || "Unknown error");
         }
@@ -178,7 +166,6 @@ export default function Record() {
       mimeType: "audio/webm; codecs=opus",
       audioBitsPerSecond: 128000,
     };
-    // Check if mimeType is supported
     if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? "")) {
       console.warn(`${recorderOptions.mimeType} is not supported, trying default.`);
       try {
@@ -203,23 +190,21 @@ export default function Record() {
         chunkIndexRef.current += 1;
       }
 
-      // Only gate on firstChunkRef, not on isRecording directly
       if (firstChunkRef.current) {
         firstChunkRef.current = false;
         if (recorder.state === "recording") {
-          recorder.stop(); // Stop the 1s recorder → triggers onstop
+          recorder.stop(); // Stop the 1 s recorder → triggers onstop
         }
       }
     };
 
     recorder.onstop = () => {
-      // If this was the first short chunk, and we are still meant to be recording, start the longer slicer
       if (
         !firstChunkRef.current &&
         isRecordingRef.current &&
         mediaRef.current?.stream.active
       ) {
-        createAndStartRecorder(20000); // Restart with 20s timeSlice
+        createAndStartRecorder(20000); // Restart with 20 s chunks
       }
     };
 
@@ -236,22 +221,38 @@ export default function Record() {
       });
       streamRef.current = stream;
 
-      // Reset state
+      // Reset everything
       setLocalChunksCount(0);
       setUploadedChunks(0);
       setExpectedTotalChunks(null);
+      setTranscribedChunks(0);
       setRecordingTime(0);
       setLiveTranscript("");
-      firstChunkRef.current = true;      // For 1s first chunk logic
-      chunkIndexRef.current = 0;         // Reset chunk counter on each new start
-      setIsProcessing(false);            // Not processing yet
-      meetingId.current = null;          // Clear previous meeting ID
+      firstChunkRef.current = true;
+      chunkIndexRef.current = 0;
+      setIsProcessing(false);
+      meetingId.current = null;
+      setPollingStarted(false);
+
+      // IMPORTANT: set isRecording *before* calling createMeeting/recorder
+      setRecording(true);
 
       startTimeRef.current = Date.now();
+      const newId = await createMeetingOnBackend();
 
-      await createMeetingOnBackend();    // Create meeting record on backend, get ID
-      createAndStartRecorder(1000);      // Start with a 1-second chunk for header
-      setRecording(true);
+      // ─── START POLLING IMMEDIATELY ───────────────────────────
+      // As soon as we have a meeting ID, kick off one immediate fetch
+      // plus a 3 s interval. That way "liveTranscript" will update as soon
+      // as the first chunk is transcribed.
+      meetingId.current = newId;
+      await pollMeetingStatus(); // fetch right away
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+      pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
+      setPollingStarted(true);
+
+      createAndStartRecorder(1000); // Start with a 1 s header chunk
     } catch (error) {
       console.error("Failed to start recording:", error);
       alert("Failed to start recording. Please check microphone permissions and console for errors.");
@@ -261,26 +262,30 @@ export default function Record() {
   async function stop() {
     if (!mediaRef.current || !streamRef.current || !meetingId.current) return;
 
-    setRecording(false); // Stop UI updates related to active recording
-    setIsProcessing(true); // Now we are processing the finalization
+    setRecording(false);
+    setIsProcessing(true);
 
-    // Stop the recorder. This will trigger its 'onstop' and 'ondataavailable' for the last chunk.
     if (mediaRef.current.state === "recording") {
       mediaRef.current.stop();
     }
-    // Stop all media tracks
     streamRef.current.getTracks().forEach((track) => track.stop());
 
-    // Send a final "empty" chunk to signal end of stream to backend
-    await new Promise((resolve) => setTimeout(resolve, 500)); // Wait a moment for the last real data chunk
+    // Let the last “real” chunk flush
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // The number of local chunks sent (localChunksCount) is the index for the next chunk
     const finalChunkIndex = localChunksCount;
     const finalBlob = new Blob([], { type: mediaRef.current.mimeType || "audio/webm" });
     await uploadChunk(finalBlob, finalChunkIndex, true);
-
-    // Polling will detect final_received and eventually navigate to summary
   }
+
+  /* ─── clean up polling on unmount ───────────────────────────────── */
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   /* ─── UI helpers ─────────────────────────────────────────────────── */
   const formatTime = (seconds: number) => {
@@ -289,11 +294,16 @@ export default function Record() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Backend’s `uploadedChunks` is already “real” (non-header) count.
+  // For local total, we subtract 1 to hide the header chunk:
+  const realLocal = localChunksCount > 1 ? localChunksCount - 1 : 0;
+  const realUploaded = uploadedChunks; // direct from backend
+  const realTotal =
+    expectedTotalChunks !== null ? expectedTotalChunks : realLocal;
+
   const getProgressPercentage = () => {
-    if (expectedTotalChunks === null && localChunksCount === 0) return 0;
-    const total = expectedTotalChunks ?? (localChunksCount > 0 ? localChunksCount : 1);
-    if (total === 0) return 0;
-    return Math.min(100, (uploadedChunks / total) * 100);
+    if (realTotal === 0) return 0;
+    return Math.min(100, (realUploaded / realTotal) * 100);
   };
 
   /* ─── styling snippets ───────────────────────────────────────────── */
@@ -382,12 +392,21 @@ export default function Record() {
           >
             <span>Upload Progress</span>
             <span>
-              {uploadedChunks} / {expectedTotalChunks ?? localChunksCount}{" "}
-              chunks uploaded
+              {realUploaded} / {realTotal} chunks uploaded
             </span>
           </div>
           <div style={progressBarStyle}>
             <div style={progressFillStyle}></div>
+          </div>
+          {/* Number of real chunks already transcribed */}
+          <div
+            style={{
+              fontSize: "14px",
+              color: "#6b7280",
+              textAlign: "right",
+            }}
+          >
+            Transcribed: {transcribedChunks} / {realTotal}
           </div>
         </div>
       )}
@@ -422,7 +441,7 @@ export default function Record() {
               color: "#1f2937",
             }}
           >
-            {liveTranscript || "Transcript will appear here as it's processed..."}
+            {liveTranscript}
           </div>
         </div>
       )}
@@ -476,7 +495,8 @@ export default function Record() {
               cursor: isProcessing || isRecording ? "not-allowed" : "pointer",
             }}
             onMouseOver={(e) =>
-              ! (isProcessing || isRecording) && (e.currentTarget.style.transform = "scale(1.05)")
+              !(isProcessing || isRecording) &&
+              (e.currentTarget.style.transform = "scale(1.05)")
             }
             onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
           >
@@ -505,13 +525,13 @@ export default function Record() {
       >
         {!isRecording && !isProcessing ? (
           <p>
-            Click "Start Recording" to begin. The first audio chunk is 1 second
+            Click “Start Recording” to begin. The first audio chunk is 1 second
             (for WebM header compatibility), subsequent chunks are 20 seconds.
             Live transcript will appear as audio is processed by the backend.
           </p>
         ) : isRecording ? (
           <p>
-            Recording in progress... Watch the live transcript (if available)
+            Recording in progress… Watch the live transcript (if available)
             update above.
           </p>
         ) : (
@@ -525,7 +545,13 @@ export default function Record() {
       {/* History list */}
       {history.length > 0 && !isRecording && !isProcessing && (
         <div style={{ marginTop: "40px", marginBottom: "40px" }}>
-          <h2 style={{ margin: "24px 0 12px 0", fontSize: 16, textAlign: "center" }}>
+          <h2
+            style={{
+              margin: "24px 0 12px 0",
+              fontSize: 16,
+              textAlign: "center",
+            }}
+          >
             Previous Meetings
           </h2>
           <ul
@@ -542,7 +568,8 @@ export default function Record() {
                 key={m.id}
                 style={{
                   padding: "12px 16px",
-                  borderBottom: index === history.length - 1 ? "none" : "1px solid #e5e7eb",
+                  borderBottom:
+                    index === history.length - 1 ? "none" : "1px solid #e5e7eb",
                   cursor: "pointer",
                   backgroundColor: index % 2 === 0 ? "#f9fafb" : "white",
                 }}

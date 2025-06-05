@@ -33,10 +33,8 @@ TEMPLATES = """
 - [Decision 2, if available]
 
 ## Action Items (if available)
-| Task         | Owner   | Deadline   |
-|--------------|---------|------------|
-| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
-| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
+- Task: [Task 1, if available]; Owner: [Person, if available]; Deadline: [Date, if available]
+- Task: [Task 2, if available]; Owner: [Person, if available]; Deadline: [Date, if available]
 
 ## Next Steps (if available)
 - [Next Step 1, if available]
@@ -107,10 +105,8 @@ TEMPLATES = """
 - [Decision 2, if available]
 
 ## Action Items (if available)
-| Task         | Owner   | Deadline   |
-|--------------|---------|------------|
-| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
-| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
+- Task: [Task 1, if available]; Owner: [Person, if available]; Deadline: [Date, if available]
+- Task: [Task 2, if available]; Owner: [Person, if available]; Deadline: [Date, if available]
 
 ## Next Steps (if available)
 - [Next Step 1, if available]
