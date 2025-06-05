@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     openai_api_key: str
     whisper_model_size: str = "tiny"
 
+    frontend_origin: str
+
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
 
     # Celery / Redis

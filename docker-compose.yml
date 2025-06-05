@@ -30,7 +30,11 @@ services:
       # - backend # Not strictly necessary for startup, but worker logically depends on backend (e.g. for DB schema)
 
   frontend:
-    build: ./frontend
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     ports:
       - "4132:80"
     env_file:
