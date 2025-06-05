@@ -3,9 +3,6 @@
 version: "3.8"
 
 services:
-  redis:
-    image: redis:alpine
-
   backend:
     build: ./backend
     ports:
@@ -15,20 +12,6 @@ services:
       - ./backend:/app           # For hot-reloading code in dev
     env_file:
       - .env
-    depends_on:
-      - redis
-
-  rqworker:
-    build: ./backend
-    command: >
-      rq worker transcription --url redis://redis:6379/0
-    volumes:
-      - ./data:/app/data
-      - ./backend:/app
-    env_file:
-      - .env
-    depends_on:
-      - redis
 
   frontend:
     build: 

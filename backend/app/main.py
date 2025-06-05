@@ -9,21 +9,14 @@ from pathlib import Path
 import datetime as dt
 
 import openai
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select, func
-
-from redis import Redis
-from rq import Queue
 
 from .config import settings
 from .migrations import migrate
 from .models import Meeting, MeetingChunk, MeetingCreate, MeetingStatus
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RQ setup: connect to Redis and create a queue named "transcription"
-redis_conn = Redis.from_url(settings.redis_url)  # see config.py’s new field
-queue = Queue("transcription", connection=redis_conn)
+from .worker import process_transcription_and_summary  # Import the background task processor
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -74,6 +67,7 @@ def create_meeting(body: MeetingCreate):
 
 @app.post("/api/chunks")
 async def upload_chunk(
+    background_tasks: BackgroundTasks,
     meeting_id: uuid.UUID = Form(...),
     chunk_index: int = Form(...),
     file: UploadFile = File(...),
@@ -86,6 +80,7 @@ async def upload_chunk(
           – increment received_chunks
           – update last_activity = now
       • If is_final=True arrives on a real chunk, set final_received=True and expected_chunks=received_chunks.
+      • In all cases, we schedule transcription & summarization in a background task.
     """
 
     # 1) Save the chunk to disk immediately (so we can give Whisper a valid WebM file)
@@ -104,7 +99,7 @@ async def upload_chunk(
         # Measure size in KB
         size_kb = chunk_path.stat().st_size / 1024
         LOGGER.info(
-            "⬆️  chunk %d for %s (%.1f KB) final=%s. Enqueueing for transcription.",
+            "⬆️  chunk %d for %s (%.1f KB) final=%s. Scheduling background task.",
             chunk_index,
             meeting_id,
             size_kb,
@@ -132,6 +127,14 @@ async def upload_chunk(
                 db.commit()
                 db.refresh(mtg)
 
+            # Schedule transcription for header or tiny chunk, in case needed downstream
+            background_tasks.add_task(
+                process_transcription_and_summary,
+                str(meeting_id),
+                chunk_index,
+                str(chunk_path.resolve()),
+            )
+
             return {
                 "ok": True,
                 "skipped": True,
@@ -140,9 +143,9 @@ async def upload_chunk(
                 "expected_chunks": mtg.expected_chunks,
             }
 
-    # 3) Enqueue the RQ job (fire-and-forget)
-    queue.enqueue(
-        "app.worker.process_transcription_and_summary",
+    # 3) Schedule the background task (fire-and-forget)
+    background_tasks.add_task(
+        process_transcription_and_summary,
         str(meeting_id),
         chunk_index,
         str(chunk_path.resolve()),
