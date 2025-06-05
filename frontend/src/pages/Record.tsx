@@ -179,7 +179,7 @@ export default function Record() {
       audioBitsPerSecond: 128000,
     };
     // Check if mimeType is supported
-    if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType)) {
+    if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? "")) {
       console.warn(`${recorderOptions.mimeType} is not supported, trying default.`);
       try {
         const tempRec = new MediaRecorder(streamRef.current!);
