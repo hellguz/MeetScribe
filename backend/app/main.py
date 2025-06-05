@@ -1,5 +1,5 @@
 # backend/app/main.py
-# ─────────────────────────────────────────────────────────────────────────────
+
 from __future__ import annotations
 
 import logging
@@ -13,10 +13,17 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select, func
 
+from redis import Redis
+from rq import Queue
+
 from .config import settings
 from .migrations import migrate
 from .models import Meeting, MeetingChunk, MeetingCreate, MeetingStatus
-from .worker import process_transcription_and_summary  # Import Celery task
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RQ setup: connect to Redis and create a queue named "transcription"
+redis_conn = Redis.from_url(settings.redis_url)  # see config.py’s new field
+queue = Queue("transcription", connection=redis_conn)
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -51,7 +58,7 @@ INACTIVITY_TIMEOUT_SECONDS = 120  # 2 minutes
 def create_meeting(body: MeetingCreate):
     """
     Create a new meeting. At creation, `received_chunks=0`, `expected_chunks=None`,
-    `final_received=False`, `last_activity = now`.  Return `transcribed_chunks=0`.
+    `final_received=False`, `last_activity = now`. Return `transcribed_chunks=0`.
     """
     with Session(engine) as db:
         mtg = Meeting(**body.model_dump())
@@ -80,6 +87,8 @@ async def upload_chunk(
           – update last_activity = now
       • If is_final=True arrives on a real chunk, set final_received=True and expected_chunks=received_chunks.
     """
+
+    # 1) Save the chunk to disk immediately (so we can give Whisper a valid WebM file)
     with Session(engine) as db:
         mtg = db.get(Meeting, meeting_id)
         if not mtg:
@@ -92,26 +101,37 @@ async def upload_chunk(
         with chunk_path.open("wb") as f:
             shutil.copyfileobj(file.file, f)
 
+        # Measure size in KB
         size_kb = chunk_path.stat().st_size / 1024
         LOGGER.info(
-            "⬆️  chunk %d for %s (%.1f KB) final=%s. Queuing for transcription.",
+            "⬆️  chunk %d for %s (%.1f KB) final=%s. Enqueueing for transcription.",
             chunk_index,
             meeting_id,
             size_kb,
             is_final,
         )
 
-        # If truly tiny (<0.1 KB), treat as signaling.
-        if size_kb < 0.1:
-            LOGGER.warning("⚠️  tiny chunk %d skipped", chunk_index)
-            if chunk_index > 0 and is_final:
+        # 2) If it’s a “real” chunk (index>0 and ≥0.1 KB), update meeting counters:
+        if chunk_index > 0 and size_kb >= 0.1:
+            mtg.received_chunks += 1
+            mtg.last_activity = dt.datetime.utcnow()
+            if is_final and not mtg.final_received:
                 mtg.final_received = True
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
-            # We do not update last_activity or received_chunks for header or tiny chunks.
             db.add(mtg)
             db.commit()
             db.refresh(mtg)
+
+        else:
+            # If this is chunk_index=0 (header) or “tiny” <0.1 KB, we skip counters:
+            if chunk_index > 0 and is_final and mtg.expected_chunks is None:
+                mtg.final_received = True
+                mtg.expected_chunks = mtg.received_chunks
+                db.add(mtg)
+                db.commit()
+                db.refresh(mtg)
+
             return {
                 "ok": True,
                 "skipped": True,
@@ -120,53 +140,24 @@ async def upload_chunk(
                 "expected_chunks": mtg.expected_chunks,
             }
 
-        # (size ≥ 0.1 KB) → real chunk
-        mc = db.exec(
-            select(MeetingChunk).where(
-                MeetingChunk.meeting_id == meeting_id,
-                MeetingChunk.chunk_index == chunk_index,
-            )
-        ).first()
-        if not mc:
-            mc = MeetingChunk(
-                meeting_id=meeting_id,
-                chunk_index=chunk_index,
-                path=str(chunk_path),
-                text=None,
-            )
-        else:
-            mc.path = str(chunk_path)
-            mc.text = None
-        db.add(mc)
-
-        # Only increment and update activity for non-header (chunk_index>0)
-        if chunk_index > 0:
-            mtg.received_chunks += 1
-            mtg.last_activity = dt.datetime.utcnow()
-
-        if chunk_index > 0 and is_final:
-            mtg.final_received = True
-            if mtg.expected_chunks is None:
-                mtg.expected_chunks = mtg.received_chunks
-
-        db.add(mtg)
-        db.commit()
-        db.refresh(mtg)
-
-    # Dispatch Celery task for transcription
-    process_transcription_and_summary.delay(
-        meeting_id_str=str(meeting_id),
-        chunk_index=chunk_index,
-        chunk_path_str=str(chunk_path.resolve()),
+    # 3) Enqueue the RQ job (fire-and-forget)
+    queue.enqueue(
+        "app.worker.process_transcription_and_summary",
+        str(meeting_id),
+        chunk_index,
+        str(chunk_path.resolve()),
     )
 
-    return {
-        "ok": True,
-        "skipped": False,
-        "received_chunks": mtg.received_chunks,
-        "done": mtg.done,
-        "expected_chunks": mtg.expected_chunks,
-    }
+    # 4) Return status immediately
+    with Session(engine) as db:
+        mtg = db.get(Meeting, meeting_id)
+        return {
+            "ok": True,
+            "skipped": False,
+            "received_chunks": mtg.received_chunks,
+            "done": mtg.done,
+            "expected_chunks": mtg.expected_chunks,
+        }
 
 
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
@@ -189,7 +180,7 @@ def get_meeting(mid: uuid.UUID):
             and mtg.expected_chunks is None
             and (now - mtg.last_activity).total_seconds() > INACTIVITY_TIMEOUT_SECONDS
         ):
-            LOGGER.info(f"🕒 Inactivity timeout for meeting {mid}: marking final_received & expected_chunks.")
+            LOGGER.info(f"🕒 Inactivity timeout for meeting {mid}: auto-finalize.")
             mtg.final_received = True
             mtg.expected_chunks = mtg.received_chunks
             db.add(mtg)
