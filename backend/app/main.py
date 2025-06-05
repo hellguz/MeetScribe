@@ -426,7 +426,38 @@ def get_meeting(mid: uuid.UUID):
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
-            raise HTTPException(404)
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        if not mtg.done and mtg.transcript_text:
+            # Check for stale meeting
+            # Ensure started_at is offset-aware for comparison with offset-awareutcnow()
+            # The default factory dt.datetime.utcnow is naive, but SQLite might store it as UTC.
+            # For robustness, assume it's naive UTC and make it offset-aware.
+            started_at_aware = mtg.started_at.replace(tzinfo=dt.timezone.utc)
+            now_aware = dt.datetime.now(dt.timezone.utc)
+
+            STALE_THRESHOLD_MINUTES = 5
+            elapsed_time = now_aware - started_at_aware
+
+            if elapsed_time > dt.timedelta(minutes=STALE_THRESHOLD_MINUTES):
+                LOGGER.info(
+                    "Stale meeting %s (started %s ago) found. Summarizing now.",
+                    mid,
+                    elapsed_time,
+                )
+                try:
+                    mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
+                    mtg.done = True
+                    db.add(mtg)
+                    db.commit()
+                    db.refresh(mtg)
+                    LOGGER.info("✅ Meeting %s summarized and marked as done.", mid)
+                except Exception as e:
+                    LOGGER.error(
+                        "❌ Failed to summarize stale meeting %s: %s", mid, e
+                    )
+                    # Optionally, re-raise or handle more gracefully if needed
+                    # For now, we'll just log and return the meeting as is
         return mtg
 
 

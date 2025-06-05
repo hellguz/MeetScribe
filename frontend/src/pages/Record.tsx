@@ -1,7 +1,7 @@
 // ./frontend/src/pages/Record.tsx
 import React, { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getHistory, MeetingMeta } from "../utils/history";
+import { getHistory, MeetingMeta, saveMeeting } from "../utils/history";
 
 export default function Record() {
   const navigate = useNavigate();
@@ -45,19 +45,28 @@ export default function Record() {
 
   /* ─── helpers ───────────────────────────────────────────────────── */
   async function createMeeting() {
+    const title = `Recording ${new Date().toLocaleString()}`;
     const res = await fetch(
       `${import.meta.env.VITE_API_BASE_URL}/api/meetings`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `Recording ${new Date().toLocaleString()}`,
+          title: title,
         }),
       }
     );
     if (!res.ok) throw new Error("failed to create meeting");
     const data = await res.json();
     meetingId.current = data.id;
+    // Save meeting to history as pending
+    saveMeeting({
+      id: data.id,
+      title: title,
+      started_at: new Date().toISOString(),
+      status: "pending",
+    });
+    setHistory(getHistory()); // Refresh history
     return data.id;
   }
 
@@ -414,7 +423,14 @@ export default function Record() {
                     alignItems: "baseline",
                   }}
                 >
-                  <span style={{ fontWeight: 500 }}>{m.title}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {m.title}
+                    {m.status === "pending" && (
+                      <span style={{ marginLeft: 8, color: "#6b7280", fontSize: 12 }}>
+                        (Pending...)
+                      </span>
+                    )}
+                  </span>
                   <span
                     style={{
                       fontStyle: "italic",
