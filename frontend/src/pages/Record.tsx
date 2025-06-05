@@ -23,9 +23,12 @@ export default function Record() {
 
   const meetingId = useRef<string | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+
+  // This ref tracks whether we've already sent the 1 s “header” chunk
+  const firstChunkRef = useRef<boolean>(true);
 
   /* ─── timer effect ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -51,9 +54,7 @@ export default function Record() {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title,
-        }),
+        body: JSON.stringify({ title }),
       }
     );
     if (!res.ok) throw new Error("failed to create meeting");
@@ -62,11 +63,11 @@ export default function Record() {
     // Save meeting to history as pending
     saveMeeting({
       id: data.id,
-      title: title,
+      title,
       started_at: new Date().toISOString(),
       status: "pending",
     });
-    setHistory(getHistory()); // Refresh history
+    setHistory(getHistory());
     return data.id;
   }
 
@@ -106,6 +107,42 @@ export default function Record() {
   }
 
   /* ─── recording control ─────────────────────────────────────────── */
+  // Helper to (re)create and start a MediaRecorder with a given timeslice
+  function createAndStartRecorder(timeSliceMs: number) {
+    if (!streamRef.current) return;
+
+    const recorder = new MediaRecorder(streamRef.current, {
+      mimeType: "audio/webm; codecs=opus",
+      audioBitsPerSecond: 128000,
+    });
+    mediaRef.current = recorder;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        setChunks((prev) => {
+          const newIndex = prev.length;
+          const newChunks = [...prev, e.data];
+          uploadChunk(e.data, newIndex).catch(console.error);
+          return newChunks;
+        });
+      }
+
+      // If this was the very first chunk (index 0), switch immediately to 20 s chunks
+      if (firstChunkRef.current) {
+        firstChunkRef.current = false;
+        // Stop the short, 1 s recorder
+        recorder.stop();
+
+        // Start a brand-new recorder for 20 s chunks
+        setTimeout(() => {
+          createAndStartRecorder(20000);
+        }, 0);
+      }
+    };
+
+    recorder.start(timeSliceMs);
+  }
+
   async function start() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -117,32 +154,19 @@ export default function Record() {
       });
       streamRef.current = stream;
 
+      // Reset states
       setChunks([]);
       setUploadedChunks(0);
       setRecordingTime(0);
       setLiveTranscript("");
       setChunkTexts([]);
+      firstChunkRef.current = true;
       startTimeRef.current = Date.now();
 
       await createMeeting();
 
-      const recorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm; codecs=opus",
-        audioBitsPerSecond: 128000,
-      });
-      mediaRef.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          setChunks((prev) => {
-            const newChunks = [...prev, e.data];
-            uploadChunk(e.data, prev.length).catch(console.error);
-            return newChunks;
-          });
-        }
-      };
-
-      recorder.start(20000);
+      // Create the recorder with a 1 s slice for the very first chunk
+      createAndStartRecorder(1000);
       setRecording(true);
     } catch (error) {
       console.error("Failed to start recording:", error);
@@ -158,11 +182,14 @@ export default function Record() {
     setRecording(false);
     setIsProcessing(true);
 
+    // Stop whatever recorder is active
     recorder.stop();
     stream.getTracks().forEach((t) => t.stop());
 
+    // Wait a tick so the final ondataavailable fires
     await new Promise((r) => setTimeout(r, 1000));
 
+    // Send an explicit “empty” final chunk (so is_final=true)
     const finalBlob = new Blob([], { type: "audio/webm" });
     await uploadChunk(finalBlob, chunks.length, true);
 
@@ -238,7 +265,6 @@ export default function Record() {
       <h1 style={{ textAlign: "center", marginBottom: "24px" }}>
         🎙️ MeetScribe Recorder
       </h1>
-
 
       {/* Timer */}
       {isRecording && (
@@ -363,7 +389,9 @@ export default function Record() {
               opacity: isProcessing ? 0.5 : 1,
               cursor: isProcessing ? "not-allowed" : "pointer",
             }}
-            onMouseOver={(e) => !isProcessing && (e.currentTarget.style.transform = "scale(1.05)")}
+            onMouseOver={(e) =>
+              !isProcessing && (e.currentTarget.style.transform = "scale(1.05)")
+            }
             onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
           >
             🎙️ Start Recording
@@ -397,11 +425,13 @@ export default function Record() {
         ) : (
           <p>
             Recording in progress... Watch the live transcript appear above as
-            you speak. Each 20-second chunk is sent for transcription instantly.
+            you speak. The very first chunk lasts 1 second (just for header),
+            then each chunk is 20 seconds long.
           </p>
         )}
       </div>
-            {/* History list */}
+
+      {/* History list */}
       {history.length > 0 && (
         <div style={{ marginBottom: "40px" }}>
           <h2 style={{ margin: "24px 0 12px 0", fontSize: 16 }}>Previous meetings</h2>
@@ -426,7 +456,9 @@ export default function Record() {
                   <span style={{ fontWeight: 500 }}>
                     {m.title}
                     {m.status === "pending" && (
-                      <span style={{ marginLeft: 8, color: "#6b7280", fontSize: 12 }}>
+                      <span
+                        style={{ marginLeft: 8, color: "#6b7280", fontSize: 12 }}
+                      >
                         (Pending...)
                       </span>
                     )}
@@ -446,7 +478,6 @@ export default function Record() {
           </ul>
         </div>
       )}
-
     </div>
   );
 }

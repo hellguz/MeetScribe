@@ -1,3 +1,4 @@
+# backend/app/main.py
 """
 FastAPI backend for MeetScribe MVP.
 Handles meeting creation, chunk uploads, transcription and summarisation.
@@ -9,15 +10,12 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
-from typing import List
-import datetime as dt  # Added for date/time in summaries
+import datetime as dt
 
-import av
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from fastapi.responses import JSONResponse
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import settings
@@ -49,31 +47,39 @@ _whisper = WhisperModel(
 )
 LOGGER.info("✅ Whisper model loaded.")
 
+
 # ─────────────────────────── helpers ─────────────────────────────────────────
-def transcribe_webm_chunk(chunk_path: Path, first_chunk_path: Path | None = None) -> str:
+def transcribe_webm_chunk(chunk_path: Path) -> str:
     """
-    Transcribe a WebM chunk. For non-first chunks, prepend the first chunk's header.
+    Transcribe a WebM chunk. For non-first chunks, prepend the ENTIRE first chunk
+    (which contains the initialization segment) so that Whisper sees a valid WebM file.
     """
     try:
-        if first_chunk_path and chunk_path != first_chunk_path:
-            # Create a temporary file containing the header + this chunk's data
+        # Locate the very first chunk (chunk_000.webm) in the same directory:
+        first_chunk_path = chunk_path.parent / "chunk_000.webm"
+
+        if first_chunk_path.exists() and chunk_path.name != first_chunk_path.name:
+            # Create a temporary file containing: [full first chunk] + [this chunk]
             temp_path = chunk_path.parent / f"temp_{chunk_path.name}"
 
-            with first_chunk_path.open("rb") as first_file:
-                header_data = first_file.read(1024)
+            # Write the entire first chunk, then the entire current chunk
+            with first_chunk_path.open("rb") as first_f, temp_path.open("wb") as temp_f:
+                temp_f.write(first_f.read())
+                with chunk_path.open("rb") as this_f:
+                    temp_f.write(this_f.read())
 
-            with temp_path.open("wb") as temp_file:
-                temp_file.write(header_data)
-                with chunk_path.open("rb") as chunk_file:
-                    temp_file.write(chunk_file.read())
-
+            # Transcribe the stitched‐together file
             segments, _ = _whisper.transcribe(str(temp_path), beam_size=5)
-            result = " ".join(s.text for s in segments)
+            # Clean up
             temp_path.unlink(missing_ok=True)
-            return result
+
+            return " ".join(s.text for s in segments)
         else:
+            # This is either the first chunk (valid WebM) or first_chunk missing;
+            # transcribe directly.
             segments, _ = _whisper.transcribe(str(chunk_path), beam_size=5)
             return " ".join(s.text for s in segments)
+
     except Exception as e:
         LOGGER.warning(f"Failed to transcribe chunk {chunk_path.name}: {e}")
         return ""
@@ -370,7 +376,8 @@ async def upload_chunk(
             shutil.copyfileobj(file.file, f)
 
         size_kb = chunk_path.stat().st_size / 1024
-        LOGGER.info("⬆️  chunk %d for %s (%.1f kB) final=%s", chunk_index, meeting_id, size_kb, is_final)
+        LOGGER.info("⬆️  chunk %d for %s (%.1f kB) final=%s",
+                    chunk_index, meeting_id, size_kb, is_final)
 
         # Ignore tiny chunks
         if size_kb < 1:
@@ -383,22 +390,24 @@ async def upload_chunk(
 
         # Real-time transcription
         try:
-            first_chunk = mtg_dir / "chunk_000.webm"
-            if not first_chunk.exists():
-                first_chunk = chunk_path
-            chunk_text = transcribe_webm_chunk(chunk_path, first_chunk)
+            chunk_text = transcribe_webm_chunk(chunk_path)
 
             if chunk_text.strip():
-                LOGGER.info("📝  chunk %d transcribed (%d chars)", chunk_index, len(chunk_text))
-                mtg.transcript_text = (mtg.transcript_text + " " if mtg.transcript_text else "") + chunk_text.strip()
+                LOGGER.info("📝  chunk %d transcribed (%d chars)",
+                            chunk_index, len(chunk_text))
+                mtg.transcript_text = (
+                    (mtg.transcript_text + " ")
+                    if mtg.transcript_text else ""
+                ) + chunk_text.strip()
             else:
                 LOGGER.warning("⚠️  chunk %d produced no text", chunk_index)
         except Exception as e:
-            LOGGER.error("❌  transcription failure on chunk %d: %s", chunk_index, e)
+            LOGGER.error("❌  transcription failure on chunk %d: %s",
+                         chunk_index, e)
 
         mtg.received_chunks += 1
 
-        # Final summary
+        # Final summary (trigger immediately when is_final=True)
         if is_final and mtg.transcript_text and not mtg.summary_markdown:
             try:
                 LOGGER.info("📋  Generating summary …")
@@ -429,10 +438,6 @@ def get_meeting(mid: uuid.UUID):
             raise HTTPException(status_code=404, detail="Meeting not found")
 
         if not mtg.done and mtg.transcript_text:
-            # Check for stale meeting
-            # Ensure started_at is offset-aware for comparison with offset-awareutcnow()
-            # The default factory dt.datetime.utcnow is naive, but SQLite might store it as UTC.
-            # For robustness, assume it's naive UTC and make it offset-aware.
             started_at_aware = mtg.started_at.replace(tzinfo=dt.timezone.utc)
             now_aware = dt.datetime.now(dt.timezone.utc)
 
@@ -456,8 +461,6 @@ def get_meeting(mid: uuid.UUID):
                     LOGGER.error(
                         "❌ Failed to summarize stale meeting %s: %s", mid, e
                     )
-                    # Optionally, re-raise or handle more gracefully if needed
-                    # For now, we'll just log and return the meeting as is
         return mtg
 
 
