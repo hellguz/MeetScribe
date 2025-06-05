@@ -35,3 +35,5 @@ services:
       - "4132:80"
     env_file:
       - .env
+    depends_on:
+      - backend      
