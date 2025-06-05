@@ -13,8 +13,8 @@ services:
     build: ./frontend
     ports:
       - "4132:80"
-    depends_on:
-      - backend
+    # depends_on:
+    #   - backend
     env_file:
       - .env
 

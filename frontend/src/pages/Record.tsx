@@ -1,5 +1,5 @@
 // ./frontend/src/pages/Record.tsx
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { getHistory, MeetingMeta, saveMeeting } from "../utils/history";
 
@@ -19,23 +19,46 @@ export default function Record() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
-  const [chunkTexts, setChunkTexts] = useState<string[]>([]);
 
   const meetingId = useRef<string | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // This ref tracks whether we've already sent the 1 s “header” chunk
   const firstChunkRef = useRef<boolean>(true);
+
+  /* ─── poll only for “done” and updated received_chunks ───────────── */
+  useEffect(() => {
+    if (!meetingId.current || !isProcessing) return;
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (typeof data.received_chunks === "number") {
+          setUploadedChunks(data.received_chunks);
+        }
+        if (data.done) {
+          clearInterval(poll);
+          navigate(`/summary/${meetingId.current}`);
+        }
+      } catch {
+        // ignore errors
+      }
+    }, 3000);
+
+    return () => clearInterval(poll);
+  }, [isProcessing, navigate]);
 
   /* ─── timer effect ──────────────────────────────────────────────── */
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-        setRecordingTime(elapsed);
+        setRecordingTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
       }, 1000);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -47,7 +70,7 @@ export default function Record() {
   }, [isRecording]);
 
   /* ─── helpers ───────────────────────────────────────────────────── */
-  async function createMeeting() {
+  const createMeeting = useCallback(async () => {
     const title = `Recording ${new Date().toLocaleString()}`;
     const res = await fetch(
       `${import.meta.env.VITE_API_BASE_URL}/api/meetings`,
@@ -57,10 +80,10 @@ export default function Record() {
         body: JSON.stringify({ title }),
       }
     );
-    if (!res.ok) throw new Error("failed to create meeting");
+    if (!res.ok) throw new Error("Failed to create meeting");
     const data = await res.json();
     meetingId.current = data.id;
-    // Save meeting to history as pending
+
     saveMeeting({
       id: data.id,
       title,
@@ -69,45 +92,47 @@ export default function Record() {
     });
     setHistory(getHistory());
     return data.id;
-  }
+  }, []);
 
-  async function uploadChunk(blob: Blob, index: number, isFinal = false) {
-    if (!meetingId.current) return false;
+  const uploadChunk = useCallback(
+    async (blob: Blob, index: number, isFinal = false) => {
+      if (!meetingId.current) return false;
 
-    const fd = new FormData();
-    fd.append("meeting_id", meetingId.current);
-    fd.append("chunk_index", String(index));
-    fd.append("file", blob, `chunk-${index}.webm`);
-    fd.append("is_final", String(isFinal));
+      const fd = new FormData();
+      fd.append("meeting_id", meetingId.current);
+      fd.append("chunk_index", String(index));
+      fd.append("file", blob, `chunk-${index}.webm`);
+      fd.append("is_final", String(isFinal));
 
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/api/chunks`,
-        { method: "POST", body: fd }
-      );
-      const result = await response.json();
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/api/chunks`,
+          { method: "POST", body: fd }
+        );
+        const result = await response.json();
 
-      if (result.ok && !result.skipped) {
-        setUploadedChunks((prev) => Math.max(prev, result.received_chunks));
-        if (result.latest_chunk_text?.trim()) {
-          const newText = result.latest_chunk_text.trim();
-          setChunkTexts((prev) => {
-            const updated = [...prev];
-            updated[index] = newText;
-            return updated;
-          });
-          setLiveTranscript((prev) => (prev ? prev + " " + newText : newText));
+        if (result.ok && !result.skipped) {
+          // Update upload progress
+          if (typeof result.received_chunks === "number") {
+            setUploadedChunks(result.received_chunks);
+          }
+          // Append live transcript chunk
+          if (result.latest_chunk_text) {
+            setLiveTranscript((prev) =>
+              prev ? prev + " " + result.latest_chunk_text : result.latest_chunk_text
+            );
+          }
         }
+        return result.ok;
+      } catch (error) {
+        console.error(`Failed to upload chunk ${index}:`, error);
+        return false;
       }
-      return result.ok;
-    } catch (error) {
-      console.error(`Failed to upload chunk ${index}:`, error);
-      return false;
-    }
-  }
+    },
+    []
+  );
 
   /* ─── recording control ─────────────────────────────────────────── */
-  // Helper to (re)create and start a MediaRecorder with a given timeslice
   function createAndStartRecorder(timeSliceMs: number) {
     if (!streamRef.current) return;
 
@@ -127,16 +152,11 @@ export default function Record() {
         });
       }
 
-      // If this was the very first chunk (index 0), switch immediately to 20 s chunks
+      // Once the first 1 s chunk arrives, switch to 20 s slices
       if (firstChunkRef.current) {
         firstChunkRef.current = false;
-        // Stop the short, 1 s recorder
         recorder.stop();
-
-        // Start a brand-new recorder for 20 s chunks
-        setTimeout(() => {
-          createAndStartRecorder(20000);
-        }, 0);
+        setTimeout(() => createAndStartRecorder(20000), 0);
       }
     };
 
@@ -154,18 +174,15 @@ export default function Record() {
       });
       streamRef.current = stream;
 
-      // Reset states
+      // Reset state
       setChunks([]);
       setUploadedChunks(0);
       setRecordingTime(0);
       setLiveTranscript("");
-      setChunkTexts([]);
       firstChunkRef.current = true;
       startTimeRef.current = Date.now();
 
       await createMeeting();
-
-      // Create the recorder with a 1 s slice for the very first chunk
       createAndStartRecorder(1000);
       setRecording(true);
     } catch (error) {
@@ -182,20 +199,14 @@ export default function Record() {
     setRecording(false);
     setIsProcessing(true);
 
-    // Stop whatever recorder is active
     recorder.stop();
     stream.getTracks().forEach((t) => t.stop());
 
-    // Wait a tick so the final ondataavailable fires
+    // Wait so the final ondataavailable fires
     await new Promise((r) => setTimeout(r, 1000));
 
-    // Send an explicit “empty” final chunk (so is_final=true)
     const finalBlob = new Blob([], { type: "audio/webm" });
     await uploadChunk(finalBlob, chunks.length, true);
-
-    setTimeout(() => {
-      navigate(`/summary/${meetingId.current}`);
-    }, 2000);
   }
 
   /* ─── UI helpers ─────────────────────────────────────────────────── */
@@ -281,7 +292,7 @@ export default function Record() {
         </div>
       )}
 
-      {/* Progress */}
+      {/* Upload Progress */}
       {chunks.length > 0 && (
         <div style={{ marginBottom: "24px" }}>
           <div
@@ -304,7 +315,7 @@ export default function Record() {
         </div>
       )}
 
-      {/* Live transcript */}
+      {/* Live Transcript */}
       {liveTranscript && (
         <div
           style={{
@@ -360,7 +371,11 @@ export default function Record() {
           style={{
             fontSize: "18px",
             fontWeight: "bold",
-            color: isRecording ? "#dc2626" : isProcessing ? "#d97706" : "#16a34a",
+            color: isRecording
+              ? "#dc2626"
+              : isProcessing
+              ? "#d97706"
+              : "#16a34a",
             marginBottom: "8px",
           }}
         >
@@ -372,8 +387,7 @@ export default function Record() {
         </div>
         {chunks.length > 0 && (
           <div style={{ fontSize: "14px", color: "#6b7280" }}>
-            Chunks recorded: {chunks.length} | Uploaded: {uploadedChunks} |
-            Transcribed: {chunkTexts.filter(Boolean).length}
+            Chunks recorded: {chunks.length} | Uploaded: {uploadedChunks}
           </div>
         )}
       </div>
@@ -434,7 +448,9 @@ export default function Record() {
       {/* History list */}
       {history.length > 0 && (
         <div style={{ marginBottom: "40px" }}>
-          <h2 style={{ margin: "24px 0 12px 0", fontSize: 16 }}>Previous meetings</h2>
+          <h2 style={{ margin: "24px 0 12px 0", fontSize: 16 }}>
+            Previous meetings
+          </h2>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {history.map((m) => (
               <li

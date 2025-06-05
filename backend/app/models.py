@@ -18,7 +18,8 @@ class Meeting(SQLModel, table=True):
     • `started_at`       – UTC timestamp, defaults to now
     • `expected_chunks`  – total chunks we expect (can be NULL if unknown)
     • `received_chunks`  – number of chunks we have stored so far
-    • `transcript_text`  – raw concatenated transcript
+    • `final_received`   – True once the client indicated `is_final`
+    • `transcript_text`  – raw concatenated transcript (assembled in order)
     • `summary_markdown` – GPT summary (markdown)
     • `done`             – True once summary_markdown is filled
     """
@@ -27,9 +28,21 @@ class Meeting(SQLModel, table=True):
     started_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     expected_chunks: int | None = None
     received_chunks: int = 0
+    final_received: bool = False
     transcript_text: Optional[str] = None
     summary_markdown: Optional[str] = None
     done: bool = False
+
+
+class MeetingChunk(SQLModel, table=True):
+    """
+    Stores metadata & transcription text for every uploaded chunk.
+    """
+    id: int | None = Field(default=None, primary_key=True)
+    meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
+    chunk_index: int
+    path: str
+    text: Optional[str] = None
 
 
 class MeetingCreate(SQLModel):

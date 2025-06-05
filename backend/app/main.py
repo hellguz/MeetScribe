@@ -1,25 +1,29 @@
 # backend/app/main.py
 """
 FastAPI backend for MeetScribe MVP.
-Handles meeting creation, chunk uploads, transcription and summarisation.
+
+ • Synchronous transcription of each chunk so front-end gets live text immediately.
+ • Automatic SQLite migrations (see migrations.py).
+ • When the final chunk arrives (and all are transcribed), summary is generated inline.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import shutil
 import uuid
 from pathlib import Path
-import datetime as dt
 
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from .config import settings
-from .models import Meeting, MeetingCreate, MeetingRead
+from .migrations import migrate
+from .models import Meeting, MeetingChunk, MeetingCreate, MeetingRead
+from .templates import TEMPLATES
 
 # ────────────────────────────── setup ─────────────────────────────────────────
 
@@ -32,72 +36,48 @@ logging.basicConfig(
 openai.api_key = settings.openai_api_key
 
 engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
-SQLModel.metadata.create_all(engine)
+SQLModel.metadata.create_all(engine)   # create new tables if needed
+migrate(engine)                        # add missing columns (e.g. final_received)
 
 AUDIO_DIR = Path("data/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 from faster_whisper import WhisperModel  # noqa: E402
 
-LOGGER.info("🔊 Loading Whisper model (%s)...", settings.whisper_model_size)
-_whisper = WhisperModel(
-    settings.whisper_model_size,
-    device="cpu",
-    compute_type="int8",
-)
+LOGGER.info("🔊 Loading Whisper model (%s)…", settings.whisper_model_size)
+_whisper = WhisperModel(settings.whisper_model_size, device="cpu", compute_type="int8")
 LOGGER.info("✅ Whisper model loaded.")
 
 
 # ─────────────────────────── helpers ─────────────────────────────────────────
+
 def transcribe_webm_chunk(chunk_path: Path) -> str:
     """
-    Transcribe a WebM chunk. For non-first chunks, prepend the ENTIRE first chunk
-    (which contains the initialization segment) so that Whisper sees a valid WebM file.
+    Transcribe a WebM chunk. If not the first chunk, prepend the first chunk
+    so Whisper sees a valid WebM file. Returns concatenated text.
     """
     try:
-        # Locate the very first chunk (chunk_000.webm) in the same directory:
         first_chunk_path = chunk_path.parent / "chunk_000.webm"
-
         if first_chunk_path.exists() and chunk_path.name != first_chunk_path.name:
-            # Create a temporary file containing: [full first chunk] + [this chunk]
             temp_path = chunk_path.parent / f"temp_{chunk_path.name}"
-
-            # Write the entire first chunk, then the entire current chunk
-            with first_chunk_path.open("rb") as first_f, temp_path.open("wb") as temp_f:
-                temp_f.write(first_f.read())
-                with chunk_path.open("rb") as this_f:
-                    temp_f.write(this_f.read())
-
-            # Transcribe the stitched‐together file
+            with first_chunk_path.open("rb") as f1, temp_path.open("wb") as out:
+                out.write(f1.read())
+                with chunk_path.open("rb") as f2:
+                    out.write(f2.read())
             segments, _ = _whisper.transcribe(str(temp_path), beam_size=5)
-            # Clean up
             temp_path.unlink(missing_ok=True)
-
-            return " ".join(s.text for s in segments)
         else:
-            # This is either the first chunk (valid WebM) or first_chunk missing;
-            # transcribe directly.
             segments, _ = _whisper.transcribe(str(chunk_path), beam_size=5)
-            return " ".join(s.text for s in segments)
 
+        return " ".join(s.text for s in segments)
     except Exception as e:
-        LOGGER.warning(f"Failed to transcribe chunk {chunk_path.name}: {e}")
+        LOGGER.warning("Failed to transcribe %s: %s", chunk_path.name, e)
         return ""
 
 
 def summarise(text: str, started_at: dt.datetime) -> str:
     """
-    Summarise the full transcript into a Markdown document using one of the
-    predefined templates. Key rules:
-
-    • Pick the template that best fits the meeting (or craft a similar one).
-    • Detect the predominant language and write the summary—including headings—in
-      that language.
-    • Insert the actual current date & time into the summary.
-    • Delete any section/field whose content is empty (even if the template
-      didn't mark it “(if available)”).
-    • Unless the first “Type” line adds real value, omit it entirely.
-    • Output only the completed Markdown—no additional commentary.
+    Summarise the full transcript into a Markdown document using GPT-4o-mini.
     """
     if not text or len(text.strip()) < 10:
         return "Recording too short to generate meaningful summary."
@@ -105,236 +85,49 @@ def summarise(text: str, started_at: dt.datetime) -> str:
     date_str = started_at.strftime("%Y-%m-%d")
     time_range = f"{started_at.strftime('%H:%M')} - {dt.datetime.utcnow().strftime('%H:%M')}"
 
-    # The raw templates (exactly as specified by the user)
-    TEMPLATES = """
-1. General Meeting Summary Template
-# Meeting Summary
-
-**Type:** [General Meeting / Consultation / Project Meeting / Project Presentation]
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-**Location:** [Physical/Virtual Location, if available]
-
-## Participants (if available)
-- [Name 1, if available]
-- [Name 2, if available]
-
-## Agenda/Objectives (if available)
-- [Objective 1, if available]
-- [Objective 2, if available]
-
-## Key Discussion Points
-- [Topic 1]
-  - [Summary/Details]
-- [Topic 2]
-  - [Summary/Details]
-
-## Decisions Made (if available)
-- [Decision 1, if available]
-- [Decision 2, if available]
-
-## Action Items (if available)
-| Task         | Owner   | Deadline   |
-|--------------|---------|------------|
-| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
-| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
-
-## Next Steps (if available)
-- [Next Step 1, if available]
-- [Next Step 2, if available]
-
-## Additional Notes
-[Any other relevant information or context]
-
-2. Consultation Session Template
-# Consultation Session Summary
-
-**Type:** Consultation
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-**Client:** [Client Name, if available]
-
-## Attendees (if available)
-- [Consultant Name, if available]
-- [Client Name/Representative, if available]
-- [Other Participants, if available]
-
-## Topics Discussed
-- [Topic 1]
-  - [Summary]
-- [Topic 2]
-  - [Summary]
-
-## Recommendations (if available)
-- [Recommendation 1, if available]
-- [Recommendation 2, if available]
-
-## Follow-Up Actions (if available)
-- [Action 1, if available]
-- [Action 2, if available]
-
-## Next Steps (if available)
-- [Next Step 1, if available]
-- [Next Step 2, if available]
-
-3. Project Meeting Template
-# Project Meeting Summary
-
-**Type:** Project Meeting
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-**Project:** [Project Name, if available]
-
-## Participants (if available)
-- [Team Member 1, if available]
-- [Team Member 2, if available]
-
-## Agenda (if available)
-- [Agenda Item 1, if available]
-- [Agenda Item 2, if available]
-
-## Progress Updates
-- [Update 1]
-- [Update 2]
-
-## Issues/Risks Identified (if available)
-- [Issue/Risk 1, if available]
-- [Issue/Risk 2, if available]
-
-## Decisions (if available)
-- [Decision 1, if available]
-- [Decision 2, if available]
-
-## Action Items (if available)
-| Task         | Owner   | Deadline   |
-|--------------|---------|------------|
-| [Task 1, if available]     | [Person, if available]| [Date, if available]     |
-| [Task 2, if available]     | [Person, if available]| [Date, if available]     |
-
-## Next Steps (if available)
-- [Next Step 1, if available]
-- [Next Step 2, if available]
-
-4. Project Presentation Summary Template
-# Project Presentation Summary
-
-**Type:** Project Presentation
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-**Presenter:** [Presenter Name, if available]
-
-## Attendees (if available)
-- [Attendee 1, if available]
-- [Attendee 2, if available]
-
-## Presentation Topics
-- [Topic 1]
-  - [Key Points]
-- [Topic 2]
-  - [Key Points]
-
-## Questions & Answers (if available)
-- **Q:** [Question, if available]
-  - **A:** [Answer, if available]
-- **Q:** [Question, if available]
-  - **A:** [Answer, if available]
-
-## Feedback/Next Steps (if available)
-- [Feedback 1, if available]
-- [Next Step 1, if available]
-
-5. Brainstorming Session Template
-# Brainstorming Session Summary
-
-**Type:** Brainstorming
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-
-## Participants (if available)
-- [Participant 1, if available]
-- [Participant 2, if available]
-
-## Goals (if available)
-- [Goal 1, if available]
-- [Goal 2, if available]
-
-## Ideas Generated
-- [Idea 1]
-- [Idea 2]
-
-## Top Ideas (Voted/Selected, if available)
-- [Top Idea 1, if available]
-- [Top Idea 2, if available]
-
-## Next Steps (if available)
-- [Next Step 1, if available]
-- [Next Step 2, if available]
-
-6. Retrospective/Review Meeting Template
-# Retrospective Meeting Summary
-
-**Type:** Retrospective/Review
-
-**Date:** [YYYY-MM-DD, if available]
-**Time:** [HH:MM - HH:MM, if available]
-**Project/Team:** [Name, if available]
-
-## Participants (if available)
-- [Participant 1, if available]
-- [Participant 2, if available]
-
-## What Went Well
-- [Positive 1]
-- [Positive 2]
-
-## What Could Be Improved
-- [Improvement 1]
-- [Improvement 2]
-
-## Action Items (if available)
-- [Action 1, if available]
-- [Action 2, if available]
-
-## Next Steps (if available)
-- [Next Step 1, if available]
-- [Next Step 2, if available]
-"""
-
     system_prompt = f"""
 You are a meeting-summary generator.
 
 RULES
-• Decide which template (1–6) suits the meeting. If none is perfect, adapt one.
-• Detect the dominant language of the transcript and translate ALL headings,
-  labels and fixed table headers into that language. Summarise in that language.
-• Substitute {date_str} for any [YYYY-MM-DD] placeholder.
-• Substitute {time_range} for any [HH:MM - HH:MM] placeholder.
-• Strip every section/field that ends up empty—regardless of “(if available)”.
-• Omit the initial “**Type:** …” line unless it communicates meaningful info.
-• Remove ALL leftover placeholders/brackets.
-• Return ONLY the filled Markdown, no extra prose.
+• Choose (or adapt) one template 1-6.
+• Translate headings to the meeting’s dominant language.
+• Replace [YYYY-MM-DD] → {date_str}; [HH:MM - HH:MM] → {time_range}.
+• Drop empty sections, remove all placeholders/brackets, return ONLY Markdown.
 
 TEMPLATES
 {TEMPLATES}
 """
-
     rsp = openai.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.3,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Here is the full transcript:\n{text}"},
+            {"role": "user", "content": f"Full transcript:\n{text}"},
         ],
     )
     return rsp.choices[0].message.content.strip()
 
 
+def _rebuild_transcript(db: Session, meeting_id: uuid.UUID) -> str:
+    """
+    Concatenate all already-transcribed MeetingChunk.text in order.
+    """
+    parts = (
+        db.exec(
+            select(MeetingChunk)
+            .where(
+                MeetingChunk.meeting_id == meeting_id,
+                MeetingChunk.text.is_not(None),
+            )
+            .order_by(MeetingChunk.chunk_index)
+        )
+        .all()
+    )
+    return " ".join(p.text for p in parts if p.text)
+
+
 # ─────────────────── FastAPI application ─────────────────────────────────────
+
 app = FastAPI(title="MeetScribe MVP")
 app.add_middleware(
     CORSMiddleware,
@@ -343,6 +136,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.post("/api/meetings", response_model=MeetingRead, status_code=201)
 def create_meeting(body: MeetingCreate):
@@ -367,7 +161,7 @@ async def upload_chunk(
         if not mtg:
             raise HTTPException(404, "meeting not found")
 
-        # Save chunk
+        # Save chunk file
         mtg_dir = AUDIO_DIR / str(meeting_id)
         mtg_dir.mkdir(parents=True, exist_ok=True)
         chunk_path = mtg_dir / f"chunk_{chunk_index:03d}.webm"
@@ -376,46 +170,72 @@ async def upload_chunk(
             shutil.copyfileobj(file.file, f)
 
         size_kb = chunk_path.stat().st_size / 1024
-        LOGGER.info("⬆️  chunk %d for %s (%.1f kB) final=%s",
-                    chunk_index, meeting_id, size_kb, is_final)
+        LOGGER.info(
+            "⬆️  chunk %d for %s (%.1f kB) final=%s",
+            chunk_index,
+            meeting_id,
+            size_kb,
+            is_final,
+        )
 
-        # Ignore tiny chunks
+        # Ignore tiny chunks (e.g. the “empty” final)
         if size_kb < 1:
-            LOGGER.warning("⚠️  chunk %d too small – skipped", chunk_index)
-            chunk_path.unlink(missing_ok=True)
-            if not is_final:
-                db.add(mtg); db.commit()
-                return {"ok": True, "skipped": True, "done": mtg.done}
-            LOGGER.info("🗑️  tiny final chunk ignored, continuing")
+            LOGGER.warning("⚠️  tiny chunk %d skipped", chunk_index)
+            if is_final:
+                mtg.final_received = True
+            db.add(mtg)
+            db.commit()
+            return {
+                "ok": True,
+                "skipped": True,
+                "received_chunks": mtg.received_chunks,
+                "done": mtg.done,
+                "latest_chunk_text": None,
+            }
 
-        # Real-time transcription
-        try:
-            chunk_text = transcribe_webm_chunk(chunk_path)
+        # Transcribe synchronously
+        chunk_text = transcribe_webm_chunk(chunk_path)
 
-            if chunk_text.strip():
-                LOGGER.info("📝  chunk %d transcribed (%d chars)",
-                            chunk_index, len(chunk_text))
-                mtg.transcript_text = (
-                    (mtg.transcript_text + " ")
-                    if mtg.transcript_text else ""
-                ) + chunk_text.strip()
-            else:
-                LOGGER.warning("⚠️  chunk %d produced no text", chunk_index)
-        except Exception as e:
-            LOGGER.error("❌  transcription failure on chunk %d: %s",
-                         chunk_index, e)
+        # Create or update MeetingChunk row
+        mc = db.exec(
+            select(MeetingChunk).where(
+                MeetingChunk.meeting_id == meeting_id,
+                MeetingChunk.chunk_index == chunk_index,
+            )
+        ).first()
+        if not mc:
+            mc = MeetingChunk(
+                meeting_id=meeting_id, chunk_index=chunk_index, path=str(chunk_path), text=chunk_text
+            )
+        else:
+            mc.path = str(chunk_path)
+            mc.text = chunk_text
+        db.add(mc)
 
+        # Update received_chunks
         mtg.received_chunks += 1
+        if is_final:
+            mtg.final_received = True
+            if mtg.expected_chunks is None:
+                mtg.expected_chunks = mtg.received_chunks
 
-        # Final summary (trigger immediately when is_final=True)
-        if is_final and mtg.transcript_text and not mtg.summary_markdown:
+        # Rebuild full transcript so far
+        mtg.transcript_text = _rebuild_transcript(db, meeting_id)
+
+        # If final & no pending chunks, generate summary now
+        pending = db.exec(
+            select(MeetingChunk).where(
+                MeetingChunk.meeting_id == meeting_id, MeetingChunk.text.is_(None)
+            )
+        ).first()
+        if mtg.final_received and not pending and not mtg.done:
+            LOGGER.info("📋  All chunks done for %s – generating summary…", meeting_id)
             try:
-                LOGGER.info("📋  Generating summary …")
                 mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
                 mtg.done = True
-                LOGGER.info("✅  meeting %s summarised", meeting_id)
+                LOGGER.info("✅  Meeting %s summarised.", meeting_id)
             except Exception as e:
-                LOGGER.error("❌  summary generation failed: %s", e)
+                LOGGER.error("❌  Summary generation failed: %s", e)
 
         db.add(mtg)
         db.commit()
@@ -425,8 +245,7 @@ async def upload_chunk(
             "ok": True,
             "received_chunks": mtg.received_chunks,
             "done": mtg.done,
-            "has_transcript": bool(mtg.transcript_text and mtg.transcript_text.strip()),
-            "latest_chunk_text": chunk_text if 'chunk_text' in locals() else None,
+            "latest_chunk_text": chunk_text or None,
         }
 
 
@@ -435,32 +254,7 @@ def get_meeting(mid: uuid.UUID):
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        if not mtg.done and mtg.transcript_text:
-            started_at_aware = mtg.started_at.replace(tzinfo=dt.timezone.utc)
-            now_aware = dt.datetime.now(dt.timezone.utc)
-
-            STALE_THRESHOLD_MINUTES = 5
-            elapsed_time = now_aware - started_at_aware
-
-            if elapsed_time > dt.timedelta(minutes=STALE_THRESHOLD_MINUTES):
-                LOGGER.info(
-                    "Stale meeting %s (started %s ago) found. Summarizing now.",
-                    mid,
-                    elapsed_time,
-                )
-                try:
-                    mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
-                    mtg.done = True
-                    db.add(mtg)
-                    db.commit()
-                    db.refresh(mtg)
-                    LOGGER.info("✅ Meeting %s summarized and marked as done.", mid)
-                except Exception as e:
-                    LOGGER.error(
-                        "❌ Failed to summarize stale meeting %s: %s", mid, e
-                    )
+            raise HTTPException(404, "Meeting not found")
         return mtg
 
 
