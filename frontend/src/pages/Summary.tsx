@@ -35,18 +35,20 @@ export default function Summary() {
 
       const data = await res.json();
 
+      // Always update transcript to show partial text, even if not 'done'
+      const trn = data.transcript_text || null;
+      setTranscript(trn);
+
       if (isInitialFetch) {
         // Store title and started_at from the first successful fetch
-        // These might be needed if the meeting is not yet in local history (e.g., opened via direct link)
+        // These might be needed if the meeting is not yet in local history
         setMeetingTitle(data.title || `Meeting ${mid}`);
         setMeetingStartedAt(data.started_at || new Date().toISOString());
       }
 
       if (data.done && data.summary_markdown) {
         const sum = data.summary_markdown;
-        const trn = data.transcript_text || null;
         setSummary(sum);
-        setTranscript(trn);
         setIsProcessing(false);
         setIsLoading(false);
 
@@ -58,9 +60,8 @@ export default function Summary() {
         });
 
         // Update history with status 'complete'
-        // Try to get existing history meta to preserve title if it was set by Record page
-        const history = getHistory();
-        const existingMeta = history.find(m => m.id === data.id);
+        const historyList = getHistory();
+        const existingMeta = historyList.find(m => m.id === data.id);
 
         saveMeeting({
           id: data.id,
@@ -68,7 +69,6 @@ export default function Summary() {
           started_at: existingMeta?.started_at || data.started_at || new Date().toISOString(),
           status: "complete",
         });
-
       } else {
         // Not done or no summary markdown yet
         setIsProcessing(true);
@@ -112,11 +112,14 @@ export default function Summary() {
     <div style={{ ...font, maxWidth: 800, margin: "0 auto", padding: 24 }}>
       {isLoading && <p>Loading summary...</p>}
       {error && <p style={{ color: "red" }}>Error: {error}</p>}
+
       {!isLoading && !error && isProcessing && !summary && (
         <p>⏳ Processing summary, please wait...</p>
       )}
+
       {summary && <ReactMarkdown>{summary}</ReactMarkdown>}
 
+      {/* Always show the transcript (even if no summary yet) */}
       {!isLoading && !error && transcript && (
         <>
           <h2 style={{ marginTop: 32 }}>Full Transcript (raw)</h2>

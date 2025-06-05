@@ -1,8 +1,9 @@
 # backend/app/main.py
+# ─────────────────────────────────────────────────────────────────────────────
 """
 FastAPI backend for MeetScribe MVP.
 
- • Synchronous transcription of each chunk so front-end gets live text immediately.
+ • Asynchronous transcription of each chunk (offloaded to a threadpool) so other uploads aren’t blocked.
  • Automatic SQLite migrations (see migrations.py).
  • When the final chunk arrives (and all are transcribed), summary is generated inline.
 """
@@ -19,6 +20,7 @@ import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select
+from starlette.concurrency import run_in_threadpool
 
 from .config import settings
 from .migrations import migrate
@@ -129,14 +131,18 @@ def _rebuild_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 # ─────────────────── FastAPI application ─────────────────────────────────────
 
 app = FastAPI(title="MeetScribe MVP")
+
+# ─── CORS: explicitly allow our frontend origin ──────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://meetscribe.i-am-hellguz.uk",
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.post("/api/meetings", response_model=MeetingRead, status_code=201)
 def create_meeting(body: MeetingCreate):
@@ -193,10 +199,7 @@ async def upload_chunk(
                 "latest_chunk_text": None,
             }
 
-        # Transcribe synchronously
-        chunk_text = transcribe_webm_chunk(chunk_path)
-
-        # Create or update MeetingChunk row
+        # Create or update MeetingChunk row (text is None for now)
         mc = db.exec(
             select(MeetingChunk).where(
                 MeetingChunk.meeting_id == meeting_id,
@@ -205,11 +208,11 @@ async def upload_chunk(
         ).first()
         if not mc:
             mc = MeetingChunk(
-                meeting_id=meeting_id, chunk_index=chunk_index, path=str(chunk_path), text=chunk_text
+                meeting_id=meeting_id, chunk_index=chunk_index, path=str(chunk_path), text=None
             )
         else:
             mc.path = str(chunk_path)
-            mc.text = chunk_text
+            mc.text = None
         db.add(mc)
 
         # Update received_chunks
@@ -219,34 +222,59 @@ async def upload_chunk(
             if mtg.expected_chunks is None:
                 mtg.expected_chunks = mtg.received_chunks
 
-        # Rebuild full transcript so far
-        mtg.transcript_text = _rebuild_transcript(db, meeting_id)
-
-        # If final & no pending chunks, generate summary now
-        pending = db.exec(
-            select(MeetingChunk).where(
-                MeetingChunk.meeting_id == meeting_id, MeetingChunk.text.is_(None)
-            )
-        ).first()
-        if mtg.final_received and not pending and not mtg.done:
-            LOGGER.info("📋  All chunks done for %s – generating summary…", meeting_id)
-            try:
-                mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
-                mtg.done = True
-                LOGGER.info("✅  Meeting %s summarised.", meeting_id)
-            except Exception as e:
-                LOGGER.error("❌  Summary generation failed: %s", e)
-
         db.add(mtg)
         db.commit()
         db.refresh(mtg)
 
-        return {
-            "ok": True,
-            "received_chunks": mtg.received_chunks,
-            "done": mtg.done,
-            "latest_chunk_text": chunk_text or None,
-        }
+    # Transcribe asynchronously so multiple uploads can run in parallel
+    chunk_text = await run_in_threadpool(transcribe_webm_chunk, chunk_path)
+
+    # Now update the MeetingChunk.text and possibly the transcript/summary
+    with Session(engine) as db:
+        # Fetch the same MeetingChunk (it must exist)
+        mc = db.exec(
+            select(MeetingChunk).where(
+                MeetingChunk.meeting_id == meeting_id,
+                MeetingChunk.chunk_index == chunk_index,
+            )
+        ).first()
+        if mc:
+            mc.text = chunk_text
+            db.add(mc)
+
+        # Rebuild full transcript so far
+        mtg = db.get(Meeting, meeting_id)
+        if mtg:
+            mtg.transcript_text = _rebuild_transcript(db, meeting_id)
+
+            # If final & no pending chunks, generate summary now
+            pending = db.exec(
+                select(MeetingChunk).where(
+                    MeetingChunk.meeting_id == meeting_id, MeetingChunk.text.is_(None)
+                )
+            ).first()
+            if mtg.final_received and not pending and not mtg.done:
+                LOGGER.info("📋  All chunks done for %s – generating summary…", meeting_id)
+                try:
+                    mtg.summary_markdown = summarise(mtg.transcript_text, mtg.started_at)
+                    mtg.done = True
+                    LOGGER.info("✅  Meeting %s summarised.", meeting_id)
+                except Exception as e:
+                    LOGGER.error("❌  Summary generation failed: %s", e)
+
+            db.add(mtg)
+            db.commit()
+            db.refresh(mtg)
+
+            return {
+                "ok": True,
+                "received_chunks": mtg.received_chunks,
+                "done": mtg.done,
+                "latest_chunk_text": chunk_text or None,
+            }
+
+    # Fallback (should not normally happen)
+    return {"ok": False, "received_chunks": None, "done": False, "latest_chunk_text": None}
 
 
 @app.get("/api/meetings/{mid}", response_model=MeetingRead)

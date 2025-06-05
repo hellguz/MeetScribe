@@ -16,6 +16,7 @@ export default function Record() {
   const [isRecording, setRecording] = useState(false);
   const [chunks, setChunks] = useState<Blob[]>([]);
   const [uploadedChunks, setUploadedChunks] = useState(0);
+  const [transcribedChunks, setTranscribedChunks] = useState(0);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
@@ -116,11 +117,12 @@ export default function Record() {
           if (typeof result.received_chunks === "number") {
             setUploadedChunks(result.received_chunks);
           }
-          // Append live transcript chunk
+          // Append live transcript chunk & count it as “transcribed”
           if (result.latest_chunk_text) {
             setLiveTranscript((prev) =>
               prev ? prev + " " + result.latest_chunk_text : result.latest_chunk_text
             );
+            setTranscribedChunks((prev) => prev + 1);
           }
         }
         return result.ok;
@@ -177,6 +179,7 @@ export default function Record() {
       // Reset state
       setChunks([]);
       setUploadedChunks(0);
+      setTranscribedChunks(0);
       setRecordingTime(0);
       setLiveTranscript("");
       firstChunkRef.current = true;
@@ -306,7 +309,8 @@ export default function Record() {
           >
             <span>Upload Progress</span>
             <span>
-              {uploadedChunks} / {chunks.length} chunks
+              {uploadedChunks} / {chunks.length} chunks&nbsp;&nbsp;
+              <strong>Transcribed:</strong> {transcribedChunks}
             </span>
           </div>
           <div style={progressBarStyle}>
@@ -385,11 +389,7 @@ export default function Record() {
             ? "⚙️ Processing..."
             : "⚪ Ready to Record"}
         </div>
-        {chunks.length > 0 && (
-          <div style={{ fontSize: "14px", color: "#6b7280" }}>
-            Chunks recorded: {chunks.length} | Uploaded: {uploadedChunks}
-          </div>
-        )}
+      
       </div>
 
       {/* Control button */}
