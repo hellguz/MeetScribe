@@ -1,8 +1,9 @@
-# docker-compose.yml
-
+# <./docker-compose.yml>
 version: "3.8"
-
 services:
+  redis:
+    image: redis:alpine
+
   backend:
     build: ./backend
     ports:
@@ -12,6 +13,21 @@ services:
       - ./backend:/app           # For hot-reloading code in dev
     env_file:
       - .env
+    depends_on:
+      - redis
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # Default, or override in dev
+
+  celeryworker:
+    build: ./backend # Uses the same Docker image as the backend
+    command: celery -A app.worker.celery_app worker -l info -c 1    
+    volumes:
+      - ./data:/app/data      # Worker needs access to DB and audio files
+      - ./backend:/app        # Worker needs access to the same codebase
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      # - backend # Not strictly necessary for startup, but worker logically depends on backend (e.g. for DB schema)
 
   frontend:
     build: 
@@ -24,4 +40,4 @@ services:
     env_file:
       - .env
     depends_on:
-      - backend
+      - backend      

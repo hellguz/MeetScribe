@@ -1,5 +1,4 @@
-# backend/app/config.py
-
+# <./backend\app\config.py>
 from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,13 +16,10 @@ class Settings(BaseSettings):
 
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
 
-    # Redis URL for RQ
-    redis_url: str = "redis://localhost:6379/0"
+    # Celery / Redis
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/0"
 
-    # OpenMP / Whisper threading
-    omp_num_threads: int = 3
-    mkl_num_threads: int = 3
-    openblas_num_threads: int = 3
 
 @lru_cache
 def get_settings() -> "Settings":
