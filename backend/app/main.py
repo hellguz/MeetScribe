@@ -1,5 +1,4 @@
-# backend/app/main.py
-# ─────────────────────────────────────────────────────────────────────────────
+
 from __future__ import annotations
 
 import logging
@@ -142,9 +141,18 @@ async def upload_chunk(
             mtg.received_chunks += 1
             mtg.last_activity = dt.datetime.utcnow()
 
+            # If a new, real chunk arrives for a meeting that was already
+            # summarized, we must reset its state to allow for re-summarization.
+            if mtg.done:
+                LOGGER.warning(
+                    f"Meeting {meeting_id} was complete but received new chunk {chunk_index}. Resetting summary."
+                )
+                mtg.done = False
+                mtg.summary_markdown = None
+
         if chunk_index > 0 and is_final:
             mtg.final_received = True
-            if mtg.expected_chunks is None:
+            if mtg.expected_chunks is None or mtg.expected_chunks < mtg.received_chunks:
                 mtg.expected_chunks = mtg.received_chunks
 
         db.add(mtg)

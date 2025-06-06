@@ -168,6 +168,26 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
     engine = get_db_engine()
     meeting_id_uuid = uuid.UUID(meeting_id_str)
 
+    # Do not process the header chunk (index 0). It's for compatibility only.
+    if chunk_index == 0:
+        LOGGER.info(f"Skipping transcription for header chunk (index 0) of meeting {meeting_id_str}.")
+        with Session(engine) as db:
+            # We must still find the corresponding MeetingChunk and mark its text
+            # as a non-null empty string so it's not considered "pending".
+            mc = db.exec(
+                select(MeetingChunk).where(
+                    MeetingChunk.meeting_id == meeting_id_uuid,
+                    MeetingChunk.chunk_index == chunk_index,
+                )
+            ).first()
+            if mc:
+                mc.text = ""  # Mark as processed with empty text
+                db.add(mc)
+                db.commit()
+            else:
+                LOGGER.warning(f"Could not find DB record for header chunk 0 of meeting {meeting_id_str} to mark as processed.")
+        return # End the task here
+
     try:
         chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
         LOGGER.info(f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'")

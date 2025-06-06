@@ -193,7 +193,7 @@ export default function Record() {
       if (firstChunkRef.current) {
         firstChunkRef.current = false;
         if (recorder.state === "recording") {
-          recorder.stop(); // Stop the 1 s recorder → triggers onstop
+          recorder.stop(); // Stop the short header recorder → triggers onstop
         }
       }
     };
@@ -204,7 +204,7 @@ export default function Record() {
         isRecordingRef.current &&
         mediaRef.current?.stream.active
       ) {
-        createAndStartRecorder(20000); // Restart with 20 s chunks
+        createAndStartRecorder(30000); // Restart with 30s chunks
       }
     };
 
@@ -241,9 +241,6 @@ export default function Record() {
       const newId = await createMeetingOnBackend();
 
       // ─── START POLLING IMMEDIATELY ───────────────────────────
-      // As soon as we have a meeting ID, kick off one immediate fetch
-      // plus a 3 s interval. That way "liveTranscript" will update as soon
-      // as the first chunk is transcribed.
       meetingId.current = newId;
       await pollMeetingStatus(); // fetch right away
       if (pollIntervalRef.current) {
@@ -252,7 +249,7 @@ export default function Record() {
       pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
       setPollingStarted(true);
 
-      createAndStartRecorder(1000); // Start with a 1 s header chunk
+      createAndStartRecorder(100); // Start with a 0.1s header chunk
     } catch (error) {
       console.error("Failed to start recording:", error);
       alert("Failed to start recording. Please check microphone permissions and console for errors.");
@@ -295,16 +292,22 @@ export default function Record() {
   };
 
   // Backend’s `uploadedChunks` is already “real” (non-header) count.
-  // For local total, we subtract 1 to hide the header chunk:
+  // For local total, we subtract 1 to hide the header chunk.
   const realLocal = localChunksCount > 1 ? localChunksCount - 1 : 0;
   const realUploaded = uploadedChunks; // direct from backend
   const realTotal =
     expectedTotalChunks !== null ? expectedTotalChunks : realLocal;
 
-  const getProgressPercentage = () => {
+  const getUploadProgressPercentage = () => {
     if (realTotal === 0) return 0;
     return Math.min(100, (realUploaded / realTotal) * 100);
   };
+  const getTranscriptionProgressPercentage = () => {
+    if (realTotal === 0) return 0;
+    return Math.min(100, (transcribedChunks / realTotal) * 100);
+  };
+
+  const allChunksUploaded = realTotal > 0 && realUploaded >= realTotal;
 
   /* ─── styling snippets ───────────────────────────────────────────── */
   const buttonStyle = {
@@ -338,16 +341,21 @@ export default function Record() {
     backgroundColor: "#e5e7eb",
     borderRadius: "10px",
     overflow: "hidden",
-    marginBottom: "16px",
-  };
+    marginBottom: "8px",
+    position: "relative",
+  } as const;
 
-  const progressFillStyle = {
+  const progressFillStyle = (percent: number, color: string, zIndex: number) => ({
     height: "100%",
-    backgroundColor: "#3b82f6",
-    width: `${getProgressPercentage()}%`,
+    backgroundColor: color,
+    width: `${percent}%`,
     transition: "width 0.3s ease",
     borderRadius: "10px",
-  };
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: zIndex,
+  } as const);
 
   /* ─── render ─────────────────────────────────────────────────────── */
   return (
@@ -378,35 +386,23 @@ export default function Record() {
         </div>
       )}
 
-      {/* Upload Progress */}
+      {/* Upload/Transcription Progress */}
       {(isRecording || isProcessing || localChunksCount > 0) && (
         <div style={{ marginBottom: "24px" }}>
+          <div style={progressBarStyle}>
+            <div style={progressFillStyle(getUploadProgressPercentage(), "#93c5fd", 1)}></div>
+            <div style={progressFillStyle(getTranscriptionProgressPercentage(), "#3b82f6", 2)}></div>
+          </div>
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
-              marginBottom: "8px",
               fontSize: "14px",
               color: "#6b7280",
             }}
           >
-            <span>Upload Progress</span>
-            <span>
-              {realUploaded} / {realTotal} chunks uploaded
-            </span>
-          </div>
-          <div style={progressBarStyle}>
-            <div style={progressFillStyle}></div>
-          </div>
-          {/* Number of real chunks already transcribed */}
-          <div
-            style={{
-              fontSize: "14px",
-              color: "#6b7280",
-              textAlign: "right",
-            }}
-          >
-            Transcribed: {transcribedChunks} / {realTotal}
+            <span>Uploaded: {realUploaded} / {realTotal}</span>
+            <span>Transcribed: {transcribedChunks} / {realTotal}</span>
           </div>
         </div>
       )}
@@ -525,19 +521,21 @@ export default function Record() {
       >
         {!isRecording && !isProcessing ? (
           <p>
-            Click “Start Recording” to begin. The first audio chunk is 1 second
-            (for WebM header compatibility), subsequent chunks are 20 seconds.
-            Live transcript will appear as audio is processed by the backend.
+            Click “Start Recording” to begin. Your audio will be sent to the server in 30-second chunks for processing.
           </p>
         ) : isRecording ? (
           <p>
-            Recording in progress… Watch the live transcript (if available)
-            update above.
+            Recording in progress… a live transcript will appear above as the AI processes your audio.
+          </p>
+        ) : allChunksUploaded ? (
+          <p>
+            ✅ All audio has been uploaded! It is now safe to close this window. <br/>
+            The server is finishing the transcription and summary. You will be redirected automatically.
           </p>
         ) : (
           <p>
-            Finalizing recording and generating summary. You will be redirected
-            shortly.
+            Finalizing upload… Once all chunks are sent, you can safely close the window. <br/>
+            You will be redirected to the summary page when it's ready.
           </p>
         )}
       </div>
