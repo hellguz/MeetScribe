@@ -19,29 +19,52 @@ This is a pet project by [Egor Gavrilov](https://github.com/your-github-username
 
 ## 🛠️ How It Works (The Tech Stuff)
 
-MeetScribe is a modern web application with a decoupled frontend and backend. Here’s a look under the hood:
+MeetScribe is a modern web application with a decoupled frontend and backend. The magic happens through a sequence of synchronous and asynchronous operations, ensuring the app stays responsive while handling heavy processing. Here’s a look under the hood:
 
 ```
-Browser (React)        Docker Network        ┌─────────────────────────┐
-      │                      │               │   Celery Background Tasks │
-      ├─ Audio Chunks ──────►├─► FastAPI ───►│       (Redis Queue)       │
-      │    (via HTTP)        │     (API)     │             ▲             │
-      │                      │               │             └─────────────┤
-      ◄─ Status & Summary ───┤               ├─► Whisper ► GPT-4o-mini   │
-      │                      │               │ (Transcription) (Summary) │
-      │                      │               └─────────────────────────┘
-      │                      │                              │
-      │                      │                              ▼
-      │                      │                         SQLite DB
-      │                      │                    (Metadata, Transcripts)
+                 ┌───────────────────────────────────┐
+                 │          Browser (React)          │
+                 └───────────────────────────────────┘
+                                  │
+          1. Creates Meeting & Uploads Audio Chunks (via POST)
+                                  │
+                                  ▼
+                 ┌───────────────────────────────────┐
+                 │         FastAPI Web Server        │
+                 │   - Saves audio file to disk      │
+                 │   - Creates/updates DB record     │
+                 └─────────────────┬─────────────────┘
+                                   │
+                2. Dispatches task to background worker
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │        Redis (Message Queue)      │
+                 └─────────────────┬─────────────────┘
+                                   │
+                        3. Worker dequeues task
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │           Celery Worker           │
+                 │ ─► 4a. Transcribe w/ Whisper      │
+                 │ ─► 4b. Update SQLite DB w/ text   │
+                 │ ─► 4c. If final: Summarize w/ GPT │
+                 │ ─► 4d. Update SQLite DB w/ summary│
+                 └───────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Meanwhile... The Browser polls the FastAPI server, which reads   │
+  │ directly from the SQLite DB to provide live transcript updates   │
+  │ and, eventually, the final summary.                              │
+  └──────────────────────────────────────────────────────────────────┘
 ```
 
 *   **Frontend:** A lightweight Single-Page Application (SPA) built with **React** and **Vite**. It uses the `MediaRecorder` API to capture audio, which it sends to the backend in 20-second chunks.
-*   **Backend:** A simple and fast REST API built with **FastAPI** (Python). It handles chunk uploads and serves meeting data.
-*   **Async Processing:** Heavy tasks like transcription and summarization are handled in the background by **Celery** workers, using **Redis** as a message broker. This keeps the API responsive and prevents requests from timing out.
-*   **Transcription:** Audio is transcribed using `faster-whisper`, a highly optimized implementation of OpenAI's Whisper model that runs locally on the server's CPU.
-*   **Summarization:** The full transcript is sent to **OpenAI's `gpt-4o-mini` API** along with structured templates to generate a clean, Markdown-formatted summary.
-*   **Database:** Meeting metadata, transcripts, and summaries are stored in a simple **SQLite** database file.
+*   **Backend:** A fast REST API built with **FastAPI** (Python). Its main job is to handle file uploads, manage meeting state in the database, and dispatch tasks to the background worker. It does **not** perform the heavy lifting itself.
+*   **Async Processing:** Heavy tasks like transcription and summarization are handled in the background by **Celery** workers, using **Redis** as a message broker. This keeps the API responsive.
+*   **Central State:** The **SQLite Database** acts as the single source of truth. Both the FastAPI server (for status checks) and the Celery worker (for updates) read from and write to it.
+*   **AI Models:** The Celery worker uses `faster-whisper` for local transcription and then calls the **OpenAI API** (`gpt-4o-mini`) for summarization once the full transcript is ready.
 *   **Deployment:** The entire stack is containerized with **Docker** and orchestrated with **Docker Compose**, making setup a breeze.
 
 ## 🚀 Quick Start (Docker)
