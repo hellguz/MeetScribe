@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select, func
 
 from .config import settings
-from .migrations import migrate
 from .models import Meeting, MeetingChunk, MeetingCreate, MeetingStatus
 from .worker import process_transcription_and_summary  # Import Celery task
 
@@ -28,7 +27,6 @@ openai.api_key = settings.openai_api_key
 
 engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
 SQLModel.metadata.create_all(engine)
-migrate(engine)
 
 AUDIO_DIR = Path("data/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
