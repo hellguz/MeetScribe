@@ -1,5 +1,5 @@
 // ./frontend/src/pages/Record.tsx
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { getHistory, MeetingMeta, saveMeeting } from "../utils/history";
 
@@ -23,6 +23,10 @@ export default function Record() {
   const [transcribedChunks, setTranscribedChunks] = useState(0);
   const [pollingStarted, setPollingStarted] = useState(false);
 
+  // Track when the first chunk was transcribed (for speed calculation)
+  const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
+  const CHUNK_DURATION = 30; // seconds per non-header chunk
+
   const meetingId = useRef<string | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -36,6 +40,29 @@ export default function Record() {
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+
+  /* ─── detect first transcribed chunk ───────────────────────────── */
+  useEffect(() => {
+    if (transcribedChunks > 0 && transcriptionStartTime === null) {
+      setTranscriptionStartTime(Date.now());
+    }
+  }, [transcribedChunks, transcriptionStartTime]);
+
+  /* ─── compute transcription speed ───────────────────────────────── */
+  const transcriptionSpeed = useMemo(() => {
+    if (transcriptionStartTime === null || transcribedChunks === 0) return null;
+    const elapsedSec = (Date.now() - transcriptionStartTime) / 1000;
+    if (elapsedSec <= 0) return null;
+    const processedAudioSec = transcribedChunks * CHUNK_DURATION;
+    return processedAudioSec / elapsedSec;
+  }, [transcriptionStartTime, transcribedChunks]);
+
+  const transcriptionSpeedLabel = useMemo(() => {
+    if (transcriptionSpeed === null) return null;
+    // Round to one decimal place
+    const rounded = (Math.round(transcriptionSpeed * 10) / 10).toFixed(1);
+    return `${rounded}x`;
+  }, [transcriptionSpeed]);
 
   /* ─── polling for meeting status, transcript, summary ───────── */
   const pollMeetingStatus = useCallback(async () => {
@@ -228,6 +255,7 @@ export default function Record() {
       setTranscribedChunks(0);
       setRecordingTime(0);
       setLiveTranscript("");
+      setTranscriptionStartTime(null);
       firstChunkRef.current = true;
       chunkIndexRef.current = 0;
       setIsProcessing(false);
@@ -351,7 +379,7 @@ export default function Record() {
     width: `${percent}%`,
     transition: "width 0.3s ease",
     borderRadius: "10px",
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     zIndex: zIndex,
@@ -402,7 +430,14 @@ export default function Record() {
             }}
           >
             <span>Uploaded: {realUploaded} / {realTotal}</span>
-            <span>Transcribed: {transcribedChunks} / {realTotal}</span>
+            <span>
+              Transcribed: {transcribedChunks} / {realTotal}{" "}
+              {transcriptionSpeedLabel && (
+                <span style={{ fontSize: "12px", color: "#9ca3af" }}>
+                  ({transcriptionSpeedLabel})
+                </span>
+              )}
+            </span>
           </div>
         </div>
       )}
