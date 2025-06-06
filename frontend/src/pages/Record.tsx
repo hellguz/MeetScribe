@@ -25,6 +25,7 @@ export default function Record() {
 
   // Track when the first chunk was transcribed (for speed calculation)
   const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
+  const [firstChunkProcessedTime, setFirstChunkProcessedTime] = useState<number | null>(null);
   const CHUNK_DURATION = 30; // seconds per non-header chunk
 
   const meetingId = useRef<string | null>(null);
@@ -43,19 +44,26 @@ export default function Record() {
 
   /* ─── detect first transcribed chunk ───────────────────────────── */
   useEffect(() => {
-    if (transcribedChunks > 0 && transcriptionStartTime === null) {
-      setTranscriptionStartTime(Date.now());
+    if (transcribedChunks === 1 && firstChunkProcessedTime === null) {
+      setFirstChunkProcessedTime(Date.now());
+    } else if (transcribedChunks > 1 && transcriptionStartTime === null && firstChunkProcessedTime !== null) {
+      setTranscriptionStartTime(firstChunkProcessedTime);
     }
-  }, [transcribedChunks, transcriptionStartTime]);
+  }, [transcribedChunks, firstChunkProcessedTime, transcriptionStartTime, setFirstChunkProcessedTime, setTranscriptionStartTime]);
 
   /* ─── compute transcription speed ───────────────────────────────── */
   const transcriptionSpeed = useMemo(() => {
-    if (transcriptionStartTime === null || transcribedChunks === 0) return null;
+    if (transcriptionStartTime === null || transcribedChunks < 2) { // Ensures at least two chunks processed and startTime is set
+      return null;
+    }
     const elapsedSec = (Date.now() - transcriptionStartTime) / 1000;
-    if (elapsedSec <= 0) return null;
-    const processedAudioSec = transcribedChunks * CHUNK_DURATION;
-    return processedAudioSec / elapsedSec;
-  }, [transcriptionStartTime, transcribedChunks]);
+    if (elapsedSec <= 0) {
+      return null;
+    }
+    // Calculate audio processed since transcriptionStartTime was set (i.e., after the first chunk)
+    const audioDurationProcessedSinceStartTime = (transcribedChunks - 1) * CHUNK_DURATION;
+    return audioDurationProcessedSinceStartTime / elapsedSec;
+  }, [transcriptionStartTime, transcribedChunks, CHUNK_DURATION]);
 
   const transcriptionSpeedLabel = useMemo(() => {
     if (transcriptionSpeed === null) return null;
@@ -256,6 +264,7 @@ export default function Record() {
       setRecordingTime(0);
       setLiveTranscript("");
       setTranscriptionStartTime(null);
+      setFirstChunkProcessedTime(null); // Reset for new recording
       firstChunkRef.current = true;
       chunkIndexRef.current = 0;
       setIsProcessing(false);
