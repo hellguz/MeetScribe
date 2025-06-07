@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import logging
@@ -42,6 +41,35 @@ app.add_middleware(
 
 # How long (in seconds) without a new real chunk before we auto-finalize:
 INACTIVITY_TIMEOUT_SECONDS = 120  # 2 minutes
+
+
+def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
+    """
+    Assembles a contiguous transcript from REAL chunks (index > 0) for live polling.
+    This prevents out-of-order text from appearing if chunks are processed non-sequentially.
+    """
+    # Select all real chunks (index > 0) that have been transcribed, in order.
+    chunks = db.exec(
+        select(MeetingChunk.chunk_index, MeetingChunk.text)
+        .where(MeetingChunk.meeting_id == meeting_id)
+        .where(MeetingChunk.text.is_not(None))
+        .where(MeetingChunk.chunk_index > 0)  # Ignore the header chunk
+        .order_by(MeetingChunk.chunk_index)
+    ).all()
+
+    contiguous_texts = []
+    expected_index = 1  # The first real chunk is index 1
+    for chunk in chunks:
+        if chunk.chunk_index == expected_index:
+            if chunk.text:
+                contiguous_texts.append(chunk.text)
+            expected_index += 1
+        else:
+            # A gap was found (e.g., chunk 2 processed before chunk 1),
+            # so we stop to avoid showing out-of-order text.
+            break
+
+    return " ".join(contiguous_texts).strip()
 
 
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
@@ -178,9 +206,9 @@ async def upload_chunk(
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
 def get_meeting(mid: uuid.UUID):
     """
-    Retrieve meeting status. Also compute how many non-header chunks have text.
-    If more than INACTIVITY_TIMEOUT_SECONDS have passed since last_activity,
-    and final_received is still False, automatically mark final and set expected_chunks.
+    Retrieve meeting status.
+    - The live transcript is built from a contiguous sequence of chunks to ensure correct order.
+    - If inactive for too long, the meeting is automatically marked as 'final'.
     """
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
@@ -211,10 +239,16 @@ def get_meeting(mid: uuid.UUID):
             )
         ) or 0
 
-        return MeetingStatus(
-            **mtg.model_dump(),
-            transcribed_chunks=transcribed_count,
-        )
+        # Build the live transcript from a contiguous block of processed chunks.
+        live_transcript = _build_live_transcript(db, mid)
+
+        response_data = mtg.model_dump()
+        # If the meeting is fully done, use the final stored transcript.
+        # Otherwise, use the live, contiguous one.
+        response_data["transcript_text"] = mtg.transcript_text if mtg.done else live_transcript
+        response_data["transcribed_chunks"] = transcribed_count
+
+        return MeetingStatus(**response_data)
 
 
 @app.get("/healthz")

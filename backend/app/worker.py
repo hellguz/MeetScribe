@@ -218,16 +218,12 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
             db.add(mc)
             db.commit()
 
-            # Rebuild full transcript for the meeting
+            # The full transcript is no longer rebuilt on every chunk.
+            # Instead, we check if all chunks are done and then build it once.
             mtg = db.get(Meeting, meeting_id_uuid)
             if not mtg:
                 LOGGER.error(f"Meeting {meeting_id_str}: object not found after transcribing chunk. Aborting.")
                 return
-
-            mtg.transcript_text = rebuild_full_transcript(db, meeting_id_uuid)
-            db.add(mtg)
-            db.commit()
-            db.refresh(mtg)
 
             # Count how many non-header chunks have transcription
             real_transcribed_count = db.scalar(
@@ -238,26 +234,24 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
                 )
             ) or 0
 
-            # effective_expected = mtg.expected_chunks if set, else mtg.received_chunks
             if mtg.expected_chunks is not None:
                 effective_expected = mtg.expected_chunks
             else:
                 effective_expected = mtg.received_chunks
 
-            LOGGER.info(
-                f"Meeting {meeting_id_str}: real_transcribed={real_transcribed_count}, "
-                f"effective_expected={effective_expected}, final_received={mtg.final_received}, done={mtg.done}"
-            )
-
-            # ── NEW: Only summarize once final_received=True AND we've transcribed all real chunks ──
+            # Only summarize once final_received=True AND we've transcribed all expected real chunks.
             if (
                 not mtg.done
                 and mtg.final_received
                 and effective_expected > 0
                 and real_transcribed_count >= effective_expected
             ):
-                if mtg.transcript_text:
-                    summary_md = summarise_transcript_in_worker(mtg.transcript_text, mtg.started_at.isoformat())
+                LOGGER.info(f"Meeting {meeting_id_str}: All chunks transcribed. Building final transcript and summarizing.")
+                final_transcript = rebuild_full_transcript(db, meeting_id_uuid)
+                mtg.transcript_text = final_transcript # Store the final, complete transcript
+
+                if final_transcript:
+                    summary_md = summarise_transcript_in_worker(final_transcript, mtg.started_at.isoformat())
                     mtg.summary_markdown = summary_md
                     mtg.done = True
                     LOGGER.info(f"✅ Meeting {meeting_id_str} summarized successfully by worker.")
@@ -269,7 +263,10 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
                 db.add(mtg)
                 db.commit()
             else:
-                LOGGER.info(f"Meeting {meeting_id_str}: Waiting for more real chunks or already done.")
+                LOGGER.info(
+                    f"Meeting {meeting_id_str}: Waiting for more chunks. "
+                    f"Status: transcribed={real_transcribed_count}, expected={effective_expected}, final_received={mtg.final_received}"
+                )
 
     except Exception as exc:
         LOGGER.error(f"Error processing task for meeting {meeting_id_str}, chunk {chunk_index}: {exc}", exc_info=True)
