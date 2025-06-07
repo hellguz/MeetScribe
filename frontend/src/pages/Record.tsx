@@ -307,7 +307,7 @@ export default function Record() {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
       setPollingStarted(true);
-      createAndStartRecorder(100);
+      createAndStartRecorder(500);
     } catch (error) {
       console.error("Failed to start recording:", error);
       if (error instanceof DOMException && error.name === 'NotAllowedError') {
