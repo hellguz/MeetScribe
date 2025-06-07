@@ -92,7 +92,13 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                     f"First chunk {first_chunk_path.name} is too large or empty, transcribing {chunk_path.name} standalone."
                 )
 
-        segments, _info = whisper.transcribe(str(path_to_transcribe), beam_size=5)
+        # Transcribe with VAD (Voice Activity Detection) to filter out silence
+        segments, _info = whisper.transcribe(
+            str(path_to_transcribe),
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+        )
         transcription = " ".join(s.text for s in segments).strip()
 
         if temp_path_to_unlink:
