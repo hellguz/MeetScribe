@@ -202,6 +202,12 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
         chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
         LOGGER.info(f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'")
 
+        # MODIFICATION 1 STARTS HERE
+        if not chunk_text and chunk_index != 0: # Ensure it's not the header chunk (already handled)
+            chunk_text = f"<b>[No speech detected in chunk {chunk_index}]</b>"
+            LOGGER.warn(f"Empty transcription for chunk {chunk_index} of meeting {meeting_id_str}, setting placeholder.")
+        # MODIFICATION 1 ENDS HERE
+
         with Session(engine) as db:
             mc = db.exec(
                 select(MeetingChunk).where(
@@ -274,3 +280,26 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
             raise self.retry(exc=exc, countdown=60)
         except self.MaxRetriesExceededError:
             LOGGER.error(f"Max retries exceeded for task: meeting {meeting_id_str}, chunk {chunk_index}.")
+            # MODIFICATION 2 STARTS HERE
+            # Attempt to update the database to mark this chunk as permanently failed
+            # Ensure engine is available. If `get_db_engine()` was called inside try, it might need to be called again
+            # or ensure `engine` variable is accessible here.
+            # Similarly, `meeting_id_uuid` must be accessible.
+            fail_engine = get_db_engine()
+            fail_meeting_id_uuid = uuid.UUID(meeting_id_str) # Re-define or ensure scope
+
+            with Session(fail_engine) as db_fail_session:
+                mc_fail = db_fail_session.exec(
+                    select(MeetingChunk).where(
+                        MeetingChunk.meeting_id == fail_meeting_id_uuid,
+                        MeetingChunk.chunk_index == chunk_index,
+                    )
+                ).first()
+                if mc_fail:
+                    mc_fail.text = f"<b>[Transcription failed for chunk {chunk_index} after multiple retries]</b>"
+                    db_fail_session.add(mc_fail)
+                    db_fail_session.commit()
+                    LOGGER.info(f"Updated chunk {chunk_index} of meeting {meeting_id_str} to reflect max retries exceeded.")
+                else:
+                    LOGGER.error(f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries.")
+            # MODIFICATION 2 ENDS HERE

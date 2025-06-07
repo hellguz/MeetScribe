@@ -45,31 +45,41 @@ INACTIVITY_TIMEOUT_SECONDS = 120  # 2 minutes
 
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
     """
-    Assembles a contiguous transcript from REAL chunks (index > 0) for live polling.
-    This prevents out-of-order text from appearing if chunks are processed non-sequentially.
+    Assembles a live transcript from chunks up to `meeting.received_chunks`.
+    Handles missing or unprocessed chunks with placeholders.
     """
-    # Select all real chunks (index > 0) that have been transcribed, in order.
-    chunks = db.exec(
-        select(MeetingChunk.chunk_index, MeetingChunk.text)
+    mtg = db.get(Meeting, meeting_id)
+    if not mtg:
+        # This should ideally not happen if meeting_id is validated before calling
+        return ""
+
+    # Fetch all chunks for the meeting, ordered by index
+    all_chunks_results = db.exec(
+        select(MeetingChunk)
         .where(MeetingChunk.meeting_id == meeting_id)
-        .where(MeetingChunk.text.is_not(None))
-        .where(MeetingChunk.chunk_index > 0)  # Ignore the header chunk
         .order_by(MeetingChunk.chunk_index)
     ).all()
 
-    contiguous_texts = []
-    expected_index = 1  # The first real chunk is index 1
-    for chunk in chunks:
-        if chunk.chunk_index == expected_index:
-            if chunk.text:
-                contiguous_texts.append(chunk.text)
-            expected_index += 1
-        else:
-            # A gap was found (e.g., chunk 2 processed before chunk 1),
-            # so we stop to avoid showing out-of-order text.
-            break
+    # Create a dictionary of chunks for easy lookup
+    chunks_map = {chunk.chunk_index: chunk for chunk in all_chunks_results}
 
-    return " ".join(contiguous_texts).strip()
+    live_texts = []
+    # Iterate from chunk_index = 1 up to the number of received chunks
+    for i in range(1, mtg.received_chunks + 1):
+        chunk = chunks_map.get(i)
+        if chunk:
+            if chunk.text is not None:
+                if chunk.text:  # Non-empty text
+                    live_texts.append(chunk.text)
+                else:  # Empty string text
+                    live_texts.append(f"<b>[No speech in this segment]</b>")
+            else:  # Text is None (still pending transcription)
+                live_texts.append(f"<b>[...processing chunk {i}...]</b>")
+        else:
+            # No MeetingChunk object for this index
+            live_texts.append(f"<b>[...waiting for chunk {i}...]</b>")
+
+    return " ".join(live_texts).strip()
 
 
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
