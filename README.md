@@ -1,112 +1,162 @@
-# MeetScribe <!-- omit in toc -->
+# 🎙️ MeetScribe
 
-AI-powered meeting recorder & summariser
-*Record, transcribe and keep neatly-formatted minutes in seconds – even when you’re offline.*
+**Your AI-powered assistant for perfect meeting notes. Record, transcribe, and get smart summaries in seconds.**
 
----
+Ever been in back-to-back meetings, frantically trying to type notes while also paying attention? MeetScribe is a simple web app designed to solve that problem. Just hit record, focus on the conversation, and let the AI handle the note-taking. When your meeting is done, you'll have a clean, formatted summary and a full transcript ready to go.
 
-* [Live demo](#-live-demo)
-* [Key features](#key-features)
-* [System architecture](#system-architecture)
-* [Quick-start (🚀 Docker)](#quick-start--docker)
-* [Local development](#local-development)
-* [Environment variables](#environment-variables)
-* [API cheatsheet](#api-cheatsheet)
-* [Roadmap](#roadmap)
-* [Contributing](#contributing)
-* [License](#license)
+This is a pet project by [Egor Gavrilov](https://github.com/your-github-username), built to be simple, effective, and easily self-hostable.
 
 ---
 
-## 🎥 Live demo
+## ✨ Key Features
 
-Coming soon – keep an eye on the repo’s releases page.
+*   **📝 Automatic Meeting Minutes:** Get neatly formatted summaries tailored to your meeting type. Choose from templates like Brainstorming, Project Updates, Consultations, and more.
+*   **🤖 Powerful AI Core:** Uses the high-quality [Whisper](https://openai.com/research/whisper) model for accurate speech-to-text and `GPT-4o-mini` for intelligent, context-aware summaries.
+*   **🌐 Works in Your Browser:** No installation is needed for users. Just open the web page and start recording.
+*   **🎤 Live Transcription:** See the text appear in near real-time as you speak, so you know it's working.
+*   **🔒 Private & Self-Hostable:** Your recordings and transcripts are processed on your own server, not a third-party service. Run it on your own machine or cloud server with a single Docker command.
+*   **⚡ Offline-Ready History:** Your past meeting summaries are cached in your browser, so you can access them instantly without hitting the server again.
 
-## Key features
+## 🛠️ How It Works (The Tech Stuff)
 
-|                                  |                                                                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **One-click recorder**           | Records microphone audio in the browser, slicing it into 20 s chunks for fast, real-time transcription.                                                            |
-| **Whisper + GPT-4o**             | Uses the *base* Whisper model for speech-to-text and GPT-4o-mini for language-aware, template-driven minute taking.                                                |
-| **Automatic language detection** | All headings and labels are translated into the language that dominates the meeting.                                                                               |
-| **Smart templates**              | Six built-in meeting templates (general, consultation, project, presentation, brainstorming, retrospective) – unused or empty sections are stripped automatically. |
-| **Offline history & cache**      | Summaries, transcripts and meeting metadata are saved to `localStorage` for up to **5 years** – pages load instantly on return visits.                             |
-| **FastAPI backend**              | Simple REST API, SQLite storage, chunked uploads, on-the-fly summarisation once recording ends.                                                                    |
-| **React + Vite frontend**        | Lightweight SPA with a clean, mobile-friendly UI.                                                                                                                  |
-| **Zero config deploy**           | One-command Docker Compose stack (`frontend + backend`).                                                                                                           |
-
-## System architecture
+MeetScribe is a modern web application with a decoupled frontend and backend. The magic happens through a sequence of synchronous and asynchronous operations, ensuring the app stays responsive while handling heavy processing. Here’s a look under the hood:
 
 ```
-browser ──► React / Vite (Recorder) ───► FastAPI ─► Whisper(base) ┐
- |  ▲                                             │               │
- |  └─ localStorage cache ◄──── Summary page ◄────┘   GPT-4o-mini │
- └──────────────◄────── websockets / fetch ───────────────────────┘
+                 ┌───────────────────────────────────┐
+                 │          Browser (React)          │
+                 └───────────────────────────────────┘
+                                  │
+          1. Creates Meeting & Uploads Audio Chunks (via POST)
+                                  │
+                                  ▼
+                 ┌───────────────────────────────────┐
+                 │         FastAPI Web Server        │
+                 │   - Saves audio file to disk      │
+                 │   - Creates/updates DB record     │
+                 └─────────────────┬─────────────────┘
+                                   │
+                2. Dispatches task to background worker
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │        Redis (Message Queue)      │
+                 └─────────────────┬─────────────────┘
+                                   │
+                        3. Worker dequeues task
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │           Celery Worker           │
+                 │ ─► 4a. Transcribe w/ Whisper      │
+                 │ ─► 4b. Update SQLite DB w/ text   │
+                 │ ─► 4c. If final: Summarize w/ GPT │
+                 │ ─► 4d. Update SQLite DB w/ summary│
+                 └───────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Meanwhile... The Browser polls the FastAPI server, which reads   │
+  │ directly from the SQLite DB to provide live transcript updates   │
+  │ and, eventually, the final summary.                              │
+  └──────────────────────────────────────────────────────────────────┘
 ```
 
-*Audio is streamed in chunks (20 s) to the backend.
-Once the final chunk arrives, the backend generates a single Markdown summary, stores it, and returns it to the client. The client caches it locally so re-loads never hit the server.*
+*   **Frontend:** A lightweight Single-Page Application (SPA) built with **React** and **Vite**. It uses the `MediaRecorder` API to capture audio, which it sends to the backend in 20-second chunks.
+*   **Backend:** A fast REST API built with **FastAPI** (Python). Its main job is to handle file uploads, manage meeting state in the database, and dispatch tasks to the background worker. It does **not** perform the heavy lifting itself.
+*   **Async Processing:** Heavy tasks like transcription and summarization are handled in the background by **Celery** workers, using **Redis** as a message broker. This keeps the API responsive.
+*   **Central State:** The **SQLite Database** acts as the single source of truth. Both the FastAPI server (for status checks) and the Celery worker (for updates) read from and write to it.
+*   **AI Models:** The Celery worker uses `faster-whisper` for local transcription and then calls the **OpenAI API** (`gpt-4o-mini`) for summarization once the full transcript is ready.
+*   **Deployment:** The entire stack is containerized with **Docker** and orchestrated with **Docker Compose**, making setup a breeze.
 
-## Quick-start (🚀 Docker)
+## 🚀 Quick Start (Docker)
+
+The easiest way to get MeetScribe running is with Docker.
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-github-username/meetscribe.git
+    cd meetscribe
+    ```
+
+2.  **Configure your environment:**
+    Copy the sample environment file and add your OpenAI API key.
+    ```bash
+    cp .env.sample .env
+    ```
+    Now, open the `.env` file and paste your `OPENAI_API_KEY`.
+
+3.  **Build and run the containers:**
+    This command will build the images and start all the services (frontend, backend, worker, and redis).
+    ```bash
+    docker compose up --build
+    ```
+
+4.  **You're ready!**
+    *   Open the frontend in your browser: **[http://localhost:4132](http://localhost:4132)**
+    *   View the backend API docs (Swagger UI): **[http://localhost:4131/docs](http://localhost:4131/docs)**
+
+## 👨‍💻 Local Development (Without Docker)
+
+If you prefer to run the services directly on your machine for development:
+
+**Prerequisites:**
+*   Python 3.11+
+*   Node.js 18+ (with `pnpm`)
+*   A running Redis server (e.g., `brew install redis` on macOS and run `redis-server`)
 
 ```bash
-git clone https://github.com/your-org/meetscribe.git
-cd meetscribe
-cp .env.example .env               # add your OpenAI key
-docker compose up --build
-# → frontend : http://localhost:4132
-# → backend  : http://localhost:4131/docs  (OpenAPI UI)
-```
-
-## Local development
-
-```bash
-# backend
+# 1. Start the Backend API
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp ../.env.sample ../.env  # Make sure your .env is in the root directory
 uvicorn app.main:app --reload --port 8000
 
-# frontend (in another terminal)
+# 2. Start the Celery Worker (in a new terminal)
+cd backend
+source .venv/bin/activate
+celery -A app.worker.celery_app worker -l info -c 1
+
+# 3. Start the Frontend (in a new terminal)
 cd frontend
-pnpm i      # or npm / yarn
-pnpm dev    # Vite dev server on :5173
+pnpm install
+pnpm dev # Vite dev server starts on http://localhost:5173
 ```
 
-## Environment variables
+## ⚙️ Configuration
 
-| Variable             | Description                                                                   |
-| -------------------- | ----------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`     | **Required** – your OpenAI key for GPT-4o and Whisper.                        |
-| `WHISPER_MODEL_SIZE` | Set to `base` (default), `small`, etc. Larger = better accuracy, slower load. |
-| `VITE_API_BASE_URL`  | Frontend → Backend URL. Defaults to `/api` in dev, set to full URL in prod.   |
-| `SECRET_KEY`         | Any random string; used for FastAPI session cookies.                          |
+MeetScribe is configured using environment variables in the `.env` file.
 
-See `.env.example` for the full list.
+| Variable             | Description                                                                                                                              | Default (`.env.sample`)      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `OPENAI_API_KEY`     | **Required.** Your API key from OpenAI.                                                                                                  | `sk-...`                     |
+| `WHISPER_MODEL_SIZE` | The Whisper model to use. Options: `tiny`, `base`, `small`, `medium`, `large`. Larger models are more accurate but require more resources. | `medium`                     |
+| `SECRET_KEY`         | A random string for signing session data. **Change this.**                                                                               | `replace_this...`            |
+| `VITE_API_BASE_URL`  | For local Docker, leave this blank. For production, set it to your public API URL (e.g., `https://api.yourdomain.com`).                     | (blank)                      |
+| `FRONTEND_ORIGIN`    | The URL of the frontend, needed for backend CORS. For local Docker, it's the exposed frontend port.                                        | `http://localhost:4132`      |
+| `CELERY_BROKER_URL`  | The connection URL for the Redis message broker.                                                                                         | `redis://redis:6379/0`       |
 
-## API cheatsheet
+## 🗺️ Roadmap
 
-| Endpoint             | Method             | Purpose                                               |
-| -------------------- | ------------------ | ----------------------------------------------------- |
-| `/api/meetings`      | `POST`             | Create a new meeting record.                          |
-| `/api/chunks`        | `POST (multipart)` | Upload one ⓘ chunk. Final chunk gets `is_final=true`. |
-| `/api/meetings/{id}` | `GET`              | Fetch meeting (summary, transcript, status).          |
-| `/healthz`           | `GET`              | Simple health check.                                  |
+This is a living project. Here are some features I'm thinking about:
 
-## Roadmap
+*   [ ] Speaker diarization (identifying who said what).
+*   [ ] OAuth / multi-user accounts.
+*   [ ] Export to Google Docs, Notion, or a Markdown file.
+*   [ ] Real-time translation capabilities.
+*   [ ] A mobile-friendly PWA (Progressive Web App).
 
-* [ ] Speaker diarisation
-* [ ] OAuth / multi-user accounts
-* [ ] Multi-language meetings (per-speaker language switching)
-* [ ] Export to Google Docs / Notion / Markdown file
-* [ ] Mobile PWA install banner
+## 🙌 Contributing
 
-## Contributing
+Contributions are welcome!
 
-1. Fork the repo & create a feature branch.
-2. Run `pnpm lint && pnpm test` before pushing.
-3. Open a pull request – please follow the Conventional Commits style.
+1.  Fork the repository & create a new feature branch.
+2.  Follow the [Local Development](#-local-development-without-docker) guide to set up your environment.
+3.  Make your changes.
+4.  Open a pull request with a clear description of your changes.
 
-## License
+## 📜 License
 
-MIT © 2025 Egor Gavrilov
+This project is licensed under the MIT License.
+
+Copyright © 2025 [Egor Gavrilov](https://github.com/hellguz)

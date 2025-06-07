@@ -1,3 +1,4 @@
+# <./backend\app\config.py>
 from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,11 +12,17 @@ class Settings(BaseSettings):
     openai_api_key: str
     whisper_model_size: str = "tiny"
 
+    frontend_origin: str
+
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
+
+    # Celery / Redis
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/0"
+
 
 @lru_cache
 def get_settings() -> "Settings":
     return Settings()
 
 settings = get_settings()
-

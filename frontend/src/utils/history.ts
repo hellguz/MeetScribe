@@ -8,6 +8,7 @@ export interface MeetingMeta {
   id: string;
   title: string;
   started_at: string; // ISO 8601
+  status: "pending" | "complete";
 }
 
 const STORAGE_KEY = "meetscribe_history";
