@@ -425,10 +425,7 @@ export default function Record() {
       {liveTranscript && (
         <div style={{ marginBottom: "24px", padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", maxHeight: "200px", overflowY: "auto" }}>
           <div style={{ fontSize: "14px", fontWeight: "bold", color: "#374151", marginBottom: "8px" }}>🎤 Live Transcript:</div>
-          <div
-            style={{ fontSize: "14px", lineHeight: "1.5", color: "#1f2937" }}
-            dangerouslySetInnerHTML={{ __html: liveTranscript }}
-          />
+          <div style={{ fontSize: "14px", lineHeight: "1.5", color: "#1f2937" }}>{liveTranscript}</div>
         </div>
       )}
 

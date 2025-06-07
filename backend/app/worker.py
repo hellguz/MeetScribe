@@ -202,11 +202,8 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
         chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
         LOGGER.info(f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'")
 
-        # MODIFICATION 1 STARTS HERE
-        if not chunk_text and chunk_index != 0: # Ensure it's not the header chunk (already handled)
-            chunk_text = f"<b>[No speech detected in chunk {chunk_index}]</b>"
-            LOGGER.warn(f"Empty transcription for chunk {chunk_index} of meeting {meeting_id_str}, setting placeholder.")
-        # MODIFICATION 1 ENDS HERE
+        # Removed placeholder logic for empty chunk_text.
+        # chunk_text from transcribe_webm_chunk_in_worker (which can be "") is used directly.
 
         with Session(engine) as db:
             mc = db.exec(
@@ -296,10 +293,10 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
                     )
                 ).first()
                 if mc_fail:
-                    mc_fail.text = f"<b>[Transcription failed for chunk {chunk_index} after multiple retries]</b>"
+                    mc_fail.text = None # Set to None on max retries exceeded
                     db_fail_session.add(mc_fail)
                     db_fail_session.commit()
-                    LOGGER.info(f"Updated chunk {chunk_index} of meeting {meeting_id_str} to reflect max retries exceeded.")
+                    LOGGER.info(f"Set chunk {chunk_index} of meeting {meeting_id_str} text to None after max retries.")
                 else:
                     LOGGER.error(f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries.")
             # MODIFICATION 2 ENDS HERE
