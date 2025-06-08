@@ -14,12 +14,15 @@ export default function Summary() {
   const [error, setError] = useState<string | null>(null);
   const [meetingTitle, setMeetingTitle] = useState<string>(""); // To store title for history update
   const [meetingStartedAt, setMeetingStartedAt] = useState<string>(""); // To store started_at for history update
+  const [loadedFromCache, setLoadedFromCache] = useState(false); // New state
 
   const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
     if (!mid) return;
 
     if (isInitialFetch) {
-      setIsLoading(true);
+      if (!loadedFromCache) {
+        setIsLoading(true);
+      }
       setError(null);
     }
 
@@ -75,20 +78,39 @@ export default function Summary() {
         setIsLoading(false); // No longer initial loading, now it's processing
       }
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
+      if (loadedFromCache) {
+        console.error("Network fetch failed, displaying cached version. Error:", err);
+        // Optionally set a state for a subtle offline/error indicator
+        // e.g., setNetworkErrorOccurred(true);
       } else {
-        setError("An unknown error occurred.");
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError("An unknown error occurred.");
+        }
       }
       setIsLoading(false);
       setIsProcessing(false);
     }
-  }, [mid]);
+  }, [mid, loadedFromCache]); // Added loadedFromCache to dependencies
 
   // Initial fetch
   useEffect(() => {
+    if (mid) {
+      const cachedData = getCached(mid);
+      if (cachedData) {
+        setSummary(cachedData.summary);
+        setTranscript(cachedData.transcript || null); // Ensure null if undefined
+        // Optional: If you cache title/date, set them here too
+        // setMeetingTitle(cachedData.title);
+        // setMeetingStartedAt(cachedData.updatedAt); // Or a specific 'cachedAt' field
+        setLoadedFromCache(true);
+        setIsLoading(false); // Show cached content quickly
+      }
+    }
+    // Existing fetchMeetingData call will still run to get latest
     fetchMeetingData(true);
-  }, [fetchMeetingData]);
+  }, [mid]); // fetchMeetingData is not needed here as it's stable due to useCallback and mid is the real trigger
 
   // Polling mechanism
   useEffect(() => {
