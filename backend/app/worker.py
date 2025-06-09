@@ -133,16 +133,19 @@ You are a meeting-summary generator.
 
 RULES
 • Choose (or adapt) one template 1-6 from the provided list.
-• Translate all headings and subheadings in the chosen template to the meeting’s dominant language.
-• Replace placeholders: [YYYY-MM-DD] with "{date_str}"; [HH:MM - HH:MM] with "{time_range}".
-• Carefully review the transcript to fill in relevant details for sections like "Key Discussion Points", "Decisions Made", "Action Items", etc.
-• If a section in the template has no corresponding information in the transcript, OMIT that section entirely from the output.
-• Remove all instructional bracketed placeholders (e.g., "[Summary/Details]", "[if available]") from the final Markdown.
-• Return ONLY the generated Markdown content. Do not include any prefatory remarks or apologies.
+• Translate **all headings *and* body text** into the dominant language spoken in the recording.
+• Replace placeholders: [YYYY-MM-DD] → "{date_str}", [HH:MM - HH:MM] → "{time_range}".
+• Fill in relevant details for every section. If the transcript does not supply information for a section, **omit that section entirely**.
+• Use plain Markdown (headings, bulleted or numbered lists). **Do not output tables or code blocks.**
+• Aim for ~0.5–1.5 A4 pages (≈ 250–700 words): detailed enough to replace the recording, yet concise and scannable.
+• Remove every instructional placeholder such as “[…]” or “[if available]” before returning the text.
+• Return **only** the generated Markdown – no prefatory remarks, no explanations, no apologies.
 
 TEMPLATES
 {TEMPLATES}
 """
+
+        
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0.3,
