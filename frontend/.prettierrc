@@ -1,14 +1,14 @@
 {
-  "printWidth": 80,
+  "printWidth": 160,
   "tabWidth": 2,
-  "useTabs": false,
+  "useTabs": true,
   "semi": false,
   "singleQuote": true,
   "trailingComma": "all",
   "bracketSpacing": true,
-  "bracketSameLine": false,
-  "jsxBracketSameLine": false,
+  "bracketSameLine": true,
+  "jsxBracketSameLine": true,
   "arrowParens": "always",
   "endOfLine": "lf",
-  "singleAttributePerLine": true
+  "singleAttributePerLine": false
 }

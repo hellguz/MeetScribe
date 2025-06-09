@@ -1,164 +1,162 @@
 // ./frontend/src/pages/Summary.tsx
-import React, { useEffect, useState, useCallback } from "react";
-import { useParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import { saveMeeting, getHistory, MeetingMeta } from "../utils/history"; // Added getHistory and MeetingMeta
-import { getCached, saveCached } from "../utils/summaryCache";
+import React, { useEffect, useState, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import { saveMeeting, getHistory, MeetingMeta } from '../utils/history' // Added getHistory and MeetingMeta
+import { getCached, saveCached } from '../utils/summaryCache'
 
 export default function Summary() {
-  const { mid } = useParams<{ mid: string }>();
-  const [summary, setSummary] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [meetingTitle, setMeetingTitle] = useState<string>(""); // To store title for history update
-  const [meetingStartedAt, setMeetingStartedAt] = useState<string>(""); // To store started_at for history update
-  const [loadedFromCache, setLoadedFromCache] = useState(false); // New state
+	const { mid } = useParams<{ mid: string }>()
+	const [summary, setSummary] = useState<string | null>(null)
+	const [transcript, setTranscript] = useState<string | null>(null)
+	const [isLoading, setIsLoading] = useState(true)
+	const [isProcessing, setIsProcessing] = useState(false)
+	const [error, setError] = useState<string | null>(null)
+	const [meetingTitle, setMeetingTitle] = useState<string>('') // To store title for history update
+	const [meetingStartedAt, setMeetingStartedAt] = useState<string>('') // To store started_at for history update
+	const [loadedFromCache, setLoadedFromCache] = useState(false) // New state
 
-  const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
-    if (!mid) return;
+	const fetchMeetingData = useCallback(
+		async (isInitialFetch: boolean = false) => {
+			if (!mid) return
 
-    if (isInitialFetch) {
-      if (!loadedFromCache) {
-        setIsLoading(true);
-      }
-      setError(null);
-    }
+			if (isInitialFetch) {
+				if (!loadedFromCache) {
+					setIsLoading(true)
+				}
+				setError(null)
+			}
 
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`
-      );
+			try {
+				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`)
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ message: "Failed to fetch meeting data" }));
-        throw new Error(errorData.message || `HTTP error! status: ${res.status}`);
-      }
+				if (!res.ok) {
+					const errorData = await res.json().catch(() => ({ message: 'Failed to fetch meeting data' }))
+					throw new Error(errorData.message || `HTTP error! status: ${res.status}`)
+				}
 
-      const data = await res.json();
+				const data = await res.json()
 
-      // Always update transcript to show partial text, even if not 'done'
-      const trn = data.transcript_text || null;
-      setTranscript(trn);
+				// Always update transcript to show partial text, even if not 'done'
+				const trn = data.transcript_text || null
+				setTranscript(trn)
 
-      if (isInitialFetch) {
-        // Store title and started_at from the first successful fetch
-        // These might be needed if the meeting is not yet in local history
-        setMeetingTitle(data.title || `Meeting ${mid}`);
-        setMeetingStartedAt(data.started_at || new Date().toISOString());
-      }
+				if (isInitialFetch) {
+					// Store title and started_at from the first successful fetch
+					// These might be needed if the meeting is not yet in local history
+					setMeetingTitle(data.title || `Meeting ${mid}`)
+					setMeetingStartedAt(data.started_at || new Date().toISOString())
+				}
 
-      if (data.done && data.summary_markdown) {
-        const sum = data.summary_markdown;
-        setSummary(sum);
-        setIsProcessing(false);
-        setIsLoading(false);
+				if (data.done && data.summary_markdown) {
+					const sum = data.summary_markdown
+					setSummary(sum)
+					setIsProcessing(false)
+					setIsLoading(false)
 
-        saveCached({
-          id: data.id,
-          summary: sum,
-          transcript: trn,
-          updatedAt: new Date().toISOString(),
-        });
+					saveCached({
+						id: data.id,
+						summary: sum,
+						transcript: trn,
+						updatedAt: new Date().toISOString(),
+					})
 
-        // Update history with status 'complete'
-        const historyList = getHistory();
-        const existingMeta = historyList.find(m => m.id === data.id);
+					// Update history with status 'complete'
+					const historyList = getHistory()
+					const existingMeta = historyList.find((m) => m.id === data.id)
 
-        saveMeeting({
-          id: data.id,
-          title: existingMeta?.title || data.title || `Meeting ${data.id}`,
-          started_at: existingMeta?.started_at || data.started_at || new Date().toISOString(),
-          status: "complete",
-        });
-      } else {
-        // Not done or no summary markdown yet
-        setIsProcessing(true);
-        setIsLoading(false); // No longer initial loading, now it's processing
-      }
-    } catch (err) {
-      if (loadedFromCache) {
-        console.error("Network fetch failed, displaying cached version. Error:", err);
-        // Optionally set a state for a subtle offline/error indicator
-        // e.g., setNetworkErrorOccurred(true);
-      } else {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError("An unknown error occurred.");
-        }
-      }
-      setIsLoading(false);
-      setIsProcessing(false);
-    }
-  }, [mid, loadedFromCache]); // Added loadedFromCache to dependencies
+					saveMeeting({
+						id: data.id,
+						title: existingMeta?.title || data.title || `Meeting ${data.id}`,
+						started_at: existingMeta?.started_at || data.started_at || new Date().toISOString(),
+						status: 'complete',
+					})
+				} else {
+					// Not done or no summary markdown yet
+					setIsProcessing(true)
+					setIsLoading(false) // No longer initial loading, now it's processing
+				}
+			} catch (err) {
+				if (loadedFromCache) {
+					console.error('Network fetch failed, displaying cached version. Error:', err)
+					// Optionally set a state for a subtle offline/error indicator
+					// e.g., setNetworkErrorOccurred(true);
+				} else {
+					if (err instanceof Error) {
+						setError(err.message)
+					} else {
+						setError('An unknown error occurred.')
+					}
+				}
+				setIsLoading(false)
+				setIsProcessing(false)
+			}
+		},
+		[mid, loadedFromCache],
+	) // Added loadedFromCache to dependencies
 
-  // Initial fetch
-  useEffect(() => {
-    if (mid) {
-      const cachedData = getCached(mid);
-      if (cachedData) {
-        setSummary(cachedData.summary);
-        setTranscript(cachedData.transcript || null); // Ensure null if undefined
-        // Optional: If you cache title/date, set them here too
-        // setMeetingTitle(cachedData.title);
-        // setMeetingStartedAt(cachedData.updatedAt); // Or a specific 'cachedAt' field
-        setLoadedFromCache(true);
-        setIsLoading(false); // Show cached content quickly
-      }
-    }
-    // Existing fetchMeetingData call will still run to get latest
-    fetchMeetingData(true);
-  }, [mid]); // fetchMeetingData is not needed here as it's stable due to useCallback and mid is the real trigger
+	// Initial fetch
+	useEffect(() => {
+		if (mid) {
+			const cachedData = getCached(mid)
+			if (cachedData) {
+				setSummary(cachedData.summary)
+				setTranscript(cachedData.transcript || null) // Ensure null if undefined
+				// Optional: If you cache title/date, set them here too
+				// setMeetingTitle(cachedData.title);
+				// setMeetingStartedAt(cachedData.updatedAt); // Or a specific 'cachedAt' field
+				setLoadedFromCache(true)
+				setIsLoading(false) // Show cached content quickly
+			}
+		}
+		// Existing fetchMeetingData call will still run to get latest
+		fetchMeetingData(true)
+	}, [mid]) // fetchMeetingData is not needed here as it's stable due to useCallback and mid is the real trigger
 
-  // Polling mechanism
-  useEffect(() => {
-    if (!mid || !isProcessing) return;
+	// Polling mechanism
+	useEffect(() => {
+		if (!mid || !isProcessing) return
 
-    const pollInterval = setInterval(() => {
-      fetchMeetingData(false); // Not an initial fetch
-    }, 5000);
+		const pollInterval = setInterval(() => {
+			fetchMeetingData(false) // Not an initial fetch
+		}, 5000)
 
-    return () => clearInterval(pollInterval);
-  }, [mid, isProcessing, fetchMeetingData]);
+		return () => clearInterval(pollInterval)
+	}, [mid, isProcessing, fetchMeetingData])
 
-  /* ─── styling ───────────────────────────────────────────────────── */
-  const font: React.CSSProperties = {
-    fontFamily: '"Inter", sans-serif',
-    fontSize: 18,
-    lineHeight: 1.6,
-  };
+	/* ─── styling ───────────────────────────────────────────────────── */
+	const font: React.CSSProperties = {
+		fontFamily: '"Inter", sans-serif',
+		fontSize: 18,
+		lineHeight: 1.6,
+	}
 
-  return (
-    <div style={{ ...font, maxWidth: 800, margin: "0 auto", padding: 24 }}>
-      {isLoading && <p>Loading summary...</p>}
-      {error && <p style={{ color: "red" }}>Error: {error}</p>}
+	return (
+		<div style={{ ...font, maxWidth: 800, margin: '0 auto', padding: 24 }}>
+			{isLoading && <p>Loading summary...</p>}
+			{error && <p style={{ color: 'red' }}>Error: {error}</p>}
 
-      {!isLoading && !error && isProcessing && !summary && (
-        <p>⏳ Processing summary, please wait...</p>
-      )}
+			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
-      {summary && <ReactMarkdown>{summary}</ReactMarkdown>}
+			{summary && <ReactMarkdown>{summary}</ReactMarkdown>}
 
-      {/* Always show the transcript (even if no summary yet) */}
-      {!isLoading && !error && transcript && (
-        <>
-          <h2 style={{ marginTop: 32 }}>Full Transcript (raw)</h2>
-          <pre
-            style={{
-              ...font,
-              whiteSpace: "pre-wrap",
-              background: "#f5f5f5",
-              padding: 16,
-              borderRadius: 4,
-              overflowX: "auto",
-            }}
-          >
-            {transcript}
-          </pre>
-        </>
-      )}
-    </div>
-  );
+			{/* Always show the transcript (even if no summary yet) */}
+			{!isLoading && !error && transcript && (
+				<>
+					<h2 style={{ marginTop: 32 }}>Full Transcript (raw)</h2>
+					<pre
+						style={{
+							...font,
+							whiteSpace: 'pre-wrap',
+							background: '#f5f5f5',
+							padding: 16,
+							borderRadius: 4,
+							overflowX: 'auto',
+						}}>
+						{transcript}
+					</pre>
+				</>
+			)}
+		</div>
+	)
 }
