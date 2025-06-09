@@ -53,7 +53,7 @@ def get_whisper_model():
         _whisper_model_instance = WhisperModel(
             settings.whisper_model_size,
             device="cpu",
-            compute_type="int8"
+            compute_type="int8_float16"
         )
         LOGGER.info("✅ Whisper model loaded in Celery worker.")
     return _whisper_model_instance

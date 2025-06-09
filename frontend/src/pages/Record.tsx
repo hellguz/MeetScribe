@@ -208,7 +208,7 @@ export default function Record() {
 
     const recorderOptions: MediaRecorderOptions = {
       mimeType: "audio/webm; codecs=opus",
-      audioBitsPerSecond: 128000,
+      audioBitsPerSecond: 192000,
     };
     if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? "")) {
       console.warn(`${recorderOptions.mimeType} is not supported, trying default.`);
@@ -257,7 +257,7 @@ export default function Record() {
         }
         const displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
-          audio: { echoCancellation: true, noiseSuppression: true },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
         displayStreamRef.current = displayStream;
 
@@ -278,7 +278,7 @@ export default function Record() {
         audioStream = new MediaStream(displayStream.getAudioTracks());
       } else {
         audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
       }
 
