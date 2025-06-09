@@ -35,6 +35,8 @@ class Meeting(SQLModel, table=True):
     transcript_text: Optional[str] = None
     summary_markdown: Optional[str] = None
     done: bool = False
+    summary_task_queued: bool = False 
+
 
 
 class MeetingChunk(SQLModel, table=True):

@@ -310,3 +310,38 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
                 else:
                     LOGGER.error(f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries.")
             # MODIFICATION 2 ENDS HERE
+            
+
+# ─── NEW!  on-demand summary task ───────────────────────────────────
+@celery_app.task(name="app.worker.generate_summary_only",
+                 bind=True,
+                 autoretry_for=(Exception,),
+                 max_retries=3,
+                 default_retry_delay=60)
+def generate_summary_only(self, meeting_id_str: str):
+    """
+    Regenerates a summary for an already-transcribed meeting.
+    Called from GET /api/meetings when the user opens the summary page.
+    """
+    engine = get_db_engine()
+    meeting_id = uuid.UUID(meeting_id_str)
+
+    with Session(engine) as db:
+        mtg = db.get(Meeting, meeting_id)
+        if not mtg:
+            LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
+            return
+
+        final_transcript = mtg.transcript_text or rebuild_full_transcript(db, meeting_id)
+        if not final_transcript:
+            LOGGER.warning("Meeting %s has no transcript – aborting regen.", meeting_id_str)
+            return
+
+        LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
+        summary_md = summarise_transcript_in_worker(final_transcript, mtg.started_at.isoformat())
+
+        mtg.summary_markdown = summary_md
+        mtg.done = True
+        db.add(mtg)
+        db.commit()
+        LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)

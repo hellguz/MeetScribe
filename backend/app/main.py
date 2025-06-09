@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select, func
 
 from .config import settings
 from .models import Meeting, MeetingChunk, MeetingCreate, MeetingStatus
-from .worker import process_transcription_and_summary  # Import Celery task
+from .worker import process_transcription_and_summary, generate_summary_only
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -213,34 +213,32 @@ async def upload_chunk(
     }
 
 
+
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
 def get_meeting(mid: uuid.UUID):
     """
-    Retrieve meeting status.
-    - The live transcript is built from a contiguous sequence of chunks to ensure correct order.
-    - If inactive for too long, the meeting is automatically marked as 'final'.
+    Retrieve meeting status and (lazily) trigger a summary regeneration
+    *only if the user asks for this meeting and the summary is missing*.
     """
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
             raise HTTPException(404, "Meeting not found")
 
+        # ---------------- inactivity timeout (unchanged) -------------
         now = dt.datetime.utcnow()
-        # If no final_received yet and expected_chunks is still None,
-        # and last_activity is more than timeout ago, auto-finalize:
         if (
             not mtg.final_received
             and mtg.expected_chunks is None
             and (now - mtg.last_activity).total_seconds() > INACTIVITY_TIMEOUT_SECONDS
         ):
-            LOGGER.info(f"🕒 Inactivity timeout for meeting {mid}: marking final_received & expected_chunks.")
             mtg.final_received = True
             mtg.expected_chunks = mtg.received_chunks
             db.add(mtg)
             db.commit()
             db.refresh(mtg)
 
-        # Count how many non-header chunks have transcription
+        # ---------------- count processed chunks (unchanged) ---------
         transcribed_count = db.scalar(
             select(func.count(MeetingChunk.id)).where(
                 MeetingChunk.meeting_id == mid,
@@ -249,17 +247,25 @@ def get_meeting(mid: uuid.UUID):
             )
         ) or 0
 
-        # Build the live transcript from a contiguous block of processed chunks.
-        live_transcript = _build_live_transcript(db, mid)
-
-        response_data = mtg.model_dump()
-        # If the meeting is fully done, use the final stored transcript.
-        # Otherwise, use the live, contiguous one.
-        response_data["transcript_text"] = mtg.transcript_text if mtg.done else live_transcript
-        response_data["transcribed_chunks"] = transcribed_count
-
-        return MeetingStatus(**response_data)
-
+         # ---------------- LAZY summary trigger -----------------------
+        if (
+            not mtg.done
+            and not mtg.summary_task_queued 
+            and mtg.summary_markdown in (None, "")
+            and mtg.final_received
+            and mtg.expected_chunks and transcribed_count >= mtg.expected_chunks
+        ):
+            LOGGER.info("Queueing summary-only task for meeting %s", mid)
+            generate_summary_only.delay(str(mid))
+            mtg.summary_task_queued = True
+            db.add(mtg)
+            db.commit()
+        # ---------------- build live transcript (unchanged) ----------
+        live_tx = _build_live_transcript(db, mid)
+        data = mtg.model_dump()
+        data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
+        data["transcribed_chunks"] = transcribed_count
+        return MeetingStatus(**data)
 
 @app.get("/healthz")
 def health() -> dict[str, str]:
