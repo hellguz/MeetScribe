@@ -27,44 +27,40 @@ The entire process is a coordinated dance between the user's browser, a web serv
           ┌───────────────────────────────────┐
           │         Browser (React)           │
           └─────────────────┬─────────────────┘
-  (Polls) │ ▲               │ 1. Start Meeting (POST /meetings)
- ┌────────┘ │               │ 2. Upload Audio Chunks (POST /chunks)
- │ 5. Get Status/           │
- │    Live Transcript       │
- │    (GET /meetings/{id})  │
- │ ◀────────┘               │
- │                          ▼
- │        ┌───────────────────────────────────┐
- │        │        FastAPI Web Server         │
- │        │  - Manages DB state (SQLite)      │
- │        │  - Saves audio to Filesystem      │
- │        └─────────────────┬─────────────────┘
- │                          │ 3. Dispatch Transcription Task
- │                          │
- │                          ▼
- │        ┌───────────────────────────────────┐
- │        │         Redis (Task Queue)        │
- │        └─────────────────┬─────────────────┘
- │                          │ 4. Worker Dequeues Task
- │                          │
- │                          ▼
- │        ┌───────────────────────────────────┐ ◀────────────┐
- │        │           Celery Worker           │              │
- │        │  - Reads audio from Filesystem    │              │
- │        │  - 6a. Transcribe w/ Whisper      │              │
- │        │  - 6b. Update chunk text in SQLite├─┐ 7. Finalize │
- │        │  - 7a. Assemble full transcript   │ │             │
- │        │  - 7b. Call OpenAI for summary    │ │             │
- │        │  - 7c. Update meeting in SQLite   │ │             │
- │        └─────────────────┬─────────────────┘ │             │
- │                          │                   │             │
- └──────────────────────────| Reads & Writes    │             │
-                            │ State             │             │
-                            ▼                   │             │
-          ┌───────────────────────────────────┐ │             │
-          │         SQLite Database           ├─┘             │
-          │      (Single Source of Truth)     │               │
-          └───────────────────────────────────┘ ◀─────────────┘
+(Polls) │                   │ 1. Start Meeting (POST /meetings)
+┌───────┘                   │ 2. Upload Audio Chunks (POST /chunks)
+│ 5. Get Status/            │
+│    Live Transcript        v
+│    (GET /meetings/{id}) ┌───────────────────────────────────┐
+│ <────────────────────── │        FastAPI Web Server         │
+│                         │  - Manages DB state (SQLite)      │
+│                         │  - Saves audio to Filesystem      │
+│                         └─────────────────┬─────────────────┘
+│                                           │ 3. Dispatch Transcription Task
+│                                           v
+│                         ┌───────────────────────────────────┐
+│                         │         Redis (Task Queue)        │
+│                         └─────────────────┬─────────────────┘
+│                                           │ 4. Worker Dequeues Task
+│                                           v
+│                         ┌───────────────────────────────────┐
+│                         │           Celery Worker           │ ────────┐
+│                         │  - Reads audio from Filesystem    │         │
+│                         │  - 6a. Transcribe w/ Whisper      │         │ 7. Finalize
+│                         │  - 6b. Update chunk text in SQLite│         │
+│                         │  - 7a. Assemble full transcript   │         │
+│                         │  - 7b. Call OpenAI for summary    │         │
+│                         │  - 7c. Update meeting in SQLite   │         │
+│                         └─────────────────┬─────────────────┘         │
+│                                           │                           │
+│                                           │ Reads & Writes State      │
+└───────────────────────────────────────────┼───────────────────────────┘
+                                            │
+                                            v
+                           ┌───────────────────────────────────┐
+                           │         SQLite Database           │
+                           │      (Single Source of Truth)     │
+                           └───────────────────────────────────┘
 ```
 
 #### The Application Lifecycle
