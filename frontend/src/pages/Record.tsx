@@ -1,4 +1,3 @@
-// ./frontend/src/pages/Record.tsx
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { getHistory, MeetingMeta, saveMeeting } from "../utils/history";
@@ -26,6 +25,60 @@ export default function Record() {
   const [pollingStarted, setPollingStarted] = useState(false);
   const [audioSource, setAudioSource] = useState<AudioSource>("mic");
   const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
+
+  /* ─── waveform metering ─────────────────────────────────────────── */
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  /* ─── resize canvas on mount & window resize ──────────────────── */
+  useEffect(() => {
+    const resize = () => {
+      const c = canvasRef.current;
+      if (!c) return;
+      c.width = c.clientWidth;
+      c.height = c.clientHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => { window.removeEventListener("resize", resize); };
+  }, []);
+
+  /* ─── draw waveform loop ───────────────────────────────────────── */
+  const drawWaveform = useCallback(() => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteTimeDomainData(dataArray);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(239,68,68,0.3)"; // light red
+    ctx.beginPath();
+
+    const sliceWidth = canvas.width / bufferLength;
+    let x = 0;
+    const centerY = canvas.height / 2;
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const deviation = (v - 1) * centerY * 4; // 4× vertical amplification
+      const y = centerY + deviation;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      x += sliceWidth;
+    }
+    ctx.lineTo(canvas.width, centerY);
+    ctx.stroke();
+
+    animationFrameRef.current = requestAnimationFrame(drawWaveform);
+  }, []);
 
   // Track when the first chunk was transcribed (for speed calculation)
   const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
@@ -62,23 +115,23 @@ export default function Record() {
   useEffect(() => {
     if (transcribedChunks === 1 && firstChunkProcessedTime === null) {
       setFirstChunkProcessedTime(Date.now());
-    } else if (transcribedChunks > 1 && transcriptionStartTime === null && firstChunkProcessedTime !== null) {
+    } else if (
+      transcribedChunks > 1 &&
+      transcriptionStartTime === null &&
+      firstChunkProcessedTime !== null
+    ) {
       setTranscriptionStartTime(firstChunkProcessedTime);
     }
-  }, [transcribedChunks, firstChunkProcessedTime, transcriptionStartTime, setFirstChunkProcessedTime, setTranscriptionStartTime]);
+  }, [transcribedChunks, firstChunkProcessedTime, transcriptionStartTime]);
 
   /* ─── compute transcription speed ───────────────────────────────── */
   const transcriptionSpeed = useMemo(() => {
-    if (transcriptionStartTime === null || transcribedChunks < 2) {
-      return null;
-    }
+    if (transcriptionStartTime === null || transcribedChunks < 2) return null;
     const elapsedSec = (Date.now() - transcriptionStartTime) / 1000;
-    if (elapsedSec <= 0) {
-      return null;
-    }
+    if (elapsedSec <= 0) return null;
     const audioDurationProcessedSinceStartTime = (transcribedChunks - 1) * CHUNK_DURATION;
     return audioDurationProcessedSinceStartTime / elapsedSec;
-  }, [transcriptionStartTime, transcribedChunks, CHUNK_DURATION]);
+  }, [transcriptionStartTime, transcribedChunks]);
 
   const transcriptionSpeedLabel = useMemo(() => {
     if (transcriptionSpeed === null) return null;
@@ -247,6 +300,14 @@ export default function Record() {
     recorder.start(timeSliceMs);
   }
 
+  function clearWaveformCanvas() {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
   async function start() {
     let audioStream: MediaStream;
     try {
@@ -257,7 +318,7 @@ export default function Record() {
         }
         const displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
         });
         displayStreamRef.current = displayStream;
 
@@ -278,9 +339,16 @@ export default function Record() {
         audioStream = new MediaStream(displayStream.getAudioTracks());
       } else {
         audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
         });
       }
+
+      // ─── setup audio context & analyser for waveform ─────────────
+      audioCtxRef.current = new AudioContext();
+      const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream);
+      analyserRef.current = audioCtxRef.current.createAnalyser();
+      analyserRef.current.fftSize = 2048;
+      sourceNode.connect(analyserRef.current);
 
       streamRef.current = audioStream;
 
@@ -307,10 +375,13 @@ export default function Record() {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
       setPollingStarted(true);
+
+      // ─── start drawing waveform & recording ───────────────────────
+      drawWaveform();
       createAndStartRecorder(500);
     } catch (error) {
       console.error("Failed to start recording:", error);
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
         alert("Recording permission was denied. Please allow access and try again.");
       } else {
         alert("Failed to start recording. Please check the console for errors.");
@@ -338,14 +409,31 @@ export default function Record() {
       displayStreamRef.current = null;
     }
 
+    // ─── teardown waveform ────────────────────────────────────────
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      await audioCtxRef.current.close();
+      audioCtxRef.current = null;
+      analyserRef.current = null;
+    }
+
+    clearWaveformCanvas(); // <-- Add this line
+
     await new Promise((resolve) => setTimeout(resolve, 500));
     const finalBlob = new Blob([], { type: mediaRef.current.mimeType || "audio/webm" });
     await uploadChunk(finalBlob, chunkIndexRef.current, true);
   }
 
+
+
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (audioCtxRef.current) audioCtxRef.current.close();
     };
   }, []);
 
@@ -359,21 +447,9 @@ export default function Record() {
   const realUploaded = uploadedChunks;
   const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : realLocal;
 
-  const getUploadProgressPercentage = () => realTotal === 0 ? 0 : Math.min(100, (realUploaded / realTotal) * 100);
-  const getTranscriptionProgressPercentage = () => realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100);
+  const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (realUploaded / realTotal) * 100));
+  const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100));
   const allChunksUploaded = realTotal > 0 && realUploaded >= realTotal;
-
-  const buttonStyle = {
-    padding: "16px 32px", fontSize: "18px", fontWeight: "bold", border: "none",
-    borderRadius: "8px", cursor: "pointer", transition: "all 0.3s ease", minWidth: "140px",
-  } as const;
-  const startButtonStyle = { ...buttonStyle, backgroundColor: "#22c55e", color: "white", boxShadow: "0 4px 6px rgba(34, 197, 94, 0.3)" };
-  const stopButtonStyle = { ...buttonStyle, backgroundColor: "#ef4444", color: "white", boxShadow: "0 4px 6px rgba(239, 68, 68, 0.3)" };
-  const progressBarStyle = { width: "100%", height: "20px", backgroundColor: "#e5e7eb", borderRadius: "10px", overflow: "hidden", marginBottom: "8px", position: "relative" } as const;
-  const progressFillStyle = (percent: number, color: string, zIndex: number) => ({
-    height: "100%", backgroundColor: color, width: `${percent}%`, transition: "width 0.3s ease",
-    borderRadius: "10px", position: "absolute", top: 0, left: 0, zIndex: zIndex,
-  } as const);
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: "0 auto", fontFamily: '"Inter", sans-serif' }}>
@@ -382,20 +458,46 @@ export default function Record() {
       {!isRecording && !isProcessing && (
         <div style={{ marginBottom: "24px" }}>
           <div style={{ textAlign: "center", marginBottom: "16px" }}>
-            <label htmlFor="audio-source-select" style={{ marginRight: "10px", fontWeight: 500, color: "#374151" }}>Audio Source:</label>
-            <select id="audio-source-select" value={audioSource} onChange={(e) => setAudioSource(e.target.value as AudioSource)}
-              style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "16px" }}>
+            <label htmlFor="audio-source-select" style={{ marginRight: "10px", fontWeight: 500, color: "#374151" }}>
+              Audio Source:
+            </label>
+            <select
+              id="audio-source-select"
+              value={audioSource}
+              onChange={(e) => setAudioSource(e.target.value as AudioSource)}
+              style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "16px" }}
+            >
               <option value="mic">Microphone</option>
               <option value="system">System Audio (Speakers)</option>
             </select>
           </div>
           {audioSource === "system" && !isSystemAudioSupported && (
-            <div style={{ padding: "12px", backgroundColor: "#fffbeb", border: "1px solid #fde68a", color: "#b45309", borderRadius: "8px", textAlign: "center" }}>
+            <div
+              style={{
+                padding: "12px",
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fde68a",
+                color: "#b45309",
+                borderRadius: "8px",
+                textAlign: "center"
+              }}
+            >
               ⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
             </div>
           )}
           {audioSource === "system" && isSystemAudioSupported && (
-            <div style={{ padding: '12px', backgroundColor: '#eff6ff', border: '1px solid #93c5fd', color: '#1e40af', borderRadius: '8px', textAlign: 'center', fontSize: "14px", lineHeight: 1.5 }}>
+            <div
+              style={{
+                padding: "12px",
+                backgroundColor: "#eff6ff",
+                border: "1px solid #93c5fd",
+                color: "#1e40af",
+                borderRadius: "8px",
+                textAlign: "center",
+                fontSize: "14px",
+                lineHeight: 1.5
+              }}
+            >
               ℹ️ When prompted, choose a screen, window, or tab to share. <br />
               <b>Crucially, ensure you check the "Share system audio" or "Share tab audio" box</b> to record sound.
             </div>
@@ -411,55 +513,171 @@ export default function Record() {
 
       {(isRecording || isProcessing || localChunksCount > 0) && (
         <div style={{ marginBottom: "24px" }}>
-          <div style={progressBarStyle}>
-            <div style={progressFillStyle(getUploadProgressPercentage(), "#93c5fd", 1)}></div>
-            <div style={progressFillStyle(getTranscriptionProgressPercentage(), "#3b82f6", 2)}></div>
+          <div style={{
+            width: "100%",
+            height: "20px",
+            backgroundColor: "#e5e7eb",
+            borderRadius: "10px",
+            overflow: "hidden",
+            position: "relative",
+            marginBottom: "8px"
+          }}>
+            <div style={{
+              height: "100%",
+              width: `${getUploadProgressPercentage()}%`,
+              backgroundColor: "#bdbdbd", // light gray
+              position: "absolute",
+              top: 0,
+              left: 0,
+              zIndex: 1,
+              transition: "width 0.3s"
+            }} />
+            <div style={{
+              height: "100%",
+              width: `${getTranscriptionProgressPercentage()}%`,
+              backgroundColor: "#424242", // dark gray
+              position: "absolute",
+              top: 0,
+              left: 0,
+              zIndex: 2,
+              transition: "width 0.3s"
+            }} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "14px", color: "#6b7280" }}>
             <span>Uploaded: {realUploaded} / {realTotal}</span>
-            <span>Transcribed: {transcribedChunks} / {realTotal}{" "}{transcriptionSpeedLabel && (<span style={{ fontSize: "12px", color: "#9ca3af" }}>({transcriptionSpeedLabel})</span>)}</span>
+            <span>
+              Transcribed: {transcribedChunks} / {realTotal}{" "}
+              {transcriptionSpeedLabel && (
+                <span style={{ fontSize: "12px", color: "#9ca3af" }}>
+                  ({transcriptionSpeedLabel})
+                </span>
+              )}
+            </span>
           </div>
         </div>
       )}
 
       {liveTranscript && (
-        <div style={{ marginBottom: "24px", padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", maxHeight: "200px", overflowY: "auto" }}>
-          <div style={{ fontSize: "14px", fontWeight: "bold", color: "#374151", marginBottom: "8px" }}>🎤 Live Transcript:</div>
-          <div style={{ fontSize: "14px", lineHeight: "1.5", color: "#1f2937" }}>{liveTranscript}</div>
+        <div style={{
+          marginBottom: "24px",
+          padding: "16px",
+          backgroundColor: "#f8fafc",
+          borderRadius: "8px",
+          border: "1px solid #e2e8f0",
+          maxHeight: "200px",
+          overflowY: "auto"
+        }}>
+          <div style={{ fontSize: "14px", fontWeight: "bold", color: "#374151", marginBottom: "8px" }}>
+            🎤 Live Transcript:
+          </div>
+          <div style={{ fontSize: "14px", lineHeight: "1.5", color: "#1f2937" }}>
+            {liveTranscript}
+          </div>
         </div>
       )}
 
       <div style={{
-        textAlign: "center", marginBottom: "24px", padding: "16px", backgroundColor: isRecording ? "#fef3f2" : isProcessing ? "#fefbf2" : "#f0fdf4",
-        borderRadius: "8px", border: `2px solid ${isRecording ? "#fecaca" : isProcessing ? "#fed7aa" : "#bbf7d0"}`
+        position: "relative",
+        textAlign: "center",
+        marginBottom: "24px",
+        padding: "16px",
+        backgroundColor: isRecording ? "#fef3f2" : isProcessing ? "#fefbf2" : "#f0fdf4",
+        borderRadius: "8px",
+        border: `2px solid ${isRecording ? "#fecaca" : isProcessing ? "#fed7aa" : "#bbf7d0"}`,
+        overflow: "hidden"
       }}>
-        <div style={{ fontSize: "18px", fontWeight: "bold", color: isRecording ? "#dc2626" : isProcessing ? "#d97706" : "#16a34a", marginBottom: "8px" }}>
-          {isRecording ? "🔴 Recording..." : isProcessing ? "⚙️ Processing... Please wait." : "⚪ Ready to Record"}
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 0,
+            pointerEvents: "none"
+          }}
+        />
+        <div style={{
+          position: "relative",
+          zIndex: 1,
+          fontSize: "18px",
+          fontWeight: "bold",
+          color: isRecording ? "#dc2626" : isProcessing ? "#d97706" : "#16a34a",
+          marginBottom: "8px"
+        }}>
+          {isRecording
+            ? "🔴 Recording..."
+            : isProcessing
+              ? "⚙️ Processing... Please wait."
+              : "⚪ Ready to Record"}
         </div>
       </div>
 
       <div style={{ textAlign: "center", marginBottom: "24px" }}>
         {!isRecording ? (
-          <button onClick={start} disabled={isProcessing || isRecording}
-            style={{ ...startButtonStyle, opacity: isProcessing || isRecording ? 0.5 : 1, cursor: isProcessing || isRecording ? "not-allowed" : "pointer" }}
+          <button
+            onClick={start}
+            disabled={isProcessing || isRecording}
+            style={{
+              padding: "16px 32px",
+              fontSize: "18px",
+              fontWeight: "bold",
+              border: "none",
+              borderRadius: "8px",
+              cursor: isProcessing || isRecording ? "not-allowed" : "pointer",
+              transition: "all 0.3s ease",
+              minWidth: "140px",
+              backgroundColor: "#22c55e",
+              color: "white",
+              boxShadow: "0 4px 6px rgba(34, 197, 94, 0.3)",
+              opacity: isProcessing || isRecording ? 0.5 : 1
+            }}
             onMouseOver={(e) => !(isProcessing || isRecording) && (e.currentTarget.style.transform = "scale(1.05)")}
-            onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}>
+            onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
+          >
             🎙️ Start Recording
           </button>
         ) : (
-          <button onClick={stop} style={stopButtonStyle}
+          <button
+            onClick={stop}
+            style={{
+              padding: "16px 32px",
+              fontSize: "18px",
+              fontWeight: "bold",
+              border: "none",
+              borderRadius: "8px",
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              minWidth: "140px",
+              backgroundColor: "#ef4444",
+              color: "white",
+              boxShadow: "0 4px 6px rgba(239, 68, 68, 0.3)"
+            }}
             onMouseOver={(e) => (e.currentTarget.style.transform = "scale(1.05)")}
-            onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}>
+            onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
+          >
             ⏹️ Stop & Summarize
           </button>
         )}
       </div>
 
       <div style={{ fontSize: "14px", color: "#6b7280", textAlign: "center", lineHeight: "1.5" }}>
-        {!isRecording && !isProcessing ? (<p>Choose your audio source and click “Start Recording” to begin.</p>
-        ) : isRecording ? (<p>Recording in progress… a live transcript will appear above as the AI processes your audio.</p>
-        ) : allChunksUploaded ? (<p>✅ All audio has been uploaded! It is now safe to close this window. <br />The server is finishing the transcription and summary. You will be redirected automatically.</p>
-        ) : (<p>Finalizing upload… Once all chunks are sent, you can safely close the window. <br />You will be redirected to the summary page when it's ready.</p>)}
+        {!isRecording && !isProcessing ? (
+          <p>Choose your audio source and click “Start Recording” to begin.</p>
+        ) : isRecording ? (
+          <p>Recording in progress… a live transcript will appear above as the AI processes your audio.</p>
+        ) : allChunksUploaded ? (
+          <p>
+            ✅ All audio has been uploaded! It is now safe to close this window. <br />
+            The server is finishing the transcription and summary. You will be redirected automatically.
+          </p>
+        ) : (
+          <p>
+            Finalizing upload… Once all chunks are sent, you can safely close the window. <br />
+            You will be redirected to the summary page when it's ready.
+          </p>
+        )}
       </div>
 
       {history.length > 0 && !isRecording && !isProcessing && (
@@ -467,19 +685,54 @@ export default function Record() {
           <h2 style={{ margin: "24px 0 12px 0", fontSize: 16, textAlign: "center" }}>Previous Meetings</h2>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, border: "1px solid #e5e7eb", borderRadius: "8px" }}>
             {history.map((m, index) => (
-              <li key={m.id} style={{
-                padding: "12px 16px", borderBottom: index === history.length - 1 ? "none" : "1px solid #e5e7eb",
-                cursor: "pointer", backgroundColor: index % 2 === 0 ? "#f9fafb" : "white"
-              }}
+              <li
+                key={m.id}
+                style={{
+                  padding: "12px 16px",
+                  borderBottom: index === history.length - 1 ? "none" : "1px solid #e5e7eb",
+                  cursor: "pointer",
+                  backgroundColor: index % 2 === 0 ? "#f9fafb" : "white"
+                }}
                 onClick={() => navigate(`/summary/${m.id}`)}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#eff6ff")}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = index % 2 === 0 ? "#f9fafb" : "white")}>
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = index % 2 === 0 ? "#f9fafb" : "white")}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 500, color: "#1f2937" }}>{m.title}</span>
                   <div style={{ display: "flex", alignItems: "center" }}>
-                    {m.status === "pending" && (<span style={{ marginRight: 8, color: "#fbbf24", backgroundColor: "#fffbeb", padding: "2px 6px", borderRadius: "4px", fontSize: 12, fontWeight: "500" }}>Pending</span>)}
-                    {m.status === "complete" && (<span style={{ marginRight: 8, color: "#34d399", backgroundColor: "#ecfdf5", padding: "2px 6px", borderRadius: "4px", fontSize: 12, fontWeight: "500" }}>Complete</span>)}
-                    <span style={{ fontStyle: "italic", color: "#6b7280", fontSize: 14 }}>{new Date(m.started_at).toLocaleDateString()}</span>
+                    {m.status === "pending" && (
+                      <span
+                        style={{
+                          marginRight: 8,
+                          color: "#fbbf24",
+                          backgroundColor: "#fffbeb",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          fontSize: 12,
+                          fontWeight: "500"
+                        }}
+                      >
+                        Pending
+                      </span>
+                    )}
+                    {m.status === "complete" && (
+                      <span
+                        style={{
+                          marginRight: 8,
+                          color: "#34d399",
+                          backgroundColor: "#ecfdf5",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          fontSize: 12,
+                          fontWeight: "500"
+                        }}
+                      >
+                        Complete
+                      </span>
+                    )}
+                    <span style={{ fontStyle: "italic", color: "#6b7280", fontSize: 14 }}>
+                      {new Date(m.started_at).toLocaleDateString()}
+                    </span>
                   </div>
                 </div>
               </li>
