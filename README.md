@@ -4,14 +4,14 @@
 
 Ever been in back-to-back meetings, frantically trying to type notes while also paying attention? MeetScribe is a simple web app designed to solve that problem. Just hit record, focus on the conversation, and let the AI handle the note-taking. When your meeting is done, you'll have a clean, formatted summary and a full transcript ready to go.
 
-This is a pet project by [Egor Gavrilov](https://github.com/your-github-username), built to be simple, effective, and easily self-hostable.
+This is a pet project by [Egor Gavrilov](https://github.com/hellguz), built to be simple, effective, and easily self-hostable.
 
 ---
 
 ## ✨ Key Features
 
 *   **📝 Automatic Meeting Minutes:** Get neatly formatted summaries tailored to your meeting type. Choose from templates like Brainstorming, Project Updates, Consultations, and more.
-*   **🤖 Powerful AI Core:** Uses the high-quality [Whisper](https://openai.com/research/whisper) model for accurate speech-to-text and `GPT-4o-mini` for intelligent, context-aware summaries.
+*   **🤖 Powerful AI Core:** Uses the high-quality [Whisper](https://openai.com/research/whisper) model (`large-v3`) for accurate speech-to-text and `gpt-4.1-mini` for intelligent, context-aware summaries.
 *   **🌐 Works in Your Browser:** No installation is needed for users. Just open the web page and start recording.
 *   **🎤 Live Transcription:** See the text appear in near real-time as you speak, so you know it's working.
 *   **🔒 Private & Self-Hostable:** Your recordings and transcripts are processed on your own server, not a third-party service. Run it on your own machine or cloud server with a single Docker command.
@@ -19,53 +19,75 @@ This is a pet project by [Egor Gavrilov](https://github.com/your-github-username
 
 ## 🛠️ How It Works (The Tech Stuff)
 
-MeetScribe is a modern web application with a decoupled frontend and backend. The magic happens through a sequence of synchronous and asynchronous operations, ensuring the app stays responsive while handling heavy processing. Here’s a look under the hood:
+MeetScribe is a modern web application with a decoupled frontend and backend. The magic happens through a sequence of synchronous and asynchronous operations, ensuring the app stays responsive while handling heavy processing.
+
+The entire process is a coordinated dance between the user's browser, a web server, a background worker, and a central database that acts as the single source of truth.
 
 ```
-                 ┌───────────────────────────────────┐
-                 │          Browser (React)          │
-                 └───────────────────────────────────┘
-                                  │
-          1. Creates Meeting & Uploads Audio Chunks (via POST)
-                                  │
-                                  ▼
-                 ┌───────────────────────────────────┐
-                 │         FastAPI Web Server        │
-                 │   - Saves audio file to disk      │
-                 │   - Creates/updates DB record     │
-                 └─────────────────┬─────────────────┘
-                                   │
-                2. Dispatches task to background worker
-                                   │
-                                   ▼
-                 ┌───────────────────────────────────┐
-                 │        Redis (Message Queue)      │
-                 └─────────────────┬─────────────────┘
-                                   │
-                        3. Worker dequeues task
-                                   │
-                                   ▼
-                 ┌───────────────────────────────────┐
-                 │           Celery Worker           │
-                 │ ─► 4a. Transcribe w/ Whisper      │
-                 │ ─► 4b. Update SQLite DB w/ text   │
-                 │ ─► 4c. If final: Summarize w/ GPT │
-                 │ ─► 4d. Update SQLite DB w/ summary│
-                 └───────────────────────────────────┘
-
-  ┌──────────────────────────────────────────────────────────────────┐
-  │ Meanwhile... The Browser polls the FastAPI server, which reads   │
-  │ directly from the SQLite DB to provide live transcript updates   │
-  │ and, eventually, the final summary.                              │
-  └──────────────────────────────────────────────────────────────────┘
+          ┌───────────────────────────────────┐
+          │         Browser (React)           │
+          └─────────────────┬─────────────────┘
+  (Polls) │ ▲               │ 1. Start Meeting (POST /meetings)
+ ┌────────┘ │               │ 2. Upload Audio Chunks (POST /chunks)
+ │ 5. Get Status/           │
+ │    Live Transcript       │
+ │    (GET /meetings/{id})  │
+ │ ◀────────┘               │
+ │                          ▼
+ │        ┌───────────────────────────────────┐
+ │        │        FastAPI Web Server         │
+ │        │  - Manages DB state (SQLite)      │
+ │        │  - Saves audio to Filesystem      │
+ │        └─────────────────┬─────────────────┘
+ │                          │ 3. Dispatch Transcription Task
+ │                          │
+ │                          ▼
+ │        ┌───────────────────────────────────┐
+ │        │         Redis (Task Queue)        │
+ │        └─────────────────┬─────────────────┘
+ │                          │ 4. Worker Dequeues Task
+ │                          │
+ │                          ▼
+ │        ┌───────────────────────────────────┐ ◀────────────┐
+ │        │           Celery Worker           │              │
+ │        │  - Reads audio from Filesystem    │              │
+ │        │  - 6a. Transcribe w/ Whisper      │              │
+ │        │  - 6b. Update chunk text in SQLite├─┐ 7. Finalize │
+ │        │  - 7a. Assemble full transcript   │ │             │
+ │        │  - 7b. Call OpenAI for summary    │ │             │
+ │        │  - 7c. Update meeting in SQLite   │ │             │
+ │        └─────────────────┬─────────────────┘ │             │
+ │                          │                   │             │
+ └──────────────────────────| Reads & Writes    │             │
+                            │ State             │             │
+                            ▼                   │             │
+          ┌───────────────────────────────────┐ │             │
+          │         SQLite Database           ├─┘             │
+          │      (Single Source of Truth)     │               │
+          └───────────────────────────────────┘ ◀─────────────┘
 ```
 
-*   **Frontend:** A lightweight Single-Page Application (SPA) built with **React** and **Vite**. It uses the `MediaRecorder` API to capture audio, which it sends to the backend in 20-second chunks.
-*   **Backend:** A fast REST API built with **FastAPI** (Python). Its main job is to handle file uploads, manage meeting state in the database, and dispatch tasks to the background worker. It does **not** perform the heavy lifting itself.
-*   **Async Processing:** Heavy tasks like transcription and summarization are handled in the background by **Celery** workers, using **Redis** as a message broker. This keeps the API responsive.
-*   **Central State:** The **SQLite Database** acts as the single source of truth. Both the FastAPI server (for status checks) and the Celery worker (for updates) read from and write to it.
-*   **AI Models:** The Celery worker uses `faster-whisper` for local transcription and then calls the **OpenAI API** (`gpt-4o-mini`) for summarization once the full transcript is ready.
-*   **Deployment:** The entire stack is containerized with **Docker** and orchestrated with **Docker Compose**, making setup a breeze.
+#### The Application Lifecycle
+
+1.  **Recording & Uploading:**
+    *   When you hit "Start Recording," the **React** frontend makes a `POST` request to the **FastAPI** backend to create a new meeting entry in the **SQLite** database.
+    *   The browser's `MediaRecorder` API captures audio and slices it into small WebM chunks. Each chunk is sent to the backend via a `POST /api/chunks` request.
+    *   The FastAPI server saves the audio chunk to the local filesystem and dispatches a transcription task to a **Redis** message queue. This ensures the API call returns instantly, keeping the app responsive.
+
+2.  **The Live Transcription Loop:**
+    *   A **Celery** worker, running in a separate container, picks up the transcription task from Redis.
+    *   The worker loads the audio chunk from the filesystem and processes it with a local `faster-whisper` model to generate text.
+    *   The resulting text is written back to the **SQLite** database, updating the specific `MeetingChunk` record.
+    *   Meanwhile, the React frontend polls a `GET /api/meetings/{id}` endpoint every few seconds. The FastAPI server reads all the transcribed chunks from SQLite, assembles them into a "live" transcript (showing `[...]` for pending chunks), and sends it back to the browser for you to see.
+
+3.  **Finalization & Summarization:**
+    *   When you click "Stop & Summarize," the frontend uploads the final audio chunk with a special `is_final` marker.
+    *   After the Celery worker transcribes this last chunk, it checks the database and sees that all expected chunks for the meeting are complete.
+    *   The worker then assembles the full, clean transcript from all the chunks in SQLite.
+    *   This complete text is sent to the **OpenAI API** (`gpt-4.1-mini`) with a detailed prompt, asking it to generate a structured summary based on a set of internal templates.
+    *   The final summary and the full transcript are saved to the `Meeting` record in SQLite, and a `done` flag is set. The next time the frontend polls, it receives the completed summary and automatically navigates you to the results page.
+
+This decoupled, asynchronous architecture allows MeetScribe to handle long recordings and heavy AI processing without freezing the user interface, providing a smooth and seamless experience.
 
 ## 🚀 Quick Start (Docker)
 
@@ -73,7 +95,7 @@ The easiest way to get MeetScribe running is with Docker.
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-github-username/meetscribe.git
+    git clone https://github.com/hellguz/meetscribe.git
     cd meetscribe
     ```
 
@@ -130,7 +152,7 @@ MeetScribe is configured using environment variables in the `.env` file.
 | Variable             | Description                                                                                                                              | Default (`.env.sample`)      |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `OPENAI_API_KEY`     | **Required.** Your API key from OpenAI.                                                                                                  | `sk-...`                     |
-| `WHISPER_MODEL_SIZE` | The Whisper model to use. Options: `tiny`, `base`, `small`, `medium`, `large`. Larger models are more accurate but require more resources. | `medium`                     |
+| `WHISPER_MODEL_SIZE` | The Whisper model to use. Options: `tiny`, `base`, `small`, `medium`, `large-v2`, `large-v3`. Larger models are more accurate but require more resources. | `large-v3`                   |
 | `SECRET_KEY`         | A random string for signing session data. **Change this.**                                                                               | `replace_this...`            |
 | `VITE_API_BASE_URL`  | For local Docker, leave this blank. For production, set it to your public API URL (e.g., `https://api.yourdomain.com`).                     | (blank)                      |
 | `FRONTEND_ORIGIN`    | The URL of the frontend, needed for backend CORS. For local Docker, it's the exposed frontend port.                                        | `http://localhost:4132`      |
