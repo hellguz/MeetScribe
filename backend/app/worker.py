@@ -98,7 +98,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
             beam_size=5,
             vad_filter=True,
             vad_parameters=dict(
-                threshold=0.02,              # Lowered from 0.5 to be more sensitive to speech.
+                threshold=0.1,              # Lowered from 0.5 to be more sensitive to speech.
                 min_silence_duration_ms=500,
                 speech_pad_ms=300,           # Add 300ms padding to start/end of speech.
             )

@@ -311,7 +311,7 @@ export default function Record() {
 				}
 				const displayStream = await navigator.mediaDevices.getDisplayMedia({
 					video: true,
-					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 				})
 				displayStreamRef.current = displayStream
 
@@ -330,7 +330,7 @@ export default function Record() {
 				audioStream = new MediaStream(displayStream.getAudioTracks())
 			} else {
 				audioStream = await navigator.mediaDevices.getUserMedia({
-					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 				})
 			}
 
