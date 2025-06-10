@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
 
-type AudioSource = 'mic' | 'system'
+type AudioSource = 'mic' | 'system' | 'file'
 
 export default function Record() {
 	const navigate = useNavigate()
@@ -25,6 +25,11 @@ export default function Record() {
 	const [pollingStarted, setPollingStarted] = useState(false)
 	const [audioSource, setAudioSource] = useState<AudioSource>('mic')
 	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true)
+
+	/* ─── new state for file upload ─────────────────────────────────── */
+	const [selectedFile, setSelectedFile] = useState<File | null>(null)
+	const [isDragging, setIsDragging] = useState(false)
+	const fileInputRef = useRef<HTMLInputElement>(null)
 
 	/* ─── waveform metering ─────────────────────────────────────────── */
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -191,8 +196,8 @@ export default function Record() {
 	}, [isRecording])
 
 	/* ─── helpers ───────────────────────────────────────────────────── */
-	const createMeetingOnBackend = useCallback(async () => {
-		const title = `Recording ${new Date().toLocaleString()}`
+	const createMeetingOnBackend = useCallback(async (titleOverride?: string) => {
+		const title = titleOverride || `Recording ${new Date().toLocaleString()}`
 		const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -326,7 +331,6 @@ export default function Record() {
 					if (isRecordingRef.current) stop()
 				})
 
-				// **THE FIX**: Create a new stream with only the audio tracks for the recorder.
 				audioStream = new MediaStream(displayStream.getAudioTracks())
 			} else {
 				audioStream = await navigator.mediaDevices.getUserMedia({
@@ -334,7 +338,6 @@ export default function Record() {
 				})
 			}
 
-			// ─── setup audio context & analyser for waveform ─────────────
 			audioCtxRef.current = new AudioContext()
 			const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
 			analyserRef.current = audioCtxRef.current.createAnalyser()
@@ -367,7 +370,6 @@ export default function Record() {
 			pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
 			setPollingStarted(true)
 
-			// ─── start drawing waveform & recording ───────────────────────
 			drawWaveform()
 			createAndStartRecorder(500)
 		} catch (error) {
@@ -389,18 +391,15 @@ export default function Record() {
 		if (mediaRef.current.state === 'recording') {
 			mediaRef.current.stop()
 		}
-		// Stop the recorder's stream tracks
 		if (streamRef.current) {
 			streamRef.current.getTracks().forEach((track) => track.stop())
 			streamRef.current = null
 		}
-		// Also stop the original display stream tracks (video)
 		if (displayStreamRef.current) {
 			displayStreamRef.current.getTracks().forEach((track) => track.stop())
 			displayStreamRef.current = null
 		}
 
-		// ─── teardown waveform ────────────────────────────────────────
 		if (animationFrameRef.current) {
 			cancelAnimationFrame(animationFrameRef.current)
 			animationFrameRef.current = null
@@ -411,12 +410,145 @@ export default function Record() {
 			analyserRef.current = null
 		}
 
-		clearWaveformCanvas() // <-- Add this line
+		clearWaveformCanvas()
 
 		await new Promise((resolve) => setTimeout(resolve, 500))
 		const finalBlob = new Blob([], { type: mediaRef.current.mimeType || 'audio/webm' })
 		await uploadChunk(finalBlob, chunkIndexRef.current, true)
 	}
+
+	/* ─── new file upload logic ─────────────────────────────────────── */
+	const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0]
+		if (file) {
+			setSelectedFile(file)
+		}
+		e.target.value = '' // Allow re-selecting the same file
+	}
+
+	const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+		e.preventDefault()
+		setIsDragging(false)
+		const file = e.dataTransfer.files?.[0]
+		if (file && file.type.startsWith('audio/')) {
+			setSelectedFile(file)
+		} else {
+			alert('Please drop a valid audio file.')
+		}
+	}
+
+	const encodeAudioChunk = (chunkBuffer: AudioBuffer): Promise<Blob> => {
+		return new Promise((resolve, reject) => {
+			const audioCtx = new AudioContext({ sampleRate: chunkBuffer.sampleRate })
+			const source = audioCtx.createBufferSource()
+			source.buffer = chunkBuffer
+
+			const dest = audioCtx.createMediaStreamDestination()
+			source.connect(dest)
+
+			const recorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm; codecs=opus' })
+			const chunks: Blob[] = []
+
+			recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
+			recorder.onstop = () => {
+				const blob = new Blob(chunks, { type: 'audio/webm; codecs=opus' })
+				resolve(blob)
+				audioCtx.close().catch(console.error)
+			}
+			recorder.onerror = (e) => {
+				reject(e)
+				audioCtx.close().catch(console.error)
+			}
+			source.onended = () => recorder.stop()
+
+			recorder.start()
+			source.start(0)
+		})
+	}
+
+	const processAndUploadFile = async (file: File, mId: string) => {
+		const audioCtx = new AudioContext()
+		try {
+			const arrayBuffer = await file.arrayBuffer()
+			const originalBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+
+			const CHUNK_DURATION_S = 30
+			const totalDurationS = originalBuffer.duration
+			const numChunks = Math.ceil(totalDurationS / CHUNK_DURATION_S)
+			setExpectedTotalChunks(numChunks)
+
+			// Upload a small header chunk (chunk_index: 0) for backend compatibility
+			const headerDurationS = 0.5
+			const headerSampleLength = Math.min(Math.floor(headerDurationS * originalBuffer.sampleRate), originalBuffer.length)
+			const headerBuffer = audioCtx.createBuffer(originalBuffer.numberOfChannels, headerSampleLength, originalBuffer.sampleRate)
+			for (let i = 0; i < originalBuffer.numberOfChannels; i++) {
+				headerBuffer.getChannelData(i).set(originalBuffer.getChannelData(i).subarray(0, headerSampleLength))
+			}
+			const headerBlob = await encodeAudioChunk(headerBuffer)
+			await uploadChunk(headerBlob, chunkIndexRef.current++, false)
+			setLocalChunksCount(1)
+
+			// Process and upload main chunks
+			for (let i = 0; i < numChunks; i++) {
+				const startS = i * CHUNK_DURATION_S
+				const endS = Math.min(startS + CHUNK_DURATION_S, totalDurationS)
+				if (endS - startS <= 0) continue
+
+				const startSample = Math.floor(startS * originalBuffer.sampleRate)
+				const endSample = Math.floor(endS * originalBuffer.sampleRate)
+				const chunkSampleLength = endSample - startSample
+				const chunkBuffer = audioCtx.createBuffer(originalBuffer.numberOfChannels, chunkSampleLength, originalBuffer.sampleRate)
+
+				for (let ch = 0; ch < originalBuffer.numberOfChannels; ch++) {
+					chunkBuffer.getChannelData(ch).set(originalBuffer.getChannelData(ch).subarray(startSample, endSample))
+				}
+
+				const chunkBlob = await encodeAudioChunk(chunkBuffer)
+				const isFinal = i === numChunks - 1
+				await uploadChunk(chunkBlob, chunkIndexRef.current++, isFinal)
+				setLocalChunksCount((prev) => prev + 1)
+			}
+		} finally {
+			await audioCtx.close()
+		}
+	}
+
+	const handleStartFileProcessing = async () => {
+		if (!selectedFile) return
+
+		// Reset state
+		setLocalChunksCount(0)
+		setUploadedChunks(0)
+		setExpectedTotalChunks(null)
+		setTranscribedChunks(0)
+		setRecordingTime(0)
+		setLiveTranscript('')
+		setTranscriptionStartTime(null)
+		setFirstChunkProcessedTime(null)
+		chunkIndexRef.current = 0
+		meetingId.current = null
+		setPollingStarted(false)
+		setRecording(false)
+		setIsProcessing(true)
+
+		try {
+			const newId = await createMeetingOnBackend(`Transcription of ${selectedFile.name}`)
+			meetingId.current = newId
+
+			await pollMeetingStatus()
+			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+			pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
+			setPollingStarted(true)
+
+			await processAndUploadFile(selectedFile, newId)
+		} catch (error) {
+			console.error('Failed to process file:', error)
+			alert(`An error occurred: ${error instanceof Error ? error.message : String(error)}`)
+			setIsProcessing(false)
+			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+		}
+	}
+	/* ───────────────────────────────────────────────────────────────── */
 
 	useEffect(() => {
 		return () => {
@@ -440,11 +572,13 @@ export default function Record() {
 	const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100))
 	const allChunksUploaded = realTotal > 0 && realUploaded >= realTotal
 
+	const isUiLocked = isRecording || isProcessing
+
 	return (
 		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' }}>
-			<h1 style={{ textAlign: 'center', marginBottom: '24px' }}>🎙️ MeetScribe Recorder</h1>
+			<h1 style={{ textAlign: 'center', marginBottom: '24px' }}>🎙️ MeetScribe</h1>
 
-			{!isRecording && !isProcessing && (
+			{!isUiLocked && (
 				<div style={{ marginBottom: '24px' }}>
 					<div style={{ textAlign: 'center', marginBottom: '16px' }}>
 						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
@@ -453,22 +587,20 @@ export default function Record() {
 						<select
 							id="audio-source-select"
 							value={audioSource}
-							onChange={(e) => setAudioSource(e.target.value as AudioSource)}
+							onChange={(e) => {
+								setAudioSource(e.target.value as AudioSource)
+								setSelectedFile(null)
+							}}
 							style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '16px' }}>
 							<option value="mic">Microphone</option>
 							<option value="system">System Audio (Speakers)</option>
+							<option value="file">Upload Audio File</option>
 						</select>
 					</div>
+
 					{audioSource === 'system' && !isSystemAudioSupported && (
 						<div
-							style={{
-								padding: '12px',
-								backgroundColor: '#fffbeb',
-								border: '1px solid #fde68a',
-								color: '#b45309',
-								borderRadius: '8px',
-								textAlign: 'center',
-							}}>
+							style={{ padding: '12px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#b45309', borderRadius: '8px', textAlign: 'center' }}>
 							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
 						</div>
 					)}
@@ -488,6 +620,35 @@ export default function Record() {
 							<b>Crucially, ensure you check the "Share system audio" or "Share tab audio" box</b> to record sound.
 						</div>
 					)}
+					{audioSource === 'file' && (
+						<div
+							onDragEnter={(e) => {
+								e.preventDefault()
+								setIsDragging(true)
+							}}
+							onDragLeave={(e) => {
+								e.preventDefault()
+								setIsDragging(false)
+							}}
+							onDragOver={(e) => e.preventDefault()}
+							onDrop={handleFileDrop}
+							onClick={() => fileInputRef.current?.click()}
+							style={{
+								border: `2px dashed ${isDragging ? '#16a34a' : '#d1d5db'}`,
+								borderRadius: '8px',
+								padding: '32px',
+								textAlign: 'center',
+								cursor: 'pointer',
+								backgroundColor: isDragging ? '#f0fdf4' : '#fafafa',
+								transition: 'all 0.2s ease',
+							}}>
+							<input ref={fileInputRef} type="file" hidden onChange={handleFileSelect} accept="audio/mp3,audio/wav,audio/aac,audio/ogg,audio/m4a" />
+							<p style={{ margin: 0, color: '#374151', fontWeight: 500 }}>
+								{selectedFile ? `Selected: ${selectedFile.name}` : 'Drag & drop an audio file, or click to select'}
+							</p>
+							<p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '14px' }}>MP3, WAV, AAC, etc. are supported</p>
+						</div>
+					)}
 				</div>
 			)}
 
@@ -495,7 +656,7 @@ export default function Record() {
 				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: '#ef4444', marginBottom: '16px' }}>⏱️ {formatTime(recordingTime)}</div>
 			)}
 
-			{(isRecording || isProcessing || localChunksCount > 0) && (
+			{(isUiLocked || localChunksCount > 0) && (
 				<div style={{ marginBottom: '24px' }}>
 					<div
 						style={{
@@ -511,7 +672,7 @@ export default function Record() {
 							style={{
 								height: '100%',
 								width: `${getUploadProgressPercentage()}%`,
-								backgroundColor: '#bdbdbd', // light gray
+								backgroundColor: '#bdbdbd',
 								position: 'absolute',
 								top: 0,
 								left: 0,
@@ -523,7 +684,7 @@ export default function Record() {
 							style={{
 								height: '100%',
 								width: `${getTranscriptionProgressPercentage()}%`,
-								backgroundColor: '#424242', // dark gray
+								backgroundColor: '#424242',
 								position: 'absolute',
 								top: 0,
 								left: 0,
@@ -567,22 +728,10 @@ export default function Record() {
 					marginBottom: '24px',
 					padding: '16px',
 					backgroundColor: isRecording ? '#fef3f2' : isProcessing ? '#fefbf2' : '#f0fdf4',
-					borderRadius: '8px',
 					border: `2px solid ${isRecording ? '#fecaca' : isProcessing ? '#fed7aa' : '#bbf7d0'}`,
 					overflow: 'hidden',
 				}}>
-				<canvas
-					ref={canvasRef}
-					style={{
-						position: 'absolute',
-						top: 0,
-						left: 0,
-						width: '100%',
-						height: '100%',
-						zIndex: 0,
-						pointerEvents: 'none',
-					}}
-				/>
+				<canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none' }} />
 				<div
 					style={{
 						position: 'relative',
@@ -592,59 +741,81 @@ export default function Record() {
 						color: isRecording ? '#dc2626' : isProcessing ? '#d97706' : '#16a34a',
 						marginBottom: '8px',
 					}}>
-					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready to Record'}
+					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready'}
 				</div>
 			</div>
 
 			<div style={{ textAlign: 'center', marginBottom: '24px' }}>
-				{!isRecording ? (
+				{audioSource !== 'file' ? (
+					!isRecording ? (
+						<button
+							onClick={start}
+							disabled={isUiLocked}
+							style={{
+								padding: '16px 32px',
+								fontSize: '18px',
+								fontWeight: 'bold',
+								border: 'none',
+								borderRadius: '8px',
+								cursor: isUiLocked ? 'not-allowed' : 'pointer',
+								transition: 'all 0.3s ease',
+								minWidth: '140px',
+								backgroundColor: '#22c55e',
+								color: 'white',
+								boxShadow: '0 4px 6px rgba(34, 197, 94, 0.3)',
+								opacity: isUiLocked ? 0.5 : 1,
+							}}>
+							🎙️ Start Recording
+						</button>
+					) : (
+						<button
+							onClick={stop}
+							style={{
+								padding: '16px 32px',
+								fontSize: '18px',
+								fontWeight: 'bold',
+								border: 'none',
+								borderRadius: '8px',
+								cursor: 'pointer',
+								transition: 'all 0.3s ease',
+								minWidth: '140px',
+								backgroundColor: '#ef4444',
+								color: 'white',
+								boxShadow: '0 4px 6px rgba(239, 68, 68, 0.3)',
+							}}>
+							⏹️ Stop & Summarize
+						</button>
+					)
+				) : (
 					<button
-						onClick={start}
-						disabled={isProcessing || isRecording}
+						onClick={handleStartFileProcessing}
+						disabled={isUiLocked || !selectedFile}
 						style={{
 							padding: '16px 32px',
 							fontSize: '18px',
 							fontWeight: 'bold',
 							border: 'none',
 							borderRadius: '8px',
-							cursor: isProcessing || isRecording ? 'not-allowed' : 'pointer',
+							cursor: isUiLocked || !selectedFile ? 'not-allowed' : 'pointer',
 							transition: 'all 0.3s ease',
 							minWidth: '140px',
 							backgroundColor: '#22c55e',
 							color: 'white',
 							boxShadow: '0 4px 6px rgba(34, 197, 94, 0.3)',
-							opacity: isProcessing || isRecording ? 0.5 : 1,
-						}}
-						onMouseOver={(e) => !(isProcessing || isRecording) && (e.currentTarget.style.transform = 'scale(1.05)')}
-						onMouseOut={(e) => (e.currentTarget.style.transform = 'scale(1)')}>
-						🎙️ Start Recording
-					</button>
-				) : (
-					<button
-						onClick={stop}
-						style={{
-							padding: '16px 32px',
-							fontSize: '18px',
-							fontWeight: 'bold',
-							border: 'none',
-							borderRadius: '8px',
-							cursor: 'pointer',
-							transition: 'all 0.3s ease',
-							minWidth: '140px',
-							backgroundColor: '#ef4444',
-							color: 'white',
-							boxShadow: '0 4px 6px rgba(239, 68, 68, 0.3)',
-						}}
-						onMouseOver={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-						onMouseOut={(e) => (e.currentTarget.style.transform = 'scale(1)')}>
-						⏹️ Stop & Summarize
+							opacity: isUiLocked || !selectedFile ? 0.5 : 1,
+						}}>
+						📄 Start Transcription
 					</button>
 				)}
 			</div>
 
 			<div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center', lineHeight: '1.5' }}>
-				{!isRecording && !isProcessing ? (
-					<p>Choose your audio source and click “Start Recording” to begin.</p>
+				{!isUiLocked ? (
+					audioSource === 'file' ? (
+						<p>Select a file and click “Start Transcription” to begin.</p>
+					) : (
+						<p>Choose your audio source and click “Start Recording” to begin.</p>
+					)
 				) : isRecording ? (
 					<p>Recording in progress… a live transcript will appear above as the AI processes your audio.</p>
 				) : allChunksUploaded ? (
@@ -654,13 +825,13 @@ export default function Record() {
 					</p>
 				) : (
 					<p>
-						Finalizing upload… Once all chunks are sent, you can safely close the window. <br />
+						Uploading and processing... Once all chunks are sent, you can safely close the window. <br />
 						You will be redirected to the summary page when it's ready.
 					</p>
 				)}
 			</div>
 
-			{history.length > 0 && !isRecording && !isProcessing && (
+			{history.length > 0 && !isUiLocked && (
 				<div style={{ marginTop: '40px', marginBottom: '40px' }}>
 					<h2 style={{ margin: '24px 0 12px 0', fontSize: 16, textAlign: 'center' }}>Previous Meetings</h2>
 					<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: '1px solid #e5e7eb', borderRadius: '8px' }}>
