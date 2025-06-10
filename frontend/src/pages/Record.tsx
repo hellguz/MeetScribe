@@ -259,7 +259,7 @@ export default function Record() {
 
 		const recorderOptions: MediaRecorderOptions = {
 			mimeType: 'audio/webm; codecs=opus',
-			audioBitsPerSecond: 192000,
+			// audioBitsPerSecond: 192000,
 		}
 		if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? '')) {
 			console.warn(`${recorderOptions.mimeType} is not supported, trying default.`)
