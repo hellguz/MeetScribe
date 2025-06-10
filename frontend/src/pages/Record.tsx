@@ -2,8 +2,10 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
 
-type AudioSource = 'mic' | 'system_only' | 'system_and_mic';
-type PrimaryAudioSource = 'mic' | 'system';
+// This is the effective recording mode used internally
+type EffectiveAudioSource = 'mic' | 'system_only' | 'system_and_mic';
+// This is for the user-facing dropdown
+type AudioSourceSimple = 'mic' | 'system';
 
 export default function Record() {
 	const navigate = useNavigate()
@@ -24,7 +26,7 @@ export default function Record() {
 	const [liveTranscript, setLiveTranscript] = useState('')
 	const [transcribedChunks, setTranscribedChunks] = useState(0)
 	const [pollingStarted, setPollingStarted] = useState(false)
-	const [primaryAudioSource, setPrimaryAudioSource] = useState<PrimaryAudioSource>('mic');
+	const [audioSource, setAudioSource] = useState<AudioSourceSimple>('mic'); // Changed from primaryAudioSource
 	const [includeMicrophone, setIncludeMicrophone] = useState(true);
 	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
 	const [currentRecordingModeText, setCurrentRecordingModeText] = useState<string | null>(null);
@@ -351,12 +353,24 @@ export default function Record() {
 	}
 
 	async function start() {
-		let mode: AudioSource;
-		if (primaryAudioSource === 'mic') {
+		let mode: EffectiveAudioSource; // Use the more detailed EffectiveAudioSource type here
+		if (audioSource === 'mic') {
 			mode = 'mic';
-		} else {
-			mode = includeMicrophone ? 'system_and_mic' : 'system_only';
+		} else { // audioSource === 'system'
+			if (!isSystemAudioSupported) {
+				// This case should ideally be prevented by disabling the dropdown option,
+				// but as a fallback, alert and default to 'mic'.
+				alert('System audio recording is not supported on your device. Recording microphone only.');
+				mode = 'mic';
+				// Update UI state to reflect this forced change if desired, or ensure `currentRecordingModeText` is set correctly.
+				// For now, `currentRecordingModeText` will be set based on the final `mode`.
+			} else {
+				mode = includeMicrophone ? 'system_and_mic' : 'system_only';
+			}
 		}
+
+		// Reset mode text at the beginning of each start attempt
+		setCurrentRecordingModeText(null);
 
 		let acquiredStream: MediaStream | null = null;
 		let localDisplayStream: MediaStream | null = null;
@@ -602,29 +616,25 @@ export default function Record() {
 			{!isRecording && !isProcessing && (
 				<div style={{ marginBottom: '24px' }}>
 					<div style={{ textAlign: 'center', marginBottom: '16px' }}>
-						<label htmlFor="primary-audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
-							Primary Audio Source:
+						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
+							Audio Source:
 						</label>
 						<select
-							id="primary-audio-source-select"
-							value={primaryAudioSource}
+							id="audio-source-select"
+							value={audioSource} // Bind to audioSource
 							onChange={(e) => {
-								const newSource = e.target.value as PrimaryAudioSource;
-								if (newSource === 'system' && !isSystemAudioSupported) {
-									alert("System audio recording is not supported on your device. Please choose Microphone.");
-									return; // Keep current source
-								}
-								setPrimaryAudioSource(newSource);
+								const newSource = e.target.value as AudioSourceSimple;
+								// If user selects "system" and it's not supported, we show a persistent warning.
+								// The actual fallback/handling occurs in start().
+								setAudioSource(newSource);
 							}}
 							style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '16px' }}>
 							<option value="mic">Microphone</option>
-							<option value="system" disabled={!isSystemAudioSupported}>
-								System Audio (Speakers) {!isSystemAudioSupported ? '(Unsupported)' : ''}
-							</option>
+							<option value="system">System Audio (Speakers)</option>
 						</select>
 					</div>
 
-					{primaryAudioSource === 'system' && (
+					{audioSource === 'system' && ( // Conditional rendering based on audioSource
 						<div style={{ textAlign: 'center', marginBottom: '16px', marginTop: '10px' }}>
 							<input
 								type="checkbox"
@@ -639,7 +649,7 @@ export default function Record() {
 						</div>
 					)}
 
-					{primaryAudioSource === 'system' && !isSystemAudioSupported && (
+					{audioSource === 'system' && !isSystemAudioSupported && ( // Warning based on audioSource
 						<div
 							style={{
 								padding: '12px',
@@ -649,10 +659,10 @@ export default function Record() {
 								borderRadius: '8px',
 								textAlign: 'center',
 							}}>
-							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
+							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work. Microphone will be recorded if 'Include microphone' is checked.
 						</div>
 					)}
-					{primaryAudioSource === 'system' && isSystemAudioSupported && (
+					{audioSource === 'system' && isSystemAudioSupported && ( // Info message based on audioSource
 						<div
 							style={{
 								padding: '12px',
