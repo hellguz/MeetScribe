@@ -2,7 +2,8 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
 
-type AudioSource = 'mic' | 'system'
+type AudioSource = 'mic' | 'system_only' | 'system_and_mic';
+type PrimaryAudioSource = 'mic' | 'system';
 
 export default function Record() {
 	const navigate = useNavigate()
@@ -23,14 +24,48 @@ export default function Record() {
 	const [liveTranscript, setLiveTranscript] = useState('')
 	const [transcribedChunks, setTranscribedChunks] = useState(0)
 	const [pollingStarted, setPollingStarted] = useState(false)
-	const [audioSource, setAudioSource] = useState<AudioSource>('mic')
-	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true)
+	const [primaryAudioSource, setPrimaryAudioSource] = useState<PrimaryAudioSource>('mic');
+	const [includeMicrophone, setIncludeMicrophone] = useState(true);
+	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
+	const [currentRecordingModeText, setCurrentRecordingModeText] = useState<string | null>(null);
 
 	/* ─── waveform metering ─────────────────────────────────────────── */
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const audioCtxRef = useRef<AudioContext | null>(null)
 	const analyserRef = useRef<AnalyserNode | null>(null)
 	const animationFrameRef = useRef<number | null>(null)
+
+
+	const stopAllStreamsAndContext = useCallback(async () => {
+		// Stop recorder's stream (final combined stream)
+		if (streamRef.current) {
+			streamRef.current.getTracks().forEach((track) => track.stop())
+			streamRef.current = null
+		}
+		// Stop original microphone stream (if it was captured separately for mixing)
+		if (micStreamRef.current) {
+			micStreamRef.current.getTracks().forEach((track) => track.stop())
+			micStreamRef.current = null
+		}
+		// Stop original display stream (if it was captured)
+		if (displayStreamRef.current) {
+			displayStreamRef.current.getTracks().forEach((track) => track.stop())
+			displayStreamRef.current = null
+		}
+
+		// Teardown waveform and audio context
+		if (animationFrameRef.current) {
+			cancelAnimationFrame(animationFrameRef.current)
+			animationFrameRef.current = null
+		}
+		if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+			await audioCtxRef.current.close()
+			audioCtxRef.current = null
+		}
+		analyserRef.current = null // Analyser is part of the AudioContext
+
+		clearWaveformCanvas()
+	}, [])
 
 	/* ─── resize canvas on mount & window resize ──────────────────── */
 	useEffect(() => {
@@ -89,8 +124,9 @@ export default function Record() {
 
 	const meetingId = useRef<string | null>(null)
 	const mediaRef = useRef<MediaRecorder | null>(null)
-	const streamRef = useRef<MediaStream | null>(null) // Will hold the stream for the recorder (can be audio-only)
-	const displayStreamRef = useRef<MediaStream | null>(null) // Will hold the original getDisplayMedia stream
+	const streamRef = useRef<MediaStream | null>(null) // Will hold the final stream for the recorder
+	const displayStreamRef = useRef<MediaStream | null>(null) // Will hold the original getDisplayMedia stream (if used)
+	const micStreamRef = useRef<MediaStream | null>(null) // Will hold the raw microphone stream (if used)
 	const startTimeRef = useRef<number>(0)
 	const timerRef = useRef<NodeJS.Timeout | null>(null)
 	const firstChunkRef = useRef<boolean>(true)
@@ -101,6 +137,19 @@ export default function Record() {
 	useEffect(() => {
 		isRecordingRef.current = isRecording
 	}, [isRecording])
+
+	// Load includeMicrophone preference from localStorage
+	useEffect(() => {
+		const storedPreference = localStorage.getItem('includeMicrophone');
+		if (storedPreference !== null) {
+			setIncludeMicrophone(JSON.parse(storedPreference));
+		}
+	}, []);
+
+	// Save includeMicrophone preference to localStorage
+	useEffect(() => {
+		localStorage.setItem('includeMicrophone', JSON.stringify(includeMicrophone));
+	}, [includeMicrophone]);
 
 	useEffect(() => {
 		if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
@@ -302,47 +351,165 @@ export default function Record() {
 	}
 
 	async function start() {
-		let audioStream: MediaStream
+		let mode: AudioSource;
+		if (primaryAudioSource === 'mic') {
+			mode = 'mic';
+		} else {
+			mode = includeMicrophone ? 'system_and_mic' : 'system_only';
+		}
+
+		let acquiredStream: MediaStream | null = null;
+		let localDisplayStream: MediaStream | null = null;
+		let localMicStream: MediaStream | null = null;
+
 		try {
-			if (audioSource === 'system') {
+			// ─── Stream Acquisition ────────────────────────────────────
+			if (mode === 'mic') {
+				localMicStream = await navigator.mediaDevices.getUserMedia({
+					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+				});
+				acquiredStream = localMicStream;
+			} else if (mode === 'system_only') {
 				if (!isSystemAudioSupported) {
-					alert('System audio recording is not supported on your device or browser.')
-					return
+					alert('System audio recording is not supported on your device or browser.');
+					return;
 				}
-				const displayStream = await navigator.mediaDevices.getDisplayMedia({
+				localDisplayStream = await navigator.mediaDevices.getDisplayMedia({
 					video: true,
 					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
-				})
-				displayStreamRef.current = displayStream
-
-				if (displayStream.getAudioTracks().length === 0) {
-					displayStream.getTracks().forEach((track) => track.stop())
-					displayStreamRef.current = null
-					alert("System audio access was not granted. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.")
-					return
+				});
+				if (localDisplayStream.getAudioTracks().length === 0) {
+					localDisplayStream.getTracks().forEach((track) => track.stop());
+					alert("System audio access was not granted or no audio track found. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.");
+					return;
 				}
+				acquiredStream = new MediaStream(localDisplayStream.getAudioTracks());
+				displayStreamRef.current = localDisplayStream;
+				localDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
+					if (isRecordingRef.current) stop();
+				});
+			} else if (mode === 'system_and_mic') {
+				if (!isSystemAudioSupported) {
+					alert('System audio recording is not supported on your device or browser. Falling back to microphone only.');
+					mode = 'mic'; // Fallback to mic-only
+					localMicStream = await navigator.mediaDevices.getUserMedia({
+						audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+					});
+					acquiredStream = localMicStream;
+				} else {
+					let tempDisplayStream: MediaStream | null = null;
+					let tempMicStream: MediaStream | null = null;
+					let displayAudioError = false;
 
-				displayStream.getVideoTracks()[0].addEventListener('ended', () => {
-					if (isRecordingRef.current) stop()
-				})
+					try {
+						tempDisplayStream = await navigator.mediaDevices.getDisplayMedia({
+							video: true,
+							audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+						});
+						if (tempDisplayStream.getAudioTracks().length === 0) {
+							tempDisplayStream.getTracks().forEach(t => t.stop());
+							tempDisplayStream = null; // No audio track from display
+							displayAudioError = true;
+						}
+					} catch (err) {
+						console.error("Error getting display media:", err);
+						displayAudioError = true;
+						if (err instanceof DOMException && err.name === 'NotAllowedError') {
+							// User denied screen share, don't necessarily stop mic prompt.
+						}
+					}
 
-				// **THE FIX**: Create a new stream with only the audio tracks for the recorder.
-				audioStream = new MediaStream(displayStream.getAudioTracks())
-			} else {
-				audioStream = await navigator.mediaDevices.getUserMedia({
-					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
-				})
+					try {
+						tempMicStream = await navigator.mediaDevices.getUserMedia({
+							audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+						});
+					} catch (err) {
+						console.error("Error getting user media (mic):", err);
+						if (err instanceof DOMException && err.name === 'NotAllowedError') {
+							// User denied mic access
+						}
+					}
+
+					if (tempDisplayStream && tempMicStream) {
+						// Both streams acquired
+						localDisplayStream = tempDisplayStream;
+						localMicStream = tempMicStream;
+
+						audioCtxRef.current = new AudioContext();
+						const micSource = audioCtxRef.current.createMediaStreamSource(localMicStream);
+						const systemSource = audioCtxRef.current.createMediaStreamSource(new MediaStream(localDisplayStream.getAudioTracks()));
+						const destNode = audioCtxRef.current.createMediaStreamDestination();
+
+						micSource.connect(destNode);
+						systemSource.connect(destNode);
+						acquiredStream = destNode.stream;
+
+						// For waveform, visualize microphone
+						analyserRef.current = audioCtxRef.current.createAnalyser();
+						analyserRef.current.fftSize = 2048;
+						micSource.connect(analyserRef.current);
+
+						displayStreamRef.current = localDisplayStream;
+						micStreamRef.current = localMicStream;
+						localDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
+							if (isRecordingRef.current) stop();
+						});
+						mode = 'system_and_mic'; // Successfully got both
+						setCurrentRecordingModeText('System Audio & Microphone');
+					} else if (tempDisplayStream) { // Only system audio
+						acquiredStream = new MediaStream(tempDisplayStream.getAudioTracks());
+						localDisplayStream = tempDisplayStream;
+						displayStreamRef.current = localDisplayStream;
+						alert('Microphone access was not granted or failed. Recording system audio only.');
+						mode = 'system_only'; // Fallback to system only
+						setCurrentRecordingModeText('System Audio');
+						localDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
+							if (isRecordingRef.current) stop();
+						});
+					} else if (tempMicStream) { // Only mic audio
+						acquiredStream = tempMicStream;
+						localMicStream = tempMicStream;
+						alert(displayAudioError ? "System audio could not be captured. Recording microphone only." : "Microphone access was denied or failed, but system audio was also not obtained. Recording microphone audio only.");
+						mode = 'mic'; // Fallback to mic only
+						setCurrentRecordingModeText('Microphone');
+					} else {
+						alert('Failed to access both system audio and microphone. Please check permissions and try again.');
+						return; // Nothing was acquired
+					}
+				}
 			}
 
-			// ─── setup audio context & analyser for waveform ─────────────
-			audioCtxRef.current = new AudioContext()
-			const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
-			analyserRef.current = audioCtxRef.current.createAnalyser()
-			analyserRef.current.fftSize = 2048
-			sourceNode.connect(analyserRef.current)
+			if (!acquiredStream) {
+				alert('Could not acquire any audio stream. Recording cannot start.');
+				// stopAllStreamsAndContext will be called in the finally/catch block if needed
+				return;
+			}
+			streamRef.current = acquiredStream;
 
-			streamRef.current = audioStream
+			// Set recording mode text if not already set (e.g. for mic or system_only direct paths)
+			if (!currentRecordingModeText) {
+				if (mode === 'mic') setCurrentRecordingModeText('Microphone');
+				else if (mode === 'system_only') setCurrentRecordingModeText('System Audio');
+			}
 
+			// ─── Setup Analyser (if not already set up for mixed audio) ─────
+			if (mode === 'mic' || mode === 'system_only') {
+				const streamForAnalyser = acquiredStream; // In these modes, acquiredStream is the one to analyze
+				if (streamForAnalyser && streamForAnalyser.getAudioTracks().length > 0) {
+					if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+						// If context exists from a previous attempt but wasn't used for mixing
+						await audioCtxRef.current.close();
+					}
+					audioCtxRef.current = new AudioContext();
+					const sourceNode = audioCtxRef.current.createMediaStreamSource(streamForAnalyser);
+					analyserRef.current = audioCtxRef.current.createAnalyser();
+					analyserRef.current.fftSize = 2048;
+					sourceNode.connect(analyserRef.current);
+				}
+			}
+			// If mode is 'system_and_mic', analyser and audioCtxRef are already set up.
+
+			// ─── Reset State & Start Recording Backend Process ───────────────
 			setLocalChunksCount(0)
 			setUploadedChunks(0)
 			setExpectedTotalChunks(null)
@@ -378,53 +545,41 @@ export default function Record() {
 				alert('Failed to start recording. Please check the console for errors.')
 			}
 			setRecording(false)
+			// Clean up any resources acquired before the error
+			await stopAllStreamsAndContext()
 		}
 	}
 
 	async function stop() {
-		if (!mediaRef.current || !meetingId.current) return
+		if (!mediaRef.current || !meetingId.current) { // check meetingId as well, as stop can be called before it's set
+			if (!isRecording && !isProcessing) return; // Nothing to stop if not recording or processing
+		}
 		setRecording(false)
 		setIsProcessing(true)
 
-		if (mediaRef.current.state === 'recording') {
+		if (mediaRef.current && mediaRef.current.state === 'recording') {
 			mediaRef.current.stop()
 		}
-		// Stop the recorder's stream tracks
-		if (streamRef.current) {
-			streamRef.current.getTracks().forEach((track) => track.stop())
-			streamRef.current = null
-		}
-		// Also stop the original display stream tracks (video)
-		if (displayStreamRef.current) {
-			displayStreamRef.current.getTracks().forEach((track) => track.stop())
-			displayStreamRef.current = null
-		}
 
-		// ─── teardown waveform ────────────────────────────────────────
-		if (animationFrameRef.current) {
-			cancelAnimationFrame(animationFrameRef.current)
-			animationFrameRef.current = null
-		}
-		if (audioCtxRef.current) {
-			await audioCtxRef.current.close()
-			audioCtxRef.current = null
-			analyserRef.current = null
-		}
+		await stopAllStreamsAndContext()
 
-		clearWaveformCanvas() // <-- Add this line
-
+		// Wait a bit for the last chunk to be processed by ondataavailable
 		await new Promise((resolve) => setTimeout(resolve, 500))
-		const finalBlob = new Blob([], { type: mediaRef.current.mimeType || 'audio/webm' })
-		await uploadChunk(finalBlob, chunkIndexRef.current, true)
+		if (mediaRef.current && meetingId.current) { // Ensure mediaRef and meetingId are still valid
+			const finalBlob = new Blob([], { type: mediaRef.current.mimeType || 'audio/webm' })
+			await uploadChunk(finalBlob, chunkIndexRef.current, true)
+		} else {
+			console.warn("Stop called but mediaRef or meetingId was null, skipping final chunk upload.")
+		}
 	}
 
 	useEffect(() => {
 		return () => {
 			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
-			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
-			if (audioCtxRef.current) audioCtxRef.current.close()
+			// Call the comprehensive cleanup utility
+			stopAllStreamsAndContext().catch(error => console.error("Error during component unmount cleanup:", error));
 		}
-	}, [])
+	}, [stopAllStreamsAndContext])
 
 	const formatTime = (seconds: number) => {
 		const mins = Math.floor(seconds / 60)
@@ -447,19 +602,44 @@ export default function Record() {
 			{!isRecording && !isProcessing && (
 				<div style={{ marginBottom: '24px' }}>
 					<div style={{ textAlign: 'center', marginBottom: '16px' }}>
-						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
-							Audio Source:
+						<label htmlFor="primary-audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
+							Primary Audio Source:
 						</label>
 						<select
-							id="audio-source-select"
-							value={audioSource}
-							onChange={(e) => setAudioSource(e.target.value as AudioSource)}
+							id="primary-audio-source-select"
+							value={primaryAudioSource}
+							onChange={(e) => {
+								const newSource = e.target.value as PrimaryAudioSource;
+								if (newSource === 'system' && !isSystemAudioSupported) {
+									alert("System audio recording is not supported on your device. Please choose Microphone.");
+									return; // Keep current source
+								}
+								setPrimaryAudioSource(newSource);
+							}}
 							style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '16px' }}>
 							<option value="mic">Microphone</option>
-							<option value="system">System Audio (Speakers)</option>
+							<option value="system" disabled={!isSystemAudioSupported}>
+								System Audio (Speakers) {!isSystemAudioSupported ? '(Unsupported)' : ''}
+							</option>
 						</select>
 					</div>
-					{audioSource === 'system' && !isSystemAudioSupported && (
+
+					{primaryAudioSource === 'system' && (
+						<div style={{ textAlign: 'center', marginBottom: '16px', marginTop: '10px' }}>
+							<input
+								type="checkbox"
+								id="include-microphone-checkbox"
+								checked={includeMicrophone}
+								onChange={(e) => setIncludeMicrophone(e.target.checked)}
+								style={{ marginRight: '8px', transform: 'scale(1.2)' }}
+							/>
+							<label htmlFor="include-microphone-checkbox" style={{ fontWeight: 500, color: '#374151' }}>
+								Include microphone audio
+							</label>
+						</div>
+					)}
+
+					{primaryAudioSource === 'system' && !isSystemAudioSupported && (
 						<div
 							style={{
 								padding: '12px',
@@ -472,7 +652,7 @@ export default function Record() {
 							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
 						</div>
 					)}
-					{audioSource === 'system' && isSystemAudioSupported && (
+					{primaryAudioSource === 'system' && isSystemAudioSupported && (
 						<div
 							style={{
 								padding: '12px',
@@ -592,7 +772,11 @@ export default function Record() {
 						color: isRecording ? '#dc2626' : isProcessing ? '#d97706' : '#16a34a',
 						marginBottom: '8px',
 					}}>
-					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready to Record'}
+					{isRecording
+						? `🔴 Recording ${currentRecordingModeText || 'Audio'}...`
+						: isProcessing
+						? '⚙️ Processing... Please wait.'
+						: '⚪ Ready to Record'}
 				</div>
 			</div>
 
