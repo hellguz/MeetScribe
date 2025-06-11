@@ -17,3 +17,5 @@ httpx<0.27                   # keep httpx ≤ 0.26 so openai’s legacy `proxies
 celery==5.4.0
 redis==5.0.7
 sqlalchemy>=1.4 # Already a dependency of sqlmodel, but good to be explicit for func.count
+
+groq==0.26.0

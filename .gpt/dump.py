@@ -15,7 +15,7 @@ exclude_folders = [
 allowed_extensions = (
     '.txt', '.yaml', '.yml', '.jsonl', '.ini', '.sh', '.env', '.cfg', '.conf', '.log', '.srt', '.md',
     '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '.svelte', '.html', '.htm', '.xhtml', '.css', '.scss', '.sass', '.less',
-    '.java', '.class', '.jsp', '.jspx', '.py', '.pyw', '.pyx', '.pxd', '.pxi', '.pyc', '.pyo', '.pyd'
+    '.java', '.class', '.jsp', '.jspx', '.py', '.pyw', '.pyx', '.pxd', '.pxi', '.pyc', '.pyo', '.pyd', 'Dockerfile'
 )
 
 def generate_tree(directory, prefix=''):

@@ -10,6 +10,10 @@ class Settings(BaseSettings):
 
     secret_key: str
     openai_api_key: str
+    groq_api_key: str
+
+    recognition_in_cloud: bool
+    
     whisper_model_size: str = "tiny"
 
     frontend_origin: str
