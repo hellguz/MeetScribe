@@ -259,8 +259,9 @@ export default function Record() {
 
 		const recorderOptions: MediaRecorderOptions = {
 			mimeType: 'audio/webm; codecs=opus',
-			// audioBitsPerSecond: 192000,
+			audioBitsPerSecond: 256000,
 		}
+
 		if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? '')) {
 			console.warn(`${recorderOptions.mimeType} is not supported, trying default.`)
 			try {
@@ -334,7 +335,16 @@ export default function Record() {
 				audioStream = new MediaStream(displayStream.getAudioTracks())
 			} else {
 				audioStream = await navigator.mediaDevices.getUserMedia({
-					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+					audio: {
+						echoCancellation: false,
+						noiseSuppression: false,
+						autoGainControl: false,
+						voiceIsolation: false, // Use your supported constraint
+						channelCount: 1,
+						latency: 0,
+						volume: 1.0, // If supported, maximize input
+						sampleRate: 48000,
+					},
 				})
 			}
 
