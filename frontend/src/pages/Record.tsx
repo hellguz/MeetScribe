@@ -343,12 +343,11 @@ export default function Record() {
 						channelCount: 1,
 						latency: 0,
 						volume: 1.0, // If supported, maximize input
-						sampleRate: 48000,
 					},
 				})
 			}
 
-			audioCtxRef.current = new AudioContext()
+			audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
 			const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
 			analyserRef.current = audioCtxRef.current.createAnalyser()
 			analyserRef.current.fftSize = 2048
