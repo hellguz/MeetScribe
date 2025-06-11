@@ -15,9 +15,9 @@ export default function Record() {
 
 	/* ─── recording state ───────────────────────────────────────────── */
 	const [isRecording, setRecording] = useState(false)
-	const [localChunksCount, setLocalChunksCount] = useState(0) // includes header chunk
-	const [uploadedChunks, setUploadedChunks] = useState(0) // counts only non-header chunks from backend
-	const [expectedTotalChunks, setExpectedTotalChunks] = useState<number | null>(null) // counts only non-header
+	const [localChunksCount, setLocalChunksCount] = useState(0) // total chunks sent from client
+	const [uploadedChunks, setUploadedChunks] = useState(0) // chunks received by backend
+	const [expectedTotalChunks, setExpectedTotalChunks] = useState<number | null>(null) // total expected chunks
 	const [recordingTime, setRecordingTime] = useState(0)
 	const [isProcessing, setIsProcessing] = useState(false)
 	const [liveTranscript, setLiveTranscript] = useState('')
@@ -98,7 +98,6 @@ export default function Record() {
 	const displayStreamRef = useRef<MediaStream | null>(null) // Will hold the original getDisplayMedia stream
 	const startTimeRef = useRef<number>(0)
 	const timerRef = useRef<NodeJS.Timeout | null>(null)
-	const firstChunkRef = useRef<boolean>(true)
 	const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 	const chunkIndexRef = useRef(0)
 	const isRecordingRef = useRef(false)
@@ -254,49 +253,53 @@ export default function Record() {
 	}, [])
 
 	/* ─── recording control ─────────────────────────────────────────── */
-	function createAndStartRecorder(timeSliceMs: number) {
+	const CHUNK_LENGTH_MS = 30_000 // 30-second slices
+
+	function createAndStartRecorder() {
+		// 1. Make sure we still have a stream
 		if (!streamRef.current) return
 
-		const recorderOptions: MediaRecorderOptions = {
-			mimeType: 'audio/webm; codecs=opus',
-			audioBitsPerSecond: 256000,
-		}
-
-		if (!MediaRecorder.isTypeSupported(recorderOptions.mimeType ?? '')) {
-			console.warn(`${recorderOptions.mimeType} is not supported, trying default.`)
+		/* 2. Pick a mime-type the UA will accept */
+		let mimeType = 'audio/webm; codecs=opus'
+		if (!MediaRecorder.isTypeSupported(mimeType)) {
 			try {
-				const tempRec = new MediaRecorder(streamRef.current!)
-				recorderOptions.mimeType = tempRec.mimeType
-			} catch (e) {
-				alert('MediaRecorder is not supported with any available audio format. Cannot record.')
-				console.error('MediaRecorder init failed:', e)
+				mimeType = new MediaRecorder(streamRef.current).mimeType // fallback
+			} catch {
+				alert('MediaRecorder is not supported with any available audio format.')
 				return
 			}
 		}
 
-		const recorder = new MediaRecorder(streamRef.current, recorderOptions)
-		mediaRef.current = recorder
+		/* 3. Spin up a brand-new recorder */
+		const recorder = new MediaRecorder(streamRef.current, {
+			mimeType,
+			audioBitsPerSecond: 256000,
+		})
+		mediaRef.current = recorder // keep a handle to the current one
 
+		/* 4. Upload each blob we receive */
 		recorder.ondataavailable = (e) => {
-			if (e.data.size > 0) {
+			if (e.data.size) {
 				uploadChunk(e.data, chunkIndexRef.current++).catch(console.error)
-				setLocalChunksCount((prev) => prev + 1)
-			}
-			if (firstChunkRef.current) {
-				firstChunkRef.current = false
-				if (recorder.state === 'recording') {
-					recorder.stop()
-				}
+				setLocalChunksCount((c) => c + 1)
 			}
 		}
 
+		/* 5. When this recorder stops, immediately start the next one
+		 *if* the user is still recording */
 		recorder.onstop = () => {
-			if (isRecordingRef.current && mediaRef.current?.stream.active) {
-				createAndStartRecorder(30000)
+			if (isRecordingRef.current && streamRef.current) {
+				createAndStartRecorder() // recurse → new recorder
 			}
 		}
 
-		recorder.start(timeSliceMs)
+		/* 6. Kick it off, then schedule a stop in 10 s */
+		recorder.start() // no timeslice
+		setTimeout(() => {
+			if (recorder.state === 'recording') {
+				recorder.stop() // triggers ondataavailable + onstop
+			}
+		}, CHUNK_LENGTH_MS)
 	}
 
 	function clearWaveformCanvas() {
@@ -363,7 +366,6 @@ export default function Record() {
 			setLiveTranscript('')
 			setTranscriptionStartTime(null)
 			setFirstChunkProcessedTime(null)
-			firstChunkRef.current = true
 			chunkIndexRef.current = 0
 			setIsProcessing(false)
 			meetingId.current = null
@@ -380,7 +382,7 @@ export default function Record() {
 			setPollingStarted(true)
 
 			drawWaveform()
-			createAndStartRecorder(500)
+			createAndStartRecorder()
 		} catch (error) {
 			console.error('Failed to start recording:', error)
 			if (error instanceof DOMException && error.name === 'NotAllowedError') {
@@ -486,17 +488,6 @@ export default function Record() {
 			const numChunks = Math.ceil(totalDurationS / CHUNK_DURATION_S)
 			setExpectedTotalChunks(numChunks)
 
-			// Upload a small header chunk (chunk_index: 0) for backend compatibility
-			const headerDurationS = 0.5
-			const headerSampleLength = Math.min(Math.floor(headerDurationS * originalBuffer.sampleRate), originalBuffer.length)
-			const headerBuffer = audioCtx.createBuffer(originalBuffer.numberOfChannels, headerSampleLength, originalBuffer.sampleRate)
-			for (let i = 0; i < originalBuffer.numberOfChannels; i++) {
-				headerBuffer.getChannelData(i).set(originalBuffer.getChannelData(i).subarray(0, headerSampleLength))
-			}
-			const headerBlob = await encodeAudioChunk(headerBuffer)
-			await uploadChunk(headerBlob, chunkIndexRef.current++, false)
-			setLocalChunksCount(1)
-
 			// Process and upload main chunks
 			for (let i = 0; i < numChunks; i++) {
 				const startS = i * CHUNK_DURATION_S
@@ -573,7 +564,7 @@ export default function Record() {
 		return `${mins}:${secs.toString().padStart(2, '0')}`
 	}
 
-	const realLocal = localChunksCount > 1 ? localChunksCount - 1 : 0
+	const realLocal = localChunksCount
 	const realUploaded = uploadedChunks
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : realLocal
 

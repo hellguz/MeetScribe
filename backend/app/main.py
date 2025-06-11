@@ -52,28 +52,25 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
     if not mtg:
         return ""
 
-    # Determine the range of chunks to display
-    # Chunk 0 is always ignored for live transcript purposes.
-    max_display_index = mtg.received_chunks
+    # Determine the number of chunks to display
+    max_chunk_count = mtg.received_chunks
     if mtg.final_received and mtg.expected_chunks is not None:
-        max_display_index = mtg.expected_chunks
+        max_chunk_count = mtg.expected_chunks
 
-    # Fetch all relevant MeetingChunk objects for the meeting
+    # Fetch all MeetingChunk objects for the meeting
     all_meeting_chunks = db.exec(
         select(MeetingChunk)
         .where(MeetingChunk.meeting_id == meeting_id)
-        .where(MeetingChunk.chunk_index > 0) # Ignore header chunk
         .order_by(MeetingChunk.chunk_index)
     ).all()
 
     chunks_map = {chunk.chunk_index: chunk for chunk in all_meeting_chunks}
 
     display_texts = []
-    for i in range(1, max_display_index + 1):
+    for i in range(max_chunk_count):  # Iterate from 0 to N-1
         chunk = chunks_map.get(i)
         if chunk and chunk.text is not None:
             # Append actual text, including empty strings ""
-            # Empty strings will be handled by join, effectively disappearing if surrounded by spaces.
             display_texts.append(chunk.text)
         else:
             # Chunk doesn't exist, or text is None (pending, or will be set by worker if failed)
@@ -86,7 +83,7 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 def create_meeting(body: MeetingCreate):
     """
     Create a new meeting. At creation, `received_chunks=0`, `expected_chunks=None`,
-    `final_received=False`, `last_activity = now`.  Return `transcribed_chunks=0`.
+    `final_received=False`, `last_activity = now`.
     """
     with Session(engine) as db:
         mtg = Meeting(**body.model_dump())
@@ -94,10 +91,7 @@ def create_meeting(body: MeetingCreate):
         db.commit()
         db.refresh(mtg)
 
-        return MeetingStatus(
-            **mtg.model_dump(),
-            transcribed_chunks=0
-        )
+        return MeetingStatus(**mtg.model_dump(), transcribed_chunks=0)
 
 
 @app.post("/api/chunks")
@@ -108,12 +102,11 @@ async def upload_chunk(
     is_final: bool = Form(False),
 ):
     """
-    Upload a chunk.  The 1 s “header” chunk has chunk_index=0:
-      • We always save it (so Whisper can get a valid WebM header), but do NOT count it among received_chunks.
-      • For any chunk_index > 0 and size ≥ 0.1 KB, we treat as a “real” chunk:
-          – increment received_chunks
-          – update last_activity = now
-      • If is_final=True arrives on a real chunk, set final_received=True and expected_chunks=received_chunks.
+    Upload a chunk.
+      • Each chunk is saved and queued for transcription.
+      • We increment received_chunks and update last_activity for any chunk with content.
+      • Tiny chunks (<0.1 KB) are treated as signaling (e.g., final empty chunk) and are not transcribed.
+      • If is_final=True, we set final_received=True and expected_chunks=received_chunks.
     """
     with Session(engine) as db:
         mtg = db.get(Meeting, meeting_id)
@@ -139,11 +132,10 @@ async def upload_chunk(
         # If truly tiny (<0.1 KB), treat as signaling.
         if size_kb < 0.1:
             LOGGER.warning("⚠️  tiny chunk %d skipped", chunk_index)
-            if chunk_index > 0 and is_final:
+            if is_final:
                 mtg.final_received = True
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
-            # We do not update last_activity or received_chunks for header or tiny chunks.
             db.add(mtg)
             db.commit()
             db.refresh(mtg)
@@ -174,21 +166,20 @@ async def upload_chunk(
             mc.text = None
         db.add(mc)
 
-        # Only increment and update activity for non-header (chunk_index>0)
-        if chunk_index > 0:
-            mtg.received_chunks += 1
-            mtg.last_activity = dt.datetime.utcnow()
+        # Increment and update activity for this chunk.
+        mtg.received_chunks += 1
+        mtg.last_activity = dt.datetime.utcnow()
 
-            # If a new, real chunk arrives for a meeting that was already
-            # summarized, we must reset its state to allow for re-summarization.
-            if mtg.done:
-                LOGGER.warning(
-                    f"Meeting {meeting_id} was complete but received new chunk {chunk_index}. Resetting summary."
-                )
-                mtg.done = False
-                mtg.summary_markdown = None
+        # If a new, real chunk arrives for a meeting that was already
+        # summarized, we must reset its state to allow for re-summarization.
+        if mtg.done:
+            LOGGER.warning(
+                f"Meeting {meeting_id} was complete but received new chunk {chunk_index}. Resetting summary."
+            )
+            mtg.done = False
+            mtg.summary_markdown = None
 
-        if chunk_index > 0 and is_final:
+        if is_final:
             mtg.final_received = True
             if mtg.expected_chunks is None or mtg.expected_chunks < mtg.received_chunks:
                 mtg.expected_chunks = mtg.received_chunks
@@ -211,7 +202,6 @@ async def upload_chunk(
         "done": mtg.done,
         "expected_chunks": mtg.expected_chunks,
     }
-
 
 
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
@@ -238,22 +228,25 @@ def get_meeting(mid: uuid.UUID):
             db.commit()
             db.refresh(mtg)
 
-        # ---------------- count processed chunks (unchanged) ---------
-        transcribed_count = db.scalar(
-            select(func.count(MeetingChunk.id)).where(
-                MeetingChunk.meeting_id == mid,
-                MeetingChunk.text.is_not(None),
-                MeetingChunk.chunk_index != 0,
+        # ---------------- count processed chunks ---------------------
+        transcribed_count = (
+            db.scalar(
+                select(func.count(MeetingChunk.id)).where(
+                    MeetingChunk.meeting_id == mid,
+                    MeetingChunk.text.is_not(None),
+                )
             )
-        ) or 0
+            or 0
+        )
 
-         # ---------------- LAZY summary trigger -----------------------
+        # ---------------- LAZY summary trigger -----------------------
         if (
             not mtg.done
-            and not mtg.summary_task_queued 
+            and not mtg.summary_task_queued
             and mtg.summary_markdown in (None, "")
             and mtg.final_received
-            and mtg.expected_chunks and transcribed_count >= mtg.expected_chunks
+            and mtg.expected_chunks
+            and transcribed_count >= mtg.expected_chunks
         ):
             LOGGER.info("Queueing summary-only task for meeting %s", mid)
             generate_summary_only.delay(str(mid))
@@ -266,6 +259,7 @@ def get_meeting(mid: uuid.UUID):
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
         data["transcribed_chunks"] = transcribed_count
         return MeetingStatus(**data)
+
 
 @app.get("/healthz")
 def health() -> dict[str, str]:

@@ -4,10 +4,13 @@ import logging
 import datetime as dt
 import uuid
 from pathlib import Path
+import shutil
+import subprocess
 
 from celery import Celery
 from celery.signals import worker_ready
 from faster_whisper import WhisperModel
+from groq import BadRequestError, Groq
 import openai
 from sqlmodel import Session, select, func, create_engine
 
@@ -20,7 +23,7 @@ celery_app = Celery(
     "worker_tasks",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=['app.worker']
+    include=["app.worker"],
 )
 
 celery_app.conf.update(
@@ -30,6 +33,10 @@ celery_app.conf.update(
 
 _whisper_model_instance = None
 _db_engine_instance = None
+_groq_client = (
+    Groq(api_key=settings.groq_api_key) if settings.recognition_in_cloud else None
+)
+
 
 LOGGER = logging.getLogger("celery_worker")
 logging.basicConfig(
@@ -49,11 +56,12 @@ def get_db_engine():
 def get_whisper_model():
     global _whisper_model_instance
     if _whisper_model_instance is None:
-        LOGGER.info("🔊 Loading Whisper model (%s) in Celery worker…", settings.whisper_model_size)
-        _whisper_model_instance = WhisperModel(
+        LOGGER.info(
+            "🔊 Loading Whisper model (%s) in Celery worker…",
             settings.whisper_model_size,
-            device="cpu",
-            compute_type="int8"
+        )
+        _whisper_model_instance = WhisperModel(
+            settings.whisper_model_size, device="cpu", compute_type="int8"
         )
         LOGGER.info("✅ Whisper model loaded in Celery worker.")
     return _whisper_model_instance
@@ -65,54 +73,91 @@ def load_whisper_on_startup(**kwargs):
 
 
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
+    """
+    Transcribes an audio chunk using either a cloud API (Groq) or a local model.
+    - For cloud transcription, it first converts the chunk to a standardized
+      16kHz mono FLAC file using ffmpeg for maximum compatibility and speed.
+    - For local transcription, it uses the faster-whisper model with VAD.
+    """
     chunk_path = Path(chunk_path_str)
     whisper = get_whisper_model()
-    try:
-        # If this is a non-header chunk (chunk_index != 0), and we have a valid header (000),
-        # concatenate them so Whisper gets a proper WebM stream. Otherwise transcribe directly.
-        first_chunk_path = chunk_path.parent / "chunk_000.webm"
-        path_to_transcribe = chunk_path
-        temp_path_to_unlink = None
 
-        if (
-            first_chunk_path.exists()
-            and chunk_path.name != first_chunk_path.name
-            and chunk_path.stat().st_size > 0
-        ):
-            if 0 < first_chunk_path.stat().st_size < 500 * 1024:  # < 500 KB
-                temp_path = chunk_path.parent / f"temp_concat_{chunk_path.name}"
-                with first_chunk_path.open("rb") as f_first, temp_path.open("wb") as f_out:
-                    f_out.write(f_first.read())
-                    with chunk_path.open("rb") as f_cur:
-                        f_out.write(f_cur.read())
-                path_to_transcribe = temp_path
-                temp_path_to_unlink = temp_path
+    try:
+        if settings.recognition_in_cloud:
+            path_to_transcribe = chunk_path
+            output_flac_path = None
+
+            # Best practice: Convert to a standard format (16kHz mono FLAC) for cloud APIs.
+            if shutil.which("ffmpeg"):
+                output_flac_path = chunk_path.with_suffix(".flac")
+                try:
+                    # ffmpeg command to convert to 16kHz mono FLAC
+                    command = [
+                        "ffmpeg",
+                        "-i",
+                        str(chunk_path),
+                        "-y",  # Overwrite output file if it exists
+                        "-vn",  # No video
+                        "-ac",
+                        "1",  # Mono audio
+                        "-ar",
+                        "16000",  # 16kHz sample rate
+                        "-sample_fmt",
+                        "s16",  # 16-bit samples
+                        str(output_flac_path),
+                    ]
+                    subprocess.run(command, check=True, capture_output=True, text=True)
+                    path_to_transcribe = output_flac_path
+                    LOGGER.info(
+                        f"Successfully converted {chunk_path.name} to FLAC for cloud transcription."
+                    )
+                except subprocess.CalledProcessError as e:
+                    LOGGER.error(
+                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will attempt to send original file."
+                    )
+                    # Fallback to original path if conversion fails
+                    path_to_transcribe = chunk_path
+                finally:
+                    # The file will be cleaned up after the API call
+                    pass
             else:
                 LOGGER.warning(
-                    f"First chunk {first_chunk_path.name} is too large or empty, transcribing {chunk_path.name} standalone."
+                    "ffmpeg not found. Sending original WebM file to cloud API. Install ffmpeg for better results."
                 )
 
-        # Transcribe with VAD (Voice Activity Detection) with adjusted sensitivity.
-        segments, _info = whisper.transcribe(
-            str(path_to_transcribe),
-            beam_size=5,
-            vad_filter=True,
-            vad_parameters=dict(
-                threshold=0.1,              # Lowered from 0.5 to be more sensitive to speech.
-                min_silence_duration_ms=500,
-                speech_pad_ms=300,           # Add 300ms padding to start/end of speech.
+            try:
+                with open(path_to_transcribe, "rb") as audio_file:
+                    resp = _groq_client.audio.transcriptions.create(
+                        file=(path_to_transcribe.name, audio_file.read()),
+                        model="whisper-large-v3",  # whisper-large-v3-turbo is not a valid model
+                        response_format="verbose_json",
+                    )
+                LOGGER.info(
+                    f"Cloud transcription succeeded for {path_to_transcribe.name}"
+                )
+                return resp.text.strip()
+            finally:
+                # Clean up the temporary FLAC file if it was created
+                if output_flac_path and output_flac_path.exists():
+                    output_flac_path.unlink()
+
+        else:  # Local transcription
+            segments, _info = whisper.transcribe(
+                str(chunk_path),
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(
+                    threshold=0.1,
+                    min_silence_duration_ms=500,
+                    speech_pad_ms=300,
+                ),
             )
-        )
-        transcription = " ".join(s.text for s in segments).strip()
+            return " ".join(s.text for s in segments).strip()
 
-        if temp_path_to_unlink:
-            temp_path_to_unlink.unlink(missing_ok=True)
-
-        return transcription
     except Exception as e:
-        LOGGER.error(f"Celery Worker: Failed to transcribe {chunk_path.name}: {e}", exc_info=True)
-        if temp_path_to_unlink and temp_path_to_unlink.exists():  # type: ignore
-            temp_path_to_unlink.unlink(missing_ok=True)  # type: ignore
+        LOGGER.error(
+            f"Celery Worker: Failed to transcribe {chunk_path.name}: {e}", exc_info=True
+        )
         return ""
 
 
@@ -152,9 +197,6 @@ TEMPLATES
 {TEMPLATES}
 """
 
-
-
-        
         response = openai.chat.completions.create(
             model="gpt-4.1-mini-2025-04-14",
             temperature=0.3,
@@ -183,39 +225,22 @@ def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> 
     name="app.worker.process_transcription_and_summary",
     bind=True,
     max_retries=3,
-    default_retry_delay=60
+    default_retry_delay=60,
 )
-def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: int, chunk_path_str: str):
-    LOGGER.info(f"Task started for meeting {meeting_id_str}, chunk {chunk_index} at path {chunk_path_str}")
+def process_transcription_and_summary(
+    self, meeting_id_str: str, chunk_index: int, chunk_path_str: str
+):
+    LOGGER.info(
+        f"Task started for meeting {meeting_id_str}, chunk {chunk_index} at path {chunk_path_str}"
+    )
     engine = get_db_engine()
     meeting_id_uuid = uuid.UUID(meeting_id_str)
 
-    # Do not process the header chunk (index 0). It's for compatibility only.
-    if chunk_index == 0:
-        LOGGER.info(f"Skipping transcription for header chunk (index 0) of meeting {meeting_id_str}.")
-        with Session(engine) as db:
-            # We must still find the corresponding MeetingChunk and mark its text
-            # as a non-null empty string so it's not considered "pending".
-            mc = db.exec(
-                select(MeetingChunk).where(
-                    MeetingChunk.meeting_id == meeting_id_uuid,
-                    MeetingChunk.chunk_index == chunk_index,
-                )
-            ).first()
-            if mc:
-                mc.text = ""  # Mark as processed with empty text
-                db.add(mc)
-                db.commit()
-            else:
-                LOGGER.warning(f"Could not find DB record for header chunk 0 of meeting {meeting_id_str} to mark as processed.")
-        return # End the task here
-
     try:
         chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
-        LOGGER.info(f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'")
-
-        # Removed placeholder logic for empty chunk_text.
-        # chunk_text from transcribe_webm_chunk_in_worker (which can be "") is used directly.
+        LOGGER.info(
+            f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'"
+        )
 
         with Session(engine) as db:
             mc = db.exec(
@@ -226,53 +251,69 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
             ).first()
 
             if not mc:
-                LOGGER.error(f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}. Aborting task.")
+                LOGGER.error(
+                    f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}. Aborting task."
+                )
                 return
 
             mc.text = chunk_text
             db.add(mc)
             db.commit()
 
-            # The full transcript is no longer rebuilt on every chunk.
-            # Instead, we check if all chunks are done and then build it once.
             mtg = db.get(Meeting, meeting_id_uuid)
             if not mtg:
-                LOGGER.error(f"Meeting {meeting_id_str}: object not found after transcribing chunk. Aborting.")
+                LOGGER.error(
+                    f"Meeting {meeting_id_str}: object not found after transcribing chunk. Aborting."
+                )
                 return
 
-            # Count how many non-header chunks have transcription
-            real_transcribed_count = db.scalar(
-                select(func.count(MeetingChunk.id)).where(
-                    MeetingChunk.meeting_id == meeting_id_uuid,
-                    MeetingChunk.text.is_not(None),
-                    MeetingChunk.chunk_index != 0,
+            # Count how many chunks have transcription
+            transcribed_count = (
+                db.scalar(
+                    select(func.count(MeetingChunk.id)).where(
+                        MeetingChunk.meeting_id == meeting_id_uuid,
+                        MeetingChunk.text.is_not(None),
+                    )
                 )
-            ) or 0
+                or 0
+            )
 
             if mtg.expected_chunks is not None:
                 effective_expected = mtg.expected_chunks
             else:
                 effective_expected = mtg.received_chunks
 
-            # Only summarize once final_received=True AND we've transcribed all expected real chunks.
+            # Only summarize once final_received=True AND we've transcribed all expected chunks.
             if (
                 not mtg.done
                 and mtg.final_received
                 and effective_expected > 0
-                and real_transcribed_count >= effective_expected
+                and transcribed_count >= effective_expected
             ):
-                LOGGER.info(f"Meeting {meeting_id_str}: All chunks transcribed. Building final transcript and summarizing.")
+                LOGGER.info(
+                    f"Meeting {meeting_id_str}: All chunks transcribed. Building final transcript and summarizing."
+                )
                 final_transcript = rebuild_full_transcript(db, meeting_id_uuid)
-                mtg.transcript_text = final_transcript # Store the final, complete transcript
+                mtg.transcript_text = (
+                    final_transcript  # Store the final, complete transcript
+                )
 
                 if final_transcript:
-                    summary_md = summarise_transcript_in_worker(final_transcript, mtg.started_at.isoformat())
+                    summary_md = summarise_transcript_in_worker(
+                        final_transcript, mtg.started_at.isoformat()
+                    )
                     mtg.summary_markdown = summary_md
                     mtg.done = True
-                    LOGGER.info(f"✅ Meeting {meeting_id_str} summarized successfully by worker.")
+                    LOGGER.info(
+                        f"✅ Meeting {meeting_id_str} summarized successfully by worker."
+                    )
                 else:
-                    LOGGER.warning(f"Meeting {meeting_id_str}: Transcript text is empty, cannot generate summary.")
-                    mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
+                    LOGGER.warning(
+                        f"Meeting {meeting_id_str}: Transcript text is empty, cannot generate summary."
+                    )
+                    mtg.summary_markdown = (
+                        "Error: Transcript was empty, summary could not be generated."
+                    )
                     mtg.done = True
 
                 db.add(mtg)
@@ -280,22 +321,29 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
             else:
                 LOGGER.info(
                     f"Meeting {meeting_id_str}: Waiting for more chunks. "
-                    f"Status: transcribed={real_transcribed_count}, expected={effective_expected}, final_received={mtg.final_received}"
+                    f"Status: transcribed={transcribed_count}, expected={effective_expected}, final_received={mtg.final_received}"
                 )
 
     except Exception as exc:
-        LOGGER.error(f"Error processing task for meeting {meeting_id_str}, chunk {chunk_index}: {exc}", exc_info=True)
+        LOGGER.error(
+            f"Error processing task for meeting {meeting_id_str}, chunk {chunk_index}: {exc}",
+            exc_info=True,
+        )
         try:
             raise self.retry(exc=exc, countdown=60)
         except self.MaxRetriesExceededError:
-            LOGGER.error(f"Max retries exceeded for task: meeting {meeting_id_str}, chunk {chunk_index}.")
+            LOGGER.error(
+                f"Max retries exceeded for task: meeting {meeting_id_str}, chunk {chunk_index}."
+            )
             # MODIFICATION 2 STARTS HERE
             # Attempt to update the database to mark this chunk as permanently failed
             # Ensure engine is available. If `get_db_engine()` was called inside try, it might need to be called again
             # or ensure `engine` variable is accessible here.
             # Similarly, `meeting_id_uuid` must be accessible.
             fail_engine = get_db_engine()
-            fail_meeting_id_uuid = uuid.UUID(meeting_id_str) # Re-define or ensure scope
+            fail_meeting_id_uuid = uuid.UUID(
+                meeting_id_str
+            )  # Re-define or ensure scope
 
             with Session(fail_engine) as db_fail_session:
                 mc_fail = db_fail_session.exec(
@@ -305,21 +353,27 @@ def process_transcription_and_summary(self, meeting_id_str: str, chunk_index: in
                     )
                 ).first()
                 if mc_fail:
-                    mc_fail.text = None # Set to None on max retries exceeded
+                    mc_fail.text = None  # Set to None on max retries exceeded
                     db_fail_session.add(mc_fail)
                     db_fail_session.commit()
-                    LOGGER.info(f"Set chunk {chunk_index} of meeting {meeting_id_str} text to None after max retries.")
+                    LOGGER.info(
+                        f"Set chunk {chunk_index} of meeting {meeting_id_str} text to None after max retries."
+                    )
                 else:
-                    LOGGER.error(f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries.")
+                    LOGGER.error(
+                        f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries."
+                    )
             # MODIFICATION 2 ENDS HERE
-            
+
 
 # ─── NEW!  on-demand summary task ───────────────────────────────────
-@celery_app.task(name="app.worker.generate_summary_only",
-                 bind=True,
-                 autoretry_for=(Exception,),
-                 max_retries=3,
-                 default_retry_delay=60)
+@celery_app.task(
+    name="app.worker.generate_summary_only",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=60,
+)
 def generate_summary_only(self, meeting_id_str: str):
     """
     Regenerates a summary for an already-transcribed meeting.
@@ -334,13 +388,19 @@ def generate_summary_only(self, meeting_id_str: str):
             LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
             return
 
-        final_transcript = mtg.transcript_text or rebuild_full_transcript(db, meeting_id)
+        final_transcript = mtg.transcript_text or rebuild_full_transcript(
+            db, meeting_id
+        )
         if not final_transcript:
-            LOGGER.warning("Meeting %s has no transcript – aborting regen.", meeting_id_str)
+            LOGGER.warning(
+                "Meeting %s has no transcript – aborting regen.", meeting_id_str
+            )
             return
 
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
-        summary_md = summarise_transcript_in_worker(final_transcript, mtg.started_at.isoformat())
+        summary_md = summarise_transcript_in_worker(
+            final_transcript, mtg.started_at.isoformat()
+        )
 
         mtg.summary_markdown = summary_md
         mtg.done = True
