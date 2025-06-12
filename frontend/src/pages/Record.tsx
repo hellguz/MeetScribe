@@ -798,8 +798,8 @@ export default function Record() {
 						overflowY: 'auto',
 						color: currentThemeColors.text,
 					}}>
-					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Live Transcript:</div>
-					<div style={{ fontSize: '14px', lineHeight: '1.5' }}>{liveTranscript}</div>
+					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Full transcript</div>
+					<div style={{ fontSize: '8px', lineHeight: '1.5' }}>{liveTranscript}</div>
 				</div>
 			)}
 
@@ -972,7 +972,7 @@ export default function Record() {
 										/>
 									) : (
 										<>
-											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => { navigate(`/summary/${m.id}`); }}>
+											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }} onClick={() => { navigate(`/summary/${m.id}`); }}>
 												{m.title}
 											</span>
 											<span

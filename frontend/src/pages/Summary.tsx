@@ -207,8 +207,8 @@ export default function Summary() {
 	/* ─── styling ───────────────────────────────────────────────────── */
 	const pageTextStyles: React.CSSProperties = {
 		// fontFamily is inherited from body
-		fontSize: 18,
-		lineHeight: 1.6,
+		fontSize: 13, // Reduced from 18px (approx 27.8% reduction)
+		lineHeight: 1.6, // Line height might need adjustment for smaller font, but let's keep it for now
 	}
 
 	return (
@@ -231,7 +231,7 @@ export default function Summary() {
 							}
 						}}
 						style={{
-							fontSize: '1.75em', // Reduced from 2em, matches h1 style more reasonably
+							fontSize: '1.3em', // Reduced from 1.75em (approx 26% reduction)
 							fontWeight: 'bold',
 							padding: '8px 12px',
 							border: `1px solid ${currentThemeColors.input.border}`,
@@ -282,7 +282,7 @@ export default function Summary() {
 									}
 								}}
 								style={{
-									fontSize: '16px', // New icon size
+									fontSize: '12px', // Reduced from 16px (25% reduction)
 									cursor: 'pointer',
 									marginLeft: '8px', // Space between title text and icon
 									color: currentThemeColors.secondaryText, // Or specific icon color
