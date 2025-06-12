@@ -76,3 +76,11 @@ class MeetingStatus(SQLModel):
     received_chunks: int
     expected_chunks: Optional[int]
     transcribed_chunks: int
+
+
+class MeetingTitleUpdate(SQLModel):
+    """
+    Payload for updating a meeting's title.
+    """
+
+    title: str
