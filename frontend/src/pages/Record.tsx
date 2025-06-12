@@ -209,7 +209,7 @@ export default function Record() {
 	const handleTitleChange = useCallback(async () => {
 		if (!editingMeetingId) return
 
-		const currentMeeting = history.find((m) => m.id === editingMeetingId)
+		const currentMeeting = history.find(m => m.id === editingMeetingId)
 		if (!currentMeeting) {
 			setEditingMeetingId(null)
 			return
@@ -241,13 +241,19 @@ export default function Record() {
 				title: updatedMeetingFromServer.title,
 				started_at: updatedMeetingFromServer.started_at || currentMeeting.started_at, // Prefer server's started_at, fallback to current
 				status: currentMeeting.status, // Preserve the original status
-			}
+			};
 
 			// Update history state
-			setHistory((prevHistory) => prevHistory.map((h) => (h.id === editingMeetingId ? updatedMeetingMeta : h)))
+			setHistory(prevHistory =>
+				prevHistory.map(h =>
+					h.id === editingMeetingId ? updatedMeetingMeta : h
+				)
+			);
 
 			// Persist to localStorage
-			saveMeeting(updatedMeetingMeta)
+			saveMeeting(updatedMeetingMeta);
+
+
 		} catch (error) {
 			console.error('Error updating meeting title:', error)
 			alert(`Error updating title: ${error instanceof Error ? error.message : String(error)}`)
@@ -257,6 +263,7 @@ export default function Record() {
 			setEditingTitle('')
 		}
 	}, [editingMeetingId, editingTitle, history])
+
 
 	const createMeetingOnBackend = useCallback(async (titleOverride?: string) => {
 		const title = titleOverride || `Recording ${new Date().toLocaleString()}`
@@ -638,7 +645,15 @@ export default function Record() {
 	const isUiLocked = isRecording || isProcessing
 
 	return (
-		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' /* backgroundColor and color are inherited from body */ }}>
+		<div style={{
+			padding: 24,
+			maxWidth: 800,
+			margin: '0 auto',
+			fontFamily: '"Inter", sans-serif',
+			fontWeight: 400,
+			fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
+			/* backgroundColor and color are inherited from body */
+		}}>
 			<ThemeToggle />
 			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
@@ -952,8 +967,8 @@ export default function Record() {
 												if (e.key === 'Enter') {
 													handleTitleChange()
 												} else if (e.key === 'Escape') {
-													setEditingMeetingId(null)
-													setEditingTitle('')
+													setEditingMeetingId(null);
+													setEditingTitle('');
 												}
 												e.stopPropagation() // Prevent li onClick
 											}}
@@ -971,30 +986,28 @@ export default function Record() {
 											autoFocus
 										/>
 									) : (
-										<>
-											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
-												{m.title}
-											</span>
-											<span
-												onClick={(e) => {
-													if (hoveredMeetingId === m.id) {
-														// Only trigger if icon is meant to be visible/interactive
-														e.stopPropagation()
-														setEditingMeetingId(m.id)
-														setEditingTitle(m.title)
-													}
-												}}
-												style={{
-													fontSize: '15px',
-													cursor: hoveredMeetingId === m.id ? 'pointer' : 'default',
-													marginRight: '10px', // Keep consistent margin
-													visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
-												}}
-												title="Edit title"
-												aria-hidden={hoveredMeetingId !== m.id}>
-												✎
-											</span>
-										</>
+										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
+											{m.title}
+										</span>
+										<span
+											onClick={(e) => {
+												if (hoveredMeetingId === m.id) { // Only trigger if icon is meant to be visible/interactive
+													e.stopPropagation();
+													setEditingMeetingId(m.id);
+													setEditingTitle(m.title);
+												}
+											}}
+											style={{
+												fontSize: '15px',
+												cursor: hoveredMeetingId === m.id ? 'pointer' : 'default',
+												marginRight: '10px', // Keep consistent margin
+												visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
+											}}
+											title="Edit title"
+											aria-hidden={hoveredMeetingId !== m.id}
+										>
+											✎
+										</span>
 									)}
 									<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px' }}>
 										{/* The icon span was here, moved next to the title span */}
@@ -1026,11 +1039,7 @@ export default function Record() {
 												Complete
 											</span>
 										)}
-										<span
-											style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }}
-											onClick={() => navigate(`/summary/${m.id}`)}>
-											{new Date(m.started_at).toLocaleDateString()}
-										</span>
+										<span style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>{new Date(m.started_at).toLocaleDateString()}</span>
 									</div>
 								</div>
 							</li>

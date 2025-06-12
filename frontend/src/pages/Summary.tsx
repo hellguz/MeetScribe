@@ -207,8 +207,10 @@ export default function Summary() {
 	/* ─── styling ───────────────────────────────────────────────────── */
 	const font: React.CSSProperties = {
 		fontFamily: '"Inter", sans-serif',
-		fontSize: 18,
+		fontSize: 16, // Changed from 18
 		lineHeight: 1.6,
+		fontWeight: 400,
+		fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
 	}
 
 	return (
@@ -258,6 +260,8 @@ export default function Summary() {
 							display: 'inline-flex', // Keep text and icon on one line
 							alignItems: 'center',   // Vertically align text and icon
 							cursor: (meetingTitle && !isEditingTitle) ? 'pointer' : 'default',
+							textDecoration: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'underline' : 'none',
+							textDecorationColor: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'grey' : 'inherit',
 						}}
 					>
 						{(() => {
