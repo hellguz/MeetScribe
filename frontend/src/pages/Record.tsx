@@ -973,7 +973,6 @@ export default function Record() {
 										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
 											{m.title}
 										</span>
-										{/* Always render the icon span if not editing this item, control visibility with style */}
 										<span
 											onClick={(e) => {
 												if (hoveredMeetingId === m.id) { // Only trigger if icon is meant to be visible/interactive
