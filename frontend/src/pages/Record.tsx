@@ -1,11 +1,18 @@
-import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useRef, useState, useEffect, useCallback, useMemo, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
+import ThemeToggle from '../components/ThemeToggle';
+import { ThemeContext } from '../contexts/ThemeContext';
+import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
 
 type AudioSource = 'mic' | 'system' | 'file'
 
 export default function Record() {
 	const navigate = useNavigate()
+	const themeContext = useContext(ThemeContext);
+	if (!themeContext) throw new Error("ThemeContext not found");
+	const { theme } = themeContext;
+	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
 
 	/* ─── history list ──────────────────────────────────────────────── */
 	const [history, setHistory] = useState<MeetingMeta[]>([])
@@ -67,7 +74,8 @@ export default function Record() {
 
 		ctx.clearRect(0, 0, canvas.width, canvas.height)
 		ctx.lineWidth = 2
-		ctx.strokeStyle = 'rgba(239,68,68,0.3)' // light red
+		// Use theme-dependent stroke style
+		ctx.strokeStyle = theme === 'light' ? 'rgba(239,68,68,0.3)' : 'rgba(255, 100, 100, 0.4)';
 		ctx.beginPath()
 
 		const sliceWidth = canvas.width / bufferLength
@@ -85,7 +93,7 @@ export default function Record() {
 		ctx.stroke()
 
 		animationFrameRef.current = requestAnimationFrame(drawWaveform)
-	}, [])
+	}, [theme]) // Added theme as a dependency
 
 	// Track when the first chunk was transcribed (for speed calculation)
 	const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null)
@@ -575,13 +583,14 @@ export default function Record() {
 	const isUiLocked = isRecording || isProcessing
 
 	return (
-		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' }}>
-			<h1 style={{ textAlign: 'center', marginBottom: '24px' }}>🎙️ MeetScribe</h1>
+		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' /* backgroundColor and color are inherited from body */ }}>
+			<ThemeToggle />
+			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
 			{!isUiLocked && (
 				<div style={{ marginBottom: '24px' }}>
 					<div style={{ textAlign: 'center', marginBottom: '16px' }}>
-						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: '#374151' }}>
+						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: currentThemeColors.text }}>
 							Audio Source:
 						</label>
 						<select
@@ -591,7 +600,14 @@ export default function Record() {
 								setAudioSource(e.target.value as AudioSource)
 								setSelectedFile(null)
 							}}
-							style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '16px' }}>
+							style={{
+								padding: '8px 12px',
+								borderRadius: '6px',
+								border: `1px solid ${currentThemeColors.input.border}`,
+								fontSize: '16px',
+								backgroundColor: currentThemeColors.input.background,
+								color: currentThemeColors.input.text,
+							}}>
 							<option value="mic">Microphone</option>
 							<option value="system">System Audio (Speakers)</option>
 							<option value="file">Upload Audio File</option>
@@ -600,7 +616,14 @@ export default function Record() {
 
 					{audioSource === 'system' && !isSystemAudioSupported && (
 						<div
-							style={{ padding: '12px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#b45309', borderRadius: '8px', textAlign: 'center' }}>
+							style={{
+								padding: '12px',
+								backgroundColor: currentThemeColors.backgroundSecondary, // Example: Or a specific warning background
+								border: `1px solid ${currentThemeColors.border}`, // Example: Or a specific warning border
+								color: currentThemeColors.text, // Example: Or a specific warning text
+								borderRadius: '8px',
+								textAlign: 'center'
+							}}>
 							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
 						</div>
 					)}
@@ -608,9 +631,9 @@ export default function Record() {
 						<div
 							style={{
 								padding: '12px',
-								backgroundColor: '#eff6ff',
-								border: '1px solid #93c5fd',
-								color: '#1e40af',
+								backgroundColor: currentThemeColors.backgroundSecondary, // Example: Or a specific info background
+								border: `1px solid ${currentThemeColors.border}`, // Example: Or a specific info border
+								color: currentThemeColors.text,
 								borderRadius: '8px',
 								textAlign: 'center',
 								fontSize: '14px',
@@ -634,26 +657,27 @@ export default function Record() {
 							onDrop={handleFileDrop}
 							onClick={() => fileInputRef.current?.click()}
 							style={{
-								border: `2px dashed ${isDragging ? '#16a34a' : '#d1d5db'}`,
+								border: `2px dashed ${isDragging ? currentThemeColors.button.primary : currentThemeColors.input.border}`,
 								borderRadius: '8px',
 								padding: '32px',
 								textAlign: 'center',
 								cursor: 'pointer',
-								backgroundColor: isDragging ? '#f0fdf4' : '#fafafa',
+								backgroundColor: isDragging ? currentThemeColors.backgroundSecondary : currentThemeColors.background,
+								color: currentThemeColors.text,
 								transition: 'all 0.2s ease',
 							}}>
 							<input ref={fileInputRef} type="file" hidden onChange={handleFileSelect} accept="audio/mp3,audio/wav,audio/aac,audio/ogg,audio/m4a" />
-							<p style={{ margin: 0, color: '#374151', fontWeight: 500 }}>
+							<p style={{ margin: 0, fontWeight: 500, color: currentThemeColors.text }}>
 								{selectedFile ? `Selected: ${selectedFile.name}` : 'Drag & drop an audio file, or click to select'}
 							</p>
-							<p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '14px' }}>MP3, WAV, AAC, etc. are supported</p>
+							<p style={{ margin: '4px 0 0', fontSize: '14px', color: currentThemeColors.secondaryText }}>MP3, WAV, AAC, etc. are supported</p>
 						</div>
 					)}
 				</div>
 			)}
 
 			{isRecording && (
-				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: '#ef4444', marginBottom: '16px' }}>⏱️ {formatTime(recordingTime)}</div>
+				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: currentThemeColors.button.danger, marginBottom: '16px' }}>⏱️ {formatTime(recordingTime)}</div>
 			)}
 
 			{(isUiLocked || localChunksCount > 0) && (
@@ -662,17 +686,17 @@ export default function Record() {
 						style={{
 							width: '100%',
 							height: '20px',
-							backgroundColor: '#e5e7eb',
+							backgroundColor: currentThemeColors.backgroundSecondary,
 							borderRadius: '10px',
 							overflow: 'hidden',
 							position: 'relative',
 							marginBottom: '8px',
 						}}>
-						<div
+						<div // Uploaded chunks bar
 							style={{
 								height: '100%',
 								width: `${getUploadProgressPercentage()}%`,
-								backgroundColor: '#bdbdbd',
+								backgroundColor: currentThemeColors.secondaryText, // Using secondaryText for the 'uploaded' part
 								position: 'absolute',
 								top: 0,
 								left: 0,
@@ -680,11 +704,11 @@ export default function Record() {
 								transition: 'width 0.3s',
 							}}
 						/>
-						<div
+						<div // Transcribed chunks bar
 							style={{
 								height: '100%',
 								width: `${getTranscriptionProgressPercentage()}%`,
-								backgroundColor: '#424242',
+								backgroundColor: currentThemeColors.text, // Using primary text color for 'transcribed' part
 								position: 'absolute',
 								top: 0,
 								left: 0,
@@ -693,13 +717,13 @@ export default function Record() {
 							}}
 						/>
 					</div>
-					<div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: '#6b7280' }}>
+					<div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: currentThemeColors.secondaryText }}>
 						<span>
 							Uploaded: {realUploaded} / {realTotal}
 						</span>
 						<span>
 							Transcribed: {transcribedChunks} / {realTotal}{' '}
-							{transcriptionSpeedLabel && <span style={{ fontSize: '12px', color: '#9ca3af' }}>({transcriptionSpeedLabel})</span>}
+							{transcriptionSpeedLabel && <span style={{ fontSize: '12px', color: currentThemeColors.secondaryText }}>({transcriptionSpeedLabel})</span>}
 						</span>
 					</div>
 				</div>
@@ -710,14 +734,15 @@ export default function Record() {
 					style={{
 						marginBottom: '24px',
 						padding: '16px',
-						backgroundColor: '#f8fafc',
+						backgroundColor: currentThemeColors.background,
 						borderRadius: '8px',
-						border: '1px solid #e2e8f0',
+						border: `1px solid ${currentThemeColors.border}`,
 						maxHeight: '200px',
 						overflowY: 'auto',
+						color: currentThemeColors.text,
 					}}>
-					<div style={{ fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>🎤 Live Transcript:</div>
-					<div style={{ fontSize: '14px', lineHeight: '1.5', color: '#1f2937' }}>{liveTranscript}</div>
+					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Live Transcript:</div>
+					<div style={{ fontSize: '14px', lineHeight: '1.5' }}>{liveTranscript}</div>
 				</div>
 			)}
 
@@ -727,8 +752,8 @@ export default function Record() {
 					textAlign: 'center',
 					marginBottom: '24px',
 					padding: '16px',
-					backgroundColor: isRecording ? '#fef3f2' : isProcessing ? '#fefbf2' : '#f0fdf4',
-					border: `2px solid ${isRecording ? '#fecaca' : isProcessing ? '#fed7aa' : '#bbf7d0'}`,
+					backgroundColor: isRecording ? currentThemeColors.backgroundSecondary : isProcessing ? currentThemeColors.backgroundSecondary : currentThemeColors.background,
+					border: `2px solid ${isRecording ? currentThemeColors.button.danger : isProcessing ? currentThemeColors.secondaryText : currentThemeColors.button.primary}`,
 					overflow: 'hidden',
 				}}>
 				<canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none' }} />
@@ -738,7 +763,7 @@ export default function Record() {
 						zIndex: 1,
 						fontSize: '18px',
 						fontWeight: 'bold',
-						color: isRecording ? '#dc2626' : isProcessing ? '#d97706' : '#16a34a',
+						color: isRecording ? currentThemeColors.button.danger : isProcessing ? currentThemeColors.secondaryText : currentThemeColors.button.primary,
 						marginBottom: '8px',
 					}}>
 					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready'}
@@ -760,9 +785,9 @@ export default function Record() {
 								cursor: isUiLocked ? 'not-allowed' : 'pointer',
 								transition: 'all 0.3s ease',
 								minWidth: '140px',
-								backgroundColor: '#22c55e',
-								color: 'white',
-								boxShadow: '0 4px 6px rgba(34, 197, 94, 0.3)',
+								backgroundColor: currentThemeColors.button.primary,
+								color: currentThemeColors.button.primaryText,
+								boxShadow: theme === 'light' ? '0 4px 6px rgba(34, 197, 94, 0.3)' : '0 4px 8px rgba(0, 0, 0, 0.3)',
 								opacity: isUiLocked ? 0.5 : 1,
 							}}>
 							🎙️ Start Recording
@@ -779,9 +804,9 @@ export default function Record() {
 								cursor: 'pointer',
 								transition: 'all 0.3s ease',
 								minWidth: '140px',
-								backgroundColor: '#ef4444',
-								color: 'white',
-								boxShadow: '0 4px 6px rgba(239, 68, 68, 0.3)',
+								backgroundColor: currentThemeColors.button.danger,
+								color: currentThemeColors.button.dangerText,
+								boxShadow: theme === 'light' ? '0 4px 6px rgba(239, 68, 68, 0.3)' : '0 4px 8px rgba(0, 0, 0, 0.3)',
 							}}>
 							⏹️ Stop & Summarize
 						</button>
@@ -799,9 +824,9 @@ export default function Record() {
 							cursor: isUiLocked || !selectedFile ? 'not-allowed' : 'pointer',
 							transition: 'all 0.3s ease',
 							minWidth: '140px',
-							backgroundColor: '#22c55e',
-							color: 'white',
-							boxShadow: '0 4px 6px rgba(34, 197, 94, 0.3)',
+							backgroundColor: currentThemeColors.button.primary,
+							color: currentThemeColors.button.primaryText,
+								boxShadow: theme === 'light' ? '0 4px 6px rgba(34, 197, 94, 0.3)' : '0 4px 8px rgba(0, 0, 0, 0.3)',
 							opacity: isUiLocked || !selectedFile ? 0.5 : 1,
 						}}>
 						📄 Start Transcription
@@ -809,7 +834,7 @@ export default function Record() {
 				)}
 			</div>
 
-			<div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center', lineHeight: '1.5' }}>
+			<div style={{ fontSize: '14px', color: currentThemeColors.secondaryText, textAlign: 'center', lineHeight: '1.5' }}>
 				{!isUiLocked ? (
 					audioSource === 'file' ? (
 						<p>Select a file and click “Start Transcription” to begin.</p>
@@ -833,29 +858,30 @@ export default function Record() {
 
 			{history.length > 0 && !isUiLocked && (
 				<div style={{ marginTop: '40px', marginBottom: '40px' }}>
-					<h2 style={{ margin: '24px 0 12px 0', fontSize: 16, textAlign: 'center' }}>Previous Meetings</h2>
-					<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+					<h2 style={{ margin: '24px 0 12px 0', fontSize: 16, textAlign: 'center', color: currentThemeColors.text }}>Previous Meetings</h2>
+					<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: `1px solid ${currentThemeColors.border}`, borderRadius: '8px' }}>
 						{history.map((m, index) => (
 							<li
 								key={m.id}
 								style={{
 									padding: '12px 16px',
-									borderBottom: index === history.length - 1 ? 'none' : '1px solid #e5e7eb',
+									borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
 									cursor: 'pointer',
-									backgroundColor: index % 2 === 0 ? '#f9fafb' : 'white',
+									backgroundColor: index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body, // Alternating backgrounds
+									color: currentThemeColors.text,
 								}}
 								onClick={() => navigate(`/summary/${m.id}`)}
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#eff6ff')}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = index % 2 === 0 ? '#f9fafb' : 'white')}>
+								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.listItem.hoverBackground)}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body)}>
 								<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-									<span style={{ fontWeight: 500, color: '#1f2937' }}>{m.title}</span>
+									<span style={{ fontWeight: 500 }}>{m.title}</span>
 									<div style={{ display: 'flex', alignItems: 'center' }}>
 										{m.status === 'pending' && (
 											<span
 												style={{
 													marginRight: 8,
-													color: '#fbbf24',
-													backgroundColor: '#fffbeb',
+													color: theme === 'light' ? '#b45309' : '#fde047', // Adjust dark mode pending color
+													backgroundColor: theme === 'light' ? '#fef3c7' : '#422006', // Adjust dark mode pending background
 													padding: '2px 6px',
 													borderRadius: '4px',
 													fontSize: 12,
@@ -868,8 +894,8 @@ export default function Record() {
 											<span
 												style={{
 													marginRight: 8,
-													color: '#34d399',
-													backgroundColor: '#ecfdf5',
+													color: theme === 'light' ? '#057a55' : '#34d399', // Adjust dark mode complete color
+													backgroundColor: theme === 'light' ? '#def7ec' : '#047481', // Adjust dark mode complete background
 													padding: '2px 6px',
 													borderRadius: '4px',
 													fontSize: 12,
@@ -878,7 +904,7 @@ export default function Record() {
 												Complete
 											</span>
 										)}
-										<span style={{ fontStyle: 'italic', color: '#6b7280', fontSize: 14 }}>{new Date(m.started_at).toLocaleDateString()}</span>
+										<span style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14 }}>{new Date(m.started_at).toLocaleDateString()}</span>
 									</div>
 								</div>
 							</li>
