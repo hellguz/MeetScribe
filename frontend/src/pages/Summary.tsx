@@ -19,7 +19,7 @@ export default function Summary() {
 	const [isLoading, setIsLoading] = useState(true)
 	const [isProcessing, setIsProcessing] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const [meetingTitle, setMeetingTitle] = useState<string>('')
+	const [meetingTitle, setMeetingTitle] = useState<string | null>(null) // Changed initial state to null
 	const [meetingStartedAt, setMeetingStartedAt] = useState<string>('')
 	const [loadedFromCache, setLoadedFromCache] = useState(false)
 
@@ -64,6 +64,17 @@ export default function Summary() {
 				status: currentMeetingInHistory?.status || 'complete', // Preserve status or default
 			});
 
+			// Also update the summaryCache with the new title
+			if (mid) { // Ensure mid is defined
+				saveCached({
+					id: mid,
+					title: updatedMeetingFromServer.title,
+					summary: summary || '', // Use current summary state, fallback to empty string
+					transcript: transcript, // Use current transcript state
+					updatedAt: new Date().toISOString(),
+				});
+			}
+
 		} catch (err) {
 			console.error('Error updating meeting title:', err);
 			alert(`Error updating title: ${err instanceof Error ? err.message : String(err)}`);
@@ -71,7 +82,7 @@ export default function Summary() {
 		} finally {
 			setIsEditingTitle(false);
 		}
-	}, [mid, editedTitle, meetingTitle, meetingStartedAt, setMeetingTitle]);
+	}, [mid, editedTitle, meetingTitle, meetingStartedAt, setMeetingTitle, summary, transcript]);
 
 
 	const fetchMeetingData = useCallback(
@@ -102,9 +113,18 @@ export default function Summary() {
 				if (isInitialFetch) {
 					// Store title and started_at from the first successful fetch
 					// These might be needed if the meeting is not yet in local history
-					setMeetingTitle(data.title || `Meeting ${mid}`)
+					// If title comes from cache, this might be overwritten later by fetch, which is fine.
+					if (!meetingTitle && data.title) { // Only set if not already set (e.g., from cache) to avoid flicker if fetch is slower
+						setMeetingTitle(data.title);
+					} else if (!meetingTitle) {
+						setMeetingTitle(`Meeting ${mid}`);
+					}
 					setMeetingStartedAt(data.started_at || new Date().toISOString())
+				} else if (data.title && data.title !== meetingTitle) {
+					// If title changes on a subsequent fetch (e.g. user edited it elsewhere)
+					setMeetingTitle(data.title);
 				}
+
 
 				if (data.done && data.summary_markdown) {
 					const sum = data.summary_markdown
@@ -114,9 +134,10 @@ export default function Summary() {
 
 					saveCached({
 						id: data.id,
+						title: data.title || meetingTitle || `Meeting ${data.id}`, // Save title to cache
 						summary: sum,
 						transcript: trn,
-						updatedAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(), // saveCached itself should handle this, but explicit for clarity if needed
 					})
 
 					// Update history with status 'complete'
@@ -159,9 +180,10 @@ export default function Summary() {
 			const cachedData = getCached(mid)
 			if (cachedData) {
 				setSummary(cachedData.summary)
-				setTranscript(cachedData.transcript || null) // Ensure null if undefined
-				// Optional: If you cache title/date, set them here too
-				// setMeetingTitle(cachedData.title);
+				setTranscript(cachedData.transcript || null)
+				if (cachedData.title) { // Load title from cache
+					setMeetingTitle(cachedData.title);
+				}
 				// setMeetingStartedAt(cachedData.updatedAt); // Or a specific 'cachedAt' field
 				setLoadedFromCache(true)
 				setIsLoading(false) // Show cached content quickly
@@ -230,11 +252,35 @@ export default function Summary() {
 						autoFocus
 					/>
 				) : (
-					<h1 style={{ color: currentThemeColors.text, margin: 0, flexGrow: 1 /* Allow h1 to take space */ }}>
-						{meetingTitle || `Summary for ${mid}`}
+					<h1
+						style={{
+							color: currentThemeColors.text,
+							margin: 0,
+							flexGrow: 1, /* Allow h1 to take space */
+							cursor: 'pointer', // Make it look clickable
+						}}
+						onClick={() => {
+							if (meetingTitle) { // Only allow editing if title is loaded
+								setIsEditingTitle(true);
+								setEditedTitle(meetingTitle);
+							}
+						}}
+					>
+						{(() => {
+							if (meetingTitle) {
+								return meetingTitle;
+							}
+							if (isLoading && !loadedFromCache) {
+								return " "; // Non-breaking space or "Loading title..."
+							}
+							if (error) {
+								return `Error loading title`;
+							}
+							return `Summary for ${mid}`; // Fallback
+						})()}
 					</h1>
 				)}
-				{isTitleHovered && !isEditingTitle && (
+				{isTitleHovered && !isEditingTitle && meetingTitle && ( // Only show edit icon if title is present
 					<span
 						onClick={(e) => {
 							e.stopPropagation();

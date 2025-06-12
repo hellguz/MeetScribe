@@ -982,9 +982,9 @@ export default function Record() {
 													setEditingMeetingId(m.id)
 													setEditingTitle(m.title)
 												}}
-												style={{ cursor: 'pointer', marginRight: '10px', fontSize: '1.2em' }}
+												style={{ cursor: 'pointer', marginRight: '10px', fontSize: '15px' }}
 												title="Edit title">
-												✏️
+												✎
 											</span>
 										)}
 										{m.status === 'pending' && (
