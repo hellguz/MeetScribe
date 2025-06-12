@@ -19,6 +19,9 @@ export default function Record() {
 	useEffect(() => {
 		setHistory(getHistory())
 	}, [])
+	const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null)
+	const [editingTitle, setEditingTitle] = useState<string>('')
+	const [hoveredMeetingId, setHoveredMeetingId] = useState<string | null>(null)
 
 	/* ─── recording state ───────────────────────────────────────────── */
 	const [isRecording, setRecording] = useState(false)
@@ -203,6 +206,65 @@ export default function Record() {
 	}, [isRecording])
 
 	/* ─── helpers ───────────────────────────────────────────────────── */
+	const handleTitleChange = useCallback(async () => {
+		if (!editingMeetingId) return
+
+		const currentMeeting = history.find(m => m.id === editingMeetingId)
+		if (!currentMeeting) {
+			setEditingMeetingId(null)
+			return
+		}
+
+		if (editingTitle.trim() === '' || editingTitle.trim() === currentMeeting.title) {
+			setEditingMeetingId(null)
+			setEditingTitle('')
+			return
+		}
+
+		try {
+			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${editingMeetingId}/title`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: editingTitle.trim() }),
+			})
+
+			if (!response.ok) {
+				const errorData = await response.json()
+				throw new Error(errorData.detail || 'Failed to update title')
+			}
+
+			const updatedMeetingFromServer = await response.json() // This is the full Meeting object from backend
+
+			// Prepare the updated MeetingMeta object for both state and localStorage
+			const updatedMeetingMeta: MeetingMeta = {
+				id: currentMeeting.id, // or updatedMeetingFromServer.id, should be the same
+				title: updatedMeetingFromServer.title,
+				started_at: updatedMeetingFromServer.started_at || currentMeeting.started_at, // Prefer server's started_at, fallback to current
+				status: currentMeeting.status, // Preserve the original status
+			};
+
+			// Update history state
+			setHistory(prevHistory =>
+				prevHistory.map(h =>
+					h.id === editingMeetingId ? updatedMeetingMeta : h
+				)
+			);
+
+			// Persist to localStorage
+			saveMeeting(updatedMeetingMeta);
+
+
+		} catch (error) {
+			console.error('Error updating meeting title:', error)
+			alert(`Error updating title: ${error instanceof Error ? error.message : String(error)}`)
+			// Optionally, revert editingTitle to currentMeeting.title or leave as is for user to retry
+		} finally {
+			setEditingMeetingId(null)
+			setEditingTitle('')
+		}
+	}, [editingMeetingId, editingTitle, history])
+
+
 	const createMeetingOnBackend = useCallback(async (titleOverride?: string) => {
 		const title = titleOverride || `Recording ${new Date().toLocaleString()}`
 		const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
@@ -866,16 +928,65 @@ export default function Record() {
 								style={{
 									padding: '12px 16px',
 									borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
-									cursor: 'pointer',
-									backgroundColor: index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body, // Alternating backgrounds
+									// cursor: 'pointer', // Keep cursor pointer for the main li for navigation
+									backgroundColor: index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body,
 									color: currentThemeColors.text,
 								}}
-								onClick={() => navigate(`/summary/${m.id}`)}
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.listItem.hoverBackground)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body)}>
+								onClick={(e) => {
+									// Navigate only if not clicking on an interactive element (input/icon)
+									if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'SPAN' || (e.target as HTMLElement).tagName === 'DIV') {
+										navigate(`/summary/${m.id}`)
+									}
+								}}
+								onMouseEnter={() => setHoveredMeetingId(m.id)}
+								onMouseLeave={() => setHoveredMeetingId(null)}>
 								<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-									<span style={{ fontWeight: 500 }}>{m.title}</span>
-									<div style={{ display: 'flex', alignItems: 'center' }}>
+									{editingMeetingId === m.id ? (
+										<input
+											type="text"
+											value={editingTitle}
+											onChange={(e) => setEditingTitle(e.target.value)}
+											onBlur={handleTitleChange}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter') {
+													handleTitleChange()
+												} else if (e.key === 'Escape') {
+													setEditingMeetingId(null);
+													setEditingTitle('');
+												}
+												e.stopPropagation() // Prevent li onClick
+											}}
+											onClick={(e) => e.stopPropagation()} // Prevent li onClick
+											style={{
+												flexGrow: 1,
+												padding: '4px 8px',
+												fontSize: '1em',
+												marginRight: '10px',
+												border: `1px solid ${currentThemeColors.input.border}`,
+												borderRadius: '4px',
+												backgroundColor: currentThemeColors.input.background,
+												color: currentThemeColors.input.text,
+											}}
+											autoFocus
+										/>
+									) : (
+										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
+											{m.title}
+										</span>
+									)}
+									<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px' }}>
+										{hoveredMeetingId === m.id && editingMeetingId !== m.id && (
+											<span
+												onClick={(e) => {
+													e.stopPropagation() // Prevent li onClick
+													setEditingMeetingId(m.id)
+													setEditingTitle(m.title)
+												}}
+												style={{ cursor: 'pointer', marginRight: '10px', fontSize: '1.2em' }}
+												title="Edit title">
+												✏️
+											</span>
+										)}
 										{m.status === 'pending' && (
 											<span
 												style={{
@@ -904,7 +1015,7 @@ export default function Record() {
 												Complete
 											</span>
 										)}
-										<span style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14 }}>{new Date(m.started_at).toLocaleDateString()}</span>
+										<span style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>{new Date(m.started_at).toLocaleDateString()}</span>
 									</div>
 								</div>
 							</li>

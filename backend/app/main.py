@@ -12,7 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select, func
 
 from .config import settings
-from .models import Meeting, MeetingChunk, MeetingCreate, MeetingStatus
+from .models import (
+    Meeting,
+    MeetingChunk,
+    MeetingCreate,
+    MeetingStatus,
+    MeetingTitleUpdate,
+)
 from .worker import process_transcription_and_summary, generate_summary_only
 
 LOGGER = logging.getLogger("meetscribe")
@@ -259,6 +265,23 @@ def get_meeting(mid: uuid.UUID):
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
         data["transcribed_chunks"] = transcribed_count
         return MeetingStatus(**data)
+
+
+@app.put("/api/meetings/{mid}/title", response_model=Meeting)
+async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
+    """
+    Update the title of a meeting.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        mtg.title = payload.title
+        db.add(mtg)
+        db.commit()
+        db.refresh(mtg)
+        return mtg
 
 
 @app.get("/healthz")
