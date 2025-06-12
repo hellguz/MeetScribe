@@ -1,18 +1,18 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
-import ThemeToggle from '../components/ThemeToggle';
-import { ThemeContext } from '../contexts/ThemeContext';
-import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
+import ThemeToggle from '../components/ThemeToggle'
+import { ThemeContext } from '../contexts/ThemeContext'
+import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 
 type AudioSource = 'mic' | 'system' | 'file'
 
 export default function Record() {
 	const navigate = useNavigate()
-	const themeContext = useContext(ThemeContext);
-	if (!themeContext) throw new Error("ThemeContext not found");
-	const { theme } = themeContext;
-	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
+	const themeContext = useContext(ThemeContext)
+	if (!themeContext) throw new Error('ThemeContext not found')
+	const { theme } = themeContext
+	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 
 	/* ─── history list ──────────────────────────────────────────────── */
 	const [history, setHistory] = useState<MeetingMeta[]>([])
@@ -78,7 +78,7 @@ export default function Record() {
 		ctx.clearRect(0, 0, canvas.width, canvas.height)
 		ctx.lineWidth = 2
 		// Use theme-dependent stroke style
-		ctx.strokeStyle = theme === 'light' ? 'rgba(239,68,68,0.3)' : 'rgba(255, 100, 100, 0.4)';
+		ctx.strokeStyle = theme === 'light' ? 'rgba(239,68,68,0.3)' : 'rgba(255, 100, 100, 0.4)'
 		ctx.beginPath()
 
 		const sliceWidth = canvas.width / bufferLength
@@ -209,7 +209,7 @@ export default function Record() {
 	const handleTitleChange = useCallback(async () => {
 		if (!editingMeetingId) return
 
-		const currentMeeting = history.find(m => m.id === editingMeetingId)
+		const currentMeeting = history.find((m) => m.id === editingMeetingId)
 		if (!currentMeeting) {
 			setEditingMeetingId(null)
 			return
@@ -241,19 +241,13 @@ export default function Record() {
 				title: updatedMeetingFromServer.title,
 				started_at: updatedMeetingFromServer.started_at || currentMeeting.started_at, // Prefer server's started_at, fallback to current
 				status: currentMeeting.status, // Preserve the original status
-			};
+			}
 
 			// Update history state
-			setHistory(prevHistory =>
-				prevHistory.map(h =>
-					h.id === editingMeetingId ? updatedMeetingMeta : h
-				)
-			);
+			setHistory((prevHistory) => prevHistory.map((h) => (h.id === editingMeetingId ? updatedMeetingMeta : h)))
 
 			// Persist to localStorage
-			saveMeeting(updatedMeetingMeta);
-
-
+			saveMeeting(updatedMeetingMeta)
 		} catch (error) {
 			console.error('Error updating meeting title:', error)
 			alert(`Error updating title: ${error instanceof Error ? error.message : String(error)}`)
@@ -263,7 +257,6 @@ export default function Record() {
 			setEditingTitle('')
 		}
 	}, [editingMeetingId, editingTitle, history])
-
 
 	const createMeetingOnBackend = useCallback(async (titleOverride?: string) => {
 		const title = titleOverride || `Recording ${new Date().toLocaleString()}`
@@ -684,7 +677,7 @@ export default function Record() {
 								border: `1px solid ${currentThemeColors.border}`, // Example: Or a specific warning border
 								color: currentThemeColors.text, // Example: Or a specific warning text
 								borderRadius: '8px',
-								textAlign: 'center'
+								textAlign: 'center',
 							}}>
 							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
 						</div>
@@ -739,7 +732,9 @@ export default function Record() {
 			)}
 
 			{isRecording && (
-				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: currentThemeColors.button.danger, marginBottom: '16px' }}>⏱️ {formatTime(recordingTime)}</div>
+				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: currentThemeColors.button.danger, marginBottom: '16px' }}>
+					⏱️ {formatTime(recordingTime)}
+				</div>
 			)}
 
 			{(isUiLocked || localChunksCount > 0) && (
@@ -814,8 +809,14 @@ export default function Record() {
 					textAlign: 'center',
 					marginBottom: '24px',
 					padding: '16px',
-					backgroundColor: isRecording ? currentThemeColors.backgroundSecondary : isProcessing ? currentThemeColors.backgroundSecondary : currentThemeColors.background,
-					border: `2px solid ${isRecording ? currentThemeColors.button.danger : isProcessing ? currentThemeColors.secondaryText : currentThemeColors.button.primary}`,
+					backgroundColor: isRecording
+						? currentThemeColors.backgroundSecondary
+						: isProcessing
+						? currentThemeColors.backgroundSecondary
+						: currentThemeColors.background,
+					border: `2px solid ${
+						isRecording ? currentThemeColors.button.danger : isProcessing ? currentThemeColors.secondaryText : currentThemeColors.button.primary
+					}`,
 					overflow: 'hidden',
 				}}>
 				<canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none' }} />
@@ -888,7 +889,7 @@ export default function Record() {
 							minWidth: '140px',
 							backgroundColor: currentThemeColors.button.primary,
 							color: currentThemeColors.button.primaryText,
-								boxShadow: theme === 'light' ? '0 4px 6px rgba(34, 197, 94, 0.3)' : '0 4px 8px rgba(0, 0, 0, 0.3)',
+							boxShadow: theme === 'light' ? '0 4px 6px rgba(34, 197, 94, 0.3)' : '0 4px 8px rgba(0, 0, 0, 0.3)',
 							opacity: isUiLocked || !selectedFile ? 0.5 : 1,
 						}}>
 						📄 Start Transcription
@@ -951,8 +952,8 @@ export default function Record() {
 												if (e.key === 'Enter') {
 													handleTitleChange()
 												} else if (e.key === 'Escape') {
-													setEditingMeetingId(null);
-													setEditingTitle('');
+													setEditingMeetingId(null)
+													setEditingTitle('')
 												}
 												e.stopPropagation() // Prevent li onClick
 											}}
@@ -970,28 +971,30 @@ export default function Record() {
 											autoFocus
 										/>
 									) : (
-										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
-											{m.title}
-										</span>
-										<span
-											onClick={(e) => {
-												if (hoveredMeetingId === m.id) { // Only trigger if icon is meant to be visible/interactive
-													e.stopPropagation();
-													setEditingMeetingId(m.id);
-													setEditingTitle(m.title);
-												}
-											}}
-											style={{
-												fontSize: '15px',
-												cursor: hoveredMeetingId === m.id ? 'pointer' : 'default',
-												marginRight: '10px', // Keep consistent margin
-												visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
-											}}
-											title="Edit title"
-											aria-hidden={hoveredMeetingId !== m.id}
-										>
-											✎
-										</span>
+										<>
+											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
+												{m.title}
+											</span>
+											<span
+												onClick={(e) => {
+													if (hoveredMeetingId === m.id) {
+														// Only trigger if icon is meant to be visible/interactive
+														e.stopPropagation()
+														setEditingMeetingId(m.id)
+														setEditingTitle(m.title)
+													}
+												}}
+												style={{
+													fontSize: '15px',
+													cursor: hoveredMeetingId === m.id ? 'pointer' : 'default',
+													marginRight: '10px', // Keep consistent margin
+													visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
+												}}
+												title="Edit title"
+												aria-hidden={hoveredMeetingId !== m.id}>
+												✎
+											</span>
+										</>
 									)}
 									<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px' }}>
 										{/* The icon span was here, moved next to the title span */}
@@ -1023,7 +1026,11 @@ export default function Record() {
 												Complete
 											</span>
 										)}
-										<span style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>{new Date(m.started_at).toLocaleDateString()}</span>
+										<span
+											style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }}
+											onClick={() => navigate(`/summary/${m.id}`)}>
+											{new Date(m.started_at).toLocaleDateString()}
+										</span>
 									</div>
 								</div>
 							</li>

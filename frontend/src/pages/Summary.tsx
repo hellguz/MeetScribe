@@ -258,8 +258,6 @@ export default function Summary() {
 							display: 'inline-flex', // Keep text and icon on one line
 							alignItems: 'center',   // Vertically align text and icon
 							cursor: (meetingTitle && !isEditingTitle) ? 'pointer' : 'default',
-							textDecoration: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'underline' : 'none',
-							textDecorationColor: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'grey' : 'inherit',
 						}}
 					>
 						{(() => {
