@@ -205,14 +205,14 @@ export default function Summary() {
 	}, [mid, isProcessing, fetchMeetingData])
 
 	/* ─── styling ───────────────────────────────────────────────────── */
-	const font: React.CSSProperties = {
-		fontFamily: '"Inter", sans-serif',
+	const pageTextStyles: React.CSSProperties = {
+		// fontFamily is inherited from body
 		fontSize: 18,
 		lineHeight: 1.6,
 	}
 
 	return (
-		<div style={{ ...font, maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text /* Main text color */ }}>
+		<div style={{ ...pageTextStyles, maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text /* Main text color */ }}>
 			<ThemeToggle />
 
 			{/* Title Display and Editing */}
@@ -231,7 +231,7 @@ export default function Summary() {
 							}
 						}}
 						style={{
-							fontSize: '2em', // Match h1 style
+							fontSize: '1.75em', // Reduced from 2em, matches h1 style more reasonably
 							fontWeight: 'bold',
 							padding: '8px 12px',
 							border: `1px solid ${currentThemeColors.input.border}`,
@@ -320,7 +320,7 @@ export default function Summary() {
 					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>Full Transcript (raw)</h2>
 					<pre
 						style={{
-							...font,
+							...pageTextStyles, // Use updated style object
 							whiteSpace: 'pre-wrap',
 							backgroundColor: currentThemeColors.backgroundSecondary, // Themed background
 							color: currentThemeColors.text, // Themed text

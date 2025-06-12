@@ -638,7 +638,7 @@ export default function Record() {
 	const isUiLocked = isRecording || isProcessing
 
 	return (
-		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' /* backgroundColor and color are inherited from body */ }}>
+		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' /* fontFamily, backgroundColor and color are inherited from body */ }}>
 			<ThemeToggle />
 			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
