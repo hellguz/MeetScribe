@@ -216,16 +216,7 @@ export default function Summary() {
 			<ThemeToggle />
 
 			{/* Title Display and Editing */}
-			<div
-				onMouseEnter={() => setIsTitleHovered(true)}
-				onMouseLeave={() => setIsTitleHovered(false)}
-				style={{
-					position: 'relative',
-					display: 'flex', // Use flex to align title and icon
-					alignItems: 'center', // Vertically center icon with text/input
-					marginBottom: '24px', // Add some space below the title
-				}}
-			>
+			<div style={{ marginBottom: '24px' }}> {/* Outer div for margin only */}
 				{isEditingTitle ? (
 					<input
 						type="text"
@@ -247,23 +238,28 @@ export default function Summary() {
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
-							flexGrow: 1, // Allow input to take available space
+							width: '100%', // Take full width
 						}}
 						autoFocus
 					/>
 				) : (
 					<h1
-						style={{
-							color: currentThemeColors.text,
-							margin: 0,
-							flexGrow: 1, /* Allow h1 to take space */
-							cursor: 'pointer', // Make it look clickable
-						}}
+						onMouseEnter={() => setIsTitleHovered(true)}
+						onMouseLeave={() => setIsTitleHovered(false)}
 						onClick={() => {
 							if (meetingTitle) { // Only allow editing if title is loaded
 								setIsEditingTitle(true);
 								setEditedTitle(meetingTitle);
 							}
+						}}
+						style={{
+							color: currentThemeColors.text,
+							margin: 0,
+							display: 'inline-flex', // Keep text and icon on one line
+							alignItems: 'center',   // Vertically align text and icon
+							cursor: (meetingTitle && !isEditingTitle) ? 'pointer' : 'default',
+							textDecoration: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'underline' : 'none',
+							textDecorationColor: (isTitleHovered && !isEditingTitle && meetingTitle) ? 'grey' : 'inherit',
 						}}
 					>
 						{(() => {
@@ -278,25 +274,29 @@ export default function Summary() {
 							}
 							return `Summary for ${mid}`; // Fallback
 						})()}
+						{isTitleHovered && !isEditingTitle && meetingTitle && (
+							<span
+								onClick={(e) => {
+									e.stopPropagation(); // Prevent H1's onClick from firing as well
+									if (meetingTitle) {
+										setIsEditingTitle(true);
+										setEditedTitle(meetingTitle);
+									}
+								}}
+								style={{
+									fontSize: '16px', // New icon size
+									cursor: 'pointer',
+									marginLeft: '8px', // Space between title text and icon
+									color: currentThemeColors.secondaryText, // Or specific icon color
+								}}
+								role="button"
+								aria-label="Edit title"
+								title="Edit title"
+							>
+								✎
+							</span>
+						)}
 					</h1>
-				)}
-				{isTitleHovered && !isEditingTitle && meetingTitle && ( // Only show edit icon if title is present
-					<span
-						onClick={(e) => {
-							e.stopPropagation();
-							setIsEditingTitle(true);
-							setEditedTitle(meetingTitle);
-						}}
-						style={{
-							cursor: 'pointer',
-							marginLeft: '10px', // Space between title and icon
-							fontSize: '0.8em', // Relative to h1, adjust as needed
-							color: currentThemeColors.secondaryText,
-						}}
-						title="Edit title"
-					>
-						✏️
-					</span>
 				)}
 			</div>
 

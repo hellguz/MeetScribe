@@ -973,20 +973,29 @@ export default function Record() {
 										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
 											{m.title}
 										</span>
+										{/* Always render the icon span if not editing this item, control visibility with style */}
+										<span
+											onClick={(e) => {
+												if (hoveredMeetingId === m.id) { // Only trigger if icon is meant to be visible/interactive
+													e.stopPropagation();
+													setEditingMeetingId(m.id);
+													setEditingTitle(m.title);
+												}
+											}}
+											style={{
+												fontSize: '15px',
+												cursor: hoveredMeetingId === m.id ? 'pointer' : 'default',
+												marginRight: '10px', // Keep consistent margin
+												visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
+											}}
+											title="Edit title"
+											aria-hidden={hoveredMeetingId !== m.id}
+										>
+											✎
+										</span>
 									)}
 									<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px' }}>
-										{hoveredMeetingId === m.id && editingMeetingId !== m.id && (
-											<span
-												onClick={(e) => {
-													e.stopPropagation() // Prevent li onClick
-													setEditingMeetingId(m.id)
-													setEditingTitle(m.title)
-												}}
-												style={{ cursor: 'pointer', marginRight: '10px', fontSize: '15px' }}
-												title="Edit title">
-												✎
-											</span>
-										)}
+										{/* The icon span was here, moved next to the title span */}
 										{m.status === 'pending' && (
 											<span
 												style={{
