@@ -972,7 +972,7 @@ export default function Record() {
 										/>
 									) : (
 										<>
-											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
+											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => { navigate(`/summary/${m.id}`); }}>
 												{m.title}
 											</span>
 											<span
