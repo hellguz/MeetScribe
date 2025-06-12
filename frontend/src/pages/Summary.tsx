@@ -1,12 +1,19 @@
 // ./frontend/src/pages/Summary.tsx
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useContext } from 'react' // Add useContext
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { saveMeeting, getHistory, MeetingMeta } from '../utils/history' // Added getHistory and MeetingMeta
 import { getCached, saveCached } from '../utils/summaryCache'
+import ThemeToggle from '../components/ThemeToggle';
+import { ThemeContext } from '../contexts/ThemeContext'; // Import ThemeContext
+import { lightTheme, darkTheme, AppTheme } from '../styles/theme'; // Import themes and AppTheme
 
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
+	const themeContext = useContext(ThemeContext);
+	if (!themeContext) throw new Error("ThemeContext not found");
+	const { theme } = themeContext;
+	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
 	const [summary, setSummary] = useState<string | null>(null)
 	const [transcript, setTranscript] = useState<string | null>(null)
 	const [isLoading, setIsLoading] = useState(true)
@@ -132,26 +139,38 @@ export default function Summary() {
 	}
 
 	return (
-		<div style={{ ...font, maxWidth: 800, margin: '0 auto', padding: 24 }}>
+		<div style={{ ...font, maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text /* Main text color */ }}>
+			<ThemeToggle />
 			{isLoading && <p>Loading summary...</p>}
-			{error && <p style={{ color: 'red' }}>Error: {error}</p>}
+			{error && <p style={{ color: currentThemeColors.button.danger /* Error text color */ }}>Error: {error}</p>}
 
 			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
-			{summary && <ReactMarkdown>{summary}</ReactMarkdown>}
+			{summary && <ReactMarkdown
+				components={{
+					h1: ({node, ...props}) => <h1 style={{color: currentThemeColors.text}} {...props} />,
+					h2: ({node, ...props}) => <h2 style={{color: currentThemeColors.text}} {...props} />,
+					h3: ({node, ...props}) => <h3 style={{color: currentThemeColors.text}} {...props} />,
+					p: ({node, ...props}) => <p style={{color: currentThemeColors.text}} {...props} />,
+					li: ({node, ...props}) => <li style={{color: currentThemeColors.text}} {...props} />,
+					// Add other elements as needed
+				}}
+			>{summary}</ReactMarkdown>}
 
 			{/* Always show the transcript (even if no summary yet) */}
 			{!isLoading && !error && transcript && (
 				<>
-					<h2 style={{ marginTop: 32 }}>Full Transcript (raw)</h2>
+					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>Full Transcript (raw)</h2>
 					<pre
 						style={{
 							...font,
 							whiteSpace: 'pre-wrap',
-							background: '#f5f5f5',
+							backgroundColor: currentThemeColors.backgroundSecondary, // Themed background
+							color: currentThemeColors.text, // Themed text
 							padding: 16,
 							borderRadius: 4,
 							overflowX: 'auto',
+							border: `1px solid ${currentThemeColors.border}` // Themed border
 						}}>
 						{transcript}
 					</pre>
