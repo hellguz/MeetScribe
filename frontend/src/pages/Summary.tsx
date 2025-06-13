@@ -207,7 +207,7 @@ export default function Summary() {
 	/* ─── styling ───────────────────────────────────────────────────── */
 	const pageTextStyles: React.CSSProperties = {
 		// fontFamily is inherited from body
-		fontSize: 13, // Reduced from 18px (approx 27.8% reduction)
+		fontSize: 15, // Reduced from 18px (approx 27.8% reduction)
 		lineHeight: 1.6, // Line height might need adjustment for smaller font, but let's keep it for now
 	}
 
@@ -317,7 +317,7 @@ export default function Summary() {
 			{/* Always show the transcript (even if no summary yet) */}
 			{!isLoading && !error && transcript && (
 				<>
-					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>Full Transcript (raw)</h2>
+					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>🎤 Transcript</h2>
 					<pre
 						style={{
 							...pageTextStyles, // Use updated style object
