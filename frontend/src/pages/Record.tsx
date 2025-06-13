@@ -800,7 +800,7 @@ export default function Record() {
 						color: currentThemeColors.text,
 					}}>
 					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Full transcript</div>
-					<div style={{ fontSize: '8px', lineHeight: '1.5' }}>{liveTranscript}</div>
+					<div style={{ fontSize: '14px', lineHeight: '1.5' }}>{liveTranscript}</div>
 				</div>
 			)}
 
