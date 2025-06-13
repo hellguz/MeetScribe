@@ -397,6 +397,9 @@ def generate_summary_only(self, meeting_id_str: str):
             )
             return
 
+        # <<< FIX: Persist the rebuilt transcript if it was missing >>>
+        mtg.transcript_text = final_transcript
+
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         summary_md = summarise_transcript_in_worker(
             final_transcript, mtg.started_at.isoformat()

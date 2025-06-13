@@ -179,7 +179,8 @@ export default function Record() {
 			if (data.done) {
 				if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
 				setIsProcessing(false)
-				navigate(`/summary/${meetingId.current}`)
+				// <<< FIX: Use `replace: true` to prevent double back button press >>>
+				navigate(`/summary/${meetingId.current}`, { replace: true })
 			} else {
 				if (!isRecording && meetingId.current) {
 					setIsProcessing(true)
@@ -972,7 +973,11 @@ export default function Record() {
 										/>
 									) : (
 										<>
-											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }} onClick={() => { navigate(`/summary/${m.id}`); }}>
+											<span
+												style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }}
+												onClick={() => {
+													navigate(`/summary/${m.id}`)
+												}}>
 												{m.title}
 											</span>
 											<span
@@ -992,7 +997,7 @@ export default function Record() {
 												}}
 												title="Edit title"
 												aria-hidden={hoveredMeetingId !== m.id}>
-												✎
+												✏️
 											</span>
 										</>
 									)}
