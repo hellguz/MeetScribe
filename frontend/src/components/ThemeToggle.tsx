@@ -17,7 +17,7 @@ const ThemeToggle: React.FC = () => {
 	return (
 		<button
 			onClick={toggleTheme}
-			title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`} // Tooltip for accessibility
+			title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
 			style={{
 				position: 'fixed',
 				top: '15px',
@@ -25,14 +25,14 @@ const ThemeToggle: React.FC = () => {
 				zIndex: 1000,
 				cursor: 'pointer',
 
-				// --- Style Reset for "invisible button" ---
+				// Style Reset for "invisible button"
 				background: 'transparent',
 				border: 'none',
 				padding: 0,
 
-				// --- Emoji Styling ---
-				fontSize: '24px',
-				lineHeight: 1, // Prevent extra vertical space
+				// Emoji Styling
+				fontSize: '16px',
+				lineHeight: 1,
 			}}>
 			{emoji}
 		</button>
