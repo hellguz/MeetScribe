@@ -206,9 +206,10 @@ export default function Summary() {
 
 	/* ─── styling ───────────────────────────────────────────────────── */
 	const pageTextStyles: React.CSSProperties = {
-		// fontFamily is inherited from body
-		fontSize: 15, // Reduced from 18px (approx 27.8% reduction)
-		lineHeight: 1.6, // Line height might need adjustment for smaller font, but let's keep it for now
+		// <<< FIX: Explicitly set fontFamily from the theme >>>
+		fontFamily: currentThemeColors.fontFamily,
+		fontSize: 15,
+		lineHeight: 1.6,
 	}
 
 	return (
@@ -230,6 +231,7 @@ export default function Summary() {
 					padding: '0',
 					marginBottom: '24px',
 					transition: 'color 0.2s',
+					fontFamily: 'inherit', // Ensure button inherits the page font
 				}}
 				onMouseOver={(e) => (e.currentTarget.style.color = currentThemeColors.text)}
 				onMouseOut={(e) => (e.currentTarget.style.color = currentThemeColors.secondaryText)}>
@@ -262,6 +264,7 @@ export default function Summary() {
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
 							width: '100%', // Take full width
+							fontFamily: 'inherit', // Ensure input inherits font
 						}}
 						autoFocus
 					/>
