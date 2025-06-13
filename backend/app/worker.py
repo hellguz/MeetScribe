@@ -16,7 +16,6 @@ from sqlmodel import Session, select, func, create_engine
 
 from .config import settings
 from .models import Meeting, MeetingChunk
-from .templates import TEMPLATES
 
 # Configure Celery
 celery_app = Celery(
@@ -81,55 +80,44 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
     """
     chunk_path = Path(chunk_path_str)
     whisper = get_whisper_model()
-
     try:
         if settings.recognition_in_cloud:
             path_to_transcribe = chunk_path
             output_flac_path = None
-
-            # Best practice: Convert to a standard format (16kHz mono FLAC) for cloud APIs.
             if shutil.which("ffmpeg"):
                 output_flac_path = chunk_path.with_suffix(".flac")
                 try:
-                    # ffmpeg command to convert to 16kHz mono FLAC
                     command = [
                         "ffmpeg",
                         "-i",
                         str(chunk_path),
-                        "-y",  # Overwrite output file if it exists
-                        "-vn",  # No video
+                        "-y",
+                        "-vn",
                         "-ac",
-                        "1",  # Mono audio
+                        "1",
                         "-ar",
-                        "16000",  # 16kHz sample rate
+                        "16000",
                         "-sample_fmt",
-                        "s16",  # 16-bit samples
+                        "s16",
                         str(output_flac_path),
                     ]
                     subprocess.run(command, check=True, capture_output=True, text=True)
                     path_to_transcribe = output_flac_path
-                    LOGGER.info(
-                        f"Successfully converted {chunk_path.name} to FLAC for cloud transcription."
-                    )
+                    LOGGER.info(f"Successfully converted {chunk_path.name} to FLAC.")
                 except subprocess.CalledProcessError as e:
                     LOGGER.error(
-                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will attempt to send original file."
+                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will send original."
                     )
-                    # Fallback to original path if conversion fails
                     path_to_transcribe = chunk_path
-                finally:
-                    # The file will be cleaned up after the API call
-                    pass
             else:
                 LOGGER.warning(
-                    "ffmpeg not found. Sending original WebM file to cloud API. Install ffmpeg for better results."
+                    "ffmpeg not found. Sending original WebM file to cloud API."
                 )
-
             try:
                 with open(path_to_transcribe, "rb") as audio_file:
                     resp = _groq_client.audio.transcriptions.create(
                         file=(path_to_transcribe.name, audio_file.read()),
-                        model="whisper-large-v3",  # whisper-large-v3-turbo is not a valid model
+                        model="whisper-large-v3",
                         response_format="verbose_json",
                     )
                 LOGGER.info(
@@ -137,23 +125,18 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                 )
                 return resp.text.strip()
             finally:
-                # Clean up the temporary FLAC file if it was created
                 if output_flac_path and output_flac_path.exists():
                     output_flac_path.unlink()
-
-        else:  # Local transcription
+        else:
             segments, _info = whisper.transcribe(
                 str(chunk_path),
                 beam_size=5,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.1,
-                    min_silence_duration_ms=500,
-                    speech_pad_ms=300,
+                    threshold=0.1, min_silence_duration_ms=500, speech_pad_ms=300
                 ),
             )
             return " ".join(s.text for s in segments).strip()
-
     except Exception as e:
         LOGGER.error(
             f"Celery Worker: Failed to transcribe {chunk_path.name}: {e}", exc_info=True
@@ -161,8 +144,10 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
         return ""
 
 
-def summarise_transcript_in_worker(text: str, started_at_iso: str) -> str:
-    if not text or len(text.strip()) < 10:
+def summarise_transcript_in_worker(
+    full_transcript: str, meeting_title: str, started_at_iso: str
+) -> str:
+    if not full_transcript or len(full_transcript.strip()) < 20:
         return "Recording too short to generate a meaningful summary."
 
     if not openai.api_key:
@@ -171,38 +156,64 @@ def summarise_transcript_in_worker(text: str, started_at_iso: str) -> str:
     try:
         started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
         date_str = started_at_dt.strftime("%Y-%m-%d")
-        time_range = f"{started_at_dt.strftime('%H:%M')} - {dt.datetime.now(dt.timezone.utc).strftime('%H:%M')}"
+        end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
+        time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
         system_prompt = f"""
-You are MeetScribe, an expert meeting-summary generator.
+You are 'Scribe', an AI analyst with deep expertise in project management and architectural critique. Your primary goal is to transform a raw meeting transcript into a comprehensive, clear, and actionable summary. The final document must be so thorough and insightful that a team member who missed the meeting can grasp all concepts, discussions, and critical feedback as if they were there. Prioritize completeness and clarity over brevity.
 
-RULES
-• Pick (or merge) the best-fit template 1-7 from TEMPLATES below.
-• For all other recordings choose the layout that reads best:
-    – **Paragraphs** for conversational / explanatory / narratory parts.  
-    – **Bullet lists** for discrete points (**each bullet must be 1-2 full sentences**).
-• Translate **all headings and body text** into the dominant language of the recording.
-• Replace every placeholder  
-  [YYYY-MM-DD] → “{date_str}”, [HH:MM–HH:MM] → “{time_range}”, etc.
-• **If you do NOT have solid content for a section (like Decisions, Action Items), DELETE that entire heading and body.  
-  NEVER OUTPUT PLACEHOLDERS, “[Not specified]”, “No …”, “None”, “…”, or empty bullets.**
-• Markdown only — headings, lists, and paragraphs. **No tables, no code fences.**
-• Target length ≈ 450-1100 words (about 1-2 A4 pages): detailed enough to replace
-  the recording, but still concise.
-• Keep prose readable: clear headings, logical order, numbered/bulleted lists where useful.
-• Strip EVERY leftover placeholder or bracketed hint.
-• Return **only the finished Markdown** — no commentary, no extra text.
+<thinking_steps>
+**1. Internal Analysis (Do Not Output This Section)**
+Before writing, you MUST first perform a deep, silent analysis of the transcript:
+- **Purpose & Vibe:** What is the main goal of this meeting (e.g., project critique, brainstorm, planning)? What is the overall tone (e.g., formal, collaborative, critical)?
+- **Key Concepts Presented:** Identify the 2-4 core ideas or components that were presented or discussed (e.g., "Modular Housing Typologies," "Zoning Strategy").
+- **Critiques & Directives:** This is critical. Create a detailed list of every piece of specific feedback, criticism, or suggestion given. For each, note *what* was criticized and *what the specific recommendation was*. Do not generalize; capture the exact suggestions.
+- **Narrative Flow:** How do the concepts and critiques connect? What is the story of the meeting from start to finish?
+- **Dominant Language:** Identify the primary language of the conversation.
+</thinking_steps>
 
-TEMPLATES
-{TEMPLATES}
+<output_rules>
+**2. Final Output Generation**
+Your final response MUST BE ONLY the Markdown summary. It must start directly with the `##` heading for the meeting title. DO NOT include any commentary, preamble, or the content from your `<thinking_steps>`. The summary should be detailed and adopt a clear, professional-yet-human tone.
+
+---
+## {meeting_title}
+_{date_str} — {time_range}_
+
+### Summary
+Write an approachable and insightful paragraph (3-5 sentences) that sets the scene for the meeting. It should summarize the project's state, the main topics discussed, and the overall 'vibe' of the conversation, including the nature of the feedback received. Use a natural, conversational tone.
+
+---
+*(...Thematic Sections Go Here...)*
+---
+
+### Key Decisions & Actionable Next Steps
+- This section must be comprehensive.
+- **Decisions:** List any firm decisions made.
+- **Action Items:** List both EXPLICIT and IMPLICIT tasks. If someone says, "It would be nice to see a section view," that is an implicit action item. Capture everything a team member would need to act on.
+- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision, including the 'why' or context].`
+- *(Omit this section ONLY if there were absolutely no decisions or actionable suggestions).*
+</output_rules>
+
+<thematic_body_instructions>
+This is the core of the summary. For each **Key Concept** you identified, create a `###` heading.
+- **Explain the Concept:** First, use a paragraph to describe the idea as it was presented by the team.
+- **Capture All Specific Critiques and Suggestions:** Then, create a sub-section titled `**Feedback & Discussion:**`. Under this, use a detailed bulleted list to present EVERY piece of critique and all suggestions you extracted for that topic.
+- **Do not generalize with phrases like "suggestions were made."** Instead, list the exact suggestions. For example, instead of "The visuals needed to be clearer," write "- It was suggested to use grey for existing buildings and saturated colors for new interventions to improve clarity on the masterplan." This level of detail is mandatory.
+
+**CRITICAL:** The entire summary, including all headings and text, **MUST be in the dominant language** you identified in your internal analysis.
+</thematic_body_instructions>
 """
 
         response = openai.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
-            temperature=0.3,
+            model="gpt-4.1-mini",  # Using a cost-effective model with strong reasoning.
+            temperature=0.3,  # Slightly higher temperature for more natural language
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Full meeting transcript:\n{text}"},
+                {
+                    "role": "user",
+                    "content": f"Full meeting transcript:\n{full_transcript}",
+                },
             ],
         )
         return response.choices[0].message.content.strip()
@@ -230,18 +241,10 @@ def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> 
 def process_transcription_and_summary(
     self, meeting_id_str: str, chunk_index: int, chunk_path_str: str
 ):
-    LOGGER.info(
-        f"Task started for meeting {meeting_id_str}, chunk {chunk_index} at path {chunk_path_str}"
-    )
     engine = get_db_engine()
     meeting_id_uuid = uuid.UUID(meeting_id_str)
-
     try:
         chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
-        LOGGER.info(
-            f"Transcription result for chunk {chunk_index} (meeting {meeting_id_str}): '{chunk_text[:100]}...'"
-        )
-
         with Session(engine) as db:
             mc = db.exec(
                 select(MeetingChunk).where(
@@ -249,25 +252,20 @@ def process_transcription_and_summary(
                     MeetingChunk.chunk_index == chunk_index,
                 )
             ).first()
-
             if not mc:
                 LOGGER.error(
-                    f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}. Aborting task."
+                    f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}."
                 )
                 return
-
             mc.text = chunk_text
             db.add(mc)
             db.commit()
-
             mtg = db.get(Meeting, meeting_id_uuid)
             if not mtg:
                 LOGGER.error(
-                    f"Meeting {meeting_id_str}: object not found after transcribing chunk. Aborting."
+                    f"Meeting {meeting_id_str}: object not found after transcribing chunk."
                 )
                 return
-
-            # Count how many chunks have transcription
             transcribed_count = (
                 db.scalar(
                     select(func.count(MeetingChunk.id)).where(
@@ -277,13 +275,11 @@ def process_transcription_and_summary(
                 )
                 or 0
             )
-
-            if mtg.expected_chunks is not None:
-                effective_expected = mtg.expected_chunks
-            else:
-                effective_expected = mtg.received_chunks
-
-            # Only summarize once final_received=True AND we've transcribed all expected chunks.
+            effective_expected = (
+                mtg.expected_chunks
+                if mtg.expected_chunks is not None
+                else mtg.received_chunks
+            )
             if (
                 not mtg.done
                 and mtg.final_received
@@ -294,13 +290,10 @@ def process_transcription_and_summary(
                     f"Meeting {meeting_id_str}: All chunks transcribed. Building final transcript and summarizing."
                 )
                 final_transcript = rebuild_full_transcript(db, meeting_id_uuid)
-                mtg.transcript_text = (
-                    final_transcript  # Store the final, complete transcript
-                )
-
+                mtg.transcript_text = final_transcript
                 if final_transcript:
                     summary_md = summarise_transcript_in_worker(
-                        final_transcript, mtg.started_at.isoformat()
+                        final_transcript, mtg.title, mtg.started_at.isoformat()
                     )
                     mtg.summary_markdown = summary_md
                     mtg.done = True
@@ -315,15 +308,8 @@ def process_transcription_and_summary(
                         "Error: Transcript was empty, summary could not be generated."
                     )
                     mtg.done = True
-
                 db.add(mtg)
                 db.commit()
-            else:
-                LOGGER.info(
-                    f"Meeting {meeting_id_str}: Waiting for more chunks. "
-                    f"Status: transcribed={transcribed_count}, expected={effective_expected}, final_received={mtg.final_received}"
-                )
-
     except Exception as exc:
         LOGGER.error(
             f"Error processing task for meeting {meeting_id_str}, chunk {chunk_index}: {exc}",
@@ -335,16 +321,8 @@ def process_transcription_and_summary(
             LOGGER.error(
                 f"Max retries exceeded for task: meeting {meeting_id_str}, chunk {chunk_index}."
             )
-            # MODIFICATION 2 STARTS HERE
-            # Attempt to update the database to mark this chunk as permanently failed
-            # Ensure engine is available. If `get_db_engine()` was called inside try, it might need to be called again
-            # or ensure `engine` variable is accessible here.
-            # Similarly, `meeting_id_uuid` must be accessible.
             fail_engine = get_db_engine()
-            fail_meeting_id_uuid = uuid.UUID(
-                meeting_id_str
-            )  # Re-define or ensure scope
-
+            fail_meeting_id_uuid = uuid.UUID(meeting_id_str)
             with Session(fail_engine) as db_fail_session:
                 mc_fail = db_fail_session.exec(
                     select(MeetingChunk).where(
@@ -353,20 +331,14 @@ def process_transcription_and_summary(
                     )
                 ).first()
                 if mc_fail:
-                    mc_fail.text = None  # Set to None on max retries exceeded
+                    mc_fail.text = None
                     db_fail_session.add(mc_fail)
                     db_fail_session.commit()
                     LOGGER.info(
                         f"Set chunk {chunk_index} of meeting {meeting_id_str} text to None after max retries."
                     )
-                else:
-                    LOGGER.error(
-                        f"Could not find chunk {chunk_index} of meeting {meeting_id_str} to update after max retries."
-                    )
-            # MODIFICATION 2 ENDS HERE
 
 
-# ─── NEW!  on-demand summary task ───────────────────────────────────
 @celery_app.task(
     name="app.worker.generate_summary_only",
     bind=True,
@@ -375,19 +347,13 @@ def process_transcription_and_summary(
     default_retry_delay=60,
 )
 def generate_summary_only(self, meeting_id_str: str):
-    """
-    Regenerates a summary for an already-transcribed meeting.
-    Called from GET /api/meetings when the user opens the summary page.
-    """
     engine = get_db_engine()
     meeting_id = uuid.UUID(meeting_id_str)
-
     with Session(engine) as db:
         mtg = db.get(Meeting, meeting_id)
         if not mtg:
             LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
             return
-
         final_transcript = mtg.transcript_text or rebuild_full_transcript(
             db, meeting_id
         )
@@ -396,12 +362,11 @@ def generate_summary_only(self, meeting_id_str: str):
                 "Meeting %s has no transcript – aborting regen.", meeting_id_str
             )
             return
-
+        mtg.transcript_text = final_transcript
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         summary_md = summarise_transcript_in_worker(
-            final_transcript, mtg.started_at.isoformat()
+            final_transcript, mtg.title, mtg.started_at.isoformat()
         )
-
         mtg.summary_markdown = summary_md
         mtg.done = True
         db.add(mtg)

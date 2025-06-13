@@ -1,4 +1,8 @@
+import '@fontsource/inter';
+
 export interface AppTheme {
+	fontFamily: string;
+	fontFeatureSettings: string;
 	body: string
 	text: string
 	secondaryText: string
@@ -27,6 +31,8 @@ export interface AppTheme {
 }
 
 export const lightTheme: AppTheme = {
+	fontFamily: "'Inter', sans-serif",
+	fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
 	body: '#FFFFFF', // White background for the page
 	text: '#1f2937', // Dark gray for primary text (Tailwind gray-800)
 	secondaryText: '#6b7280', // Lighter gray for secondary text (Tailwind gray-500)
@@ -54,6 +60,8 @@ export const lightTheme: AppTheme = {
 }
 
 export const darkTheme: AppTheme = {
+	fontFamily: "'Inter', sans-serif",
+	fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
 	body: '#18181b', // Monochrome dark (Tailwind zinc-900)
 	text: '#f3f4f6', // Light gray for primary text (Tailwind gray-100)
 	secondaryText: '#9ca3af', // Medium gray for secondary text (Tailwind gray-400)

@@ -179,7 +179,8 @@ export default function Record() {
 			if (data.done) {
 				if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
 				setIsProcessing(false)
-				navigate(`/summary/${meetingId.current}`)
+				// <<< FIX: Use `replace: true` to prevent double back button press >>>
+				navigate(`/summary/${meetingId.current}`, { replace: true })
 			} else {
 				if (!isRecording && meetingId.current) {
 					setIsProcessing(true)
@@ -638,7 +639,7 @@ export default function Record() {
 	const isUiLocked = isRecording || isProcessing
 
 	return (
-		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto', fontFamily: '"Inter", sans-serif' /* backgroundColor and color are inherited from body */ }}>
+		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' /* fontFamily, backgroundColor and color are inherited from body */ }}>
 			<ThemeToggle />
 			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
@@ -798,8 +799,8 @@ export default function Record() {
 						overflowY: 'auto',
 						color: currentThemeColors.text,
 					}}>
-					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Live Transcript:</div>
-					<div style={{ fontSize: '14px', lineHeight: '1.5' }}>{liveTranscript}</div>
+					<div style={{ fontSize: '14px', fontWeight: 'bold', color: currentThemeColors.text, marginBottom: '8px' }}>🎤 Full transcript</div>
+					<div style={{ fontSize: '8px', lineHeight: '1.5' }}>{liveTranscript}</div>
 				</div>
 			)}
 
@@ -972,7 +973,11 @@ export default function Record() {
 										/>
 									) : (
 										<>
-											<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer' }} onClick={() => navigate(`/summary/${m.id}`)}>
+											<span
+												style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }}
+												onClick={() => {
+													navigate(`/summary/${m.id}`)
+												}}>
 												{m.title}
 											</span>
 											<span
@@ -992,7 +997,7 @@ export default function Record() {
 												}}
 												title="Edit title"
 												aria-hidden={hoveredMeetingId !== m.id}>
-												✎
+												✏️
 											</span>
 										</>
 									)}

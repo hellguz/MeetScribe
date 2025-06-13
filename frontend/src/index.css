@@ -1,0 +1,13 @@
+body {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  font-feature-settings: 'ss01' on, 'ss02' on, 'ss03' on;
+  /* General reset and body styles */
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Additional global styles can go here */
