@@ -41,6 +41,12 @@ export default function Record() {
 	const [isDragging, setIsDragging] = useState(false)
 	const fileInputRef = useRef<HTMLInputElement>(null)
 
+	/* ─── new state for mic inclusion ───────────────────────────────── */
+	const [includeMic, setIncludeMic] = useState<boolean>(() => {
+		const saved = localStorage.getItem('meetscribe_include_mic')
+		return saved !== null ? JSON.parse(saved) : true
+	})
+
 	/* ─── waveform metering ─────────────────────────────────────────── */
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const audioCtxRef = useRef<AudioContext | null>(null)
@@ -107,6 +113,7 @@ export default function Record() {
 	const mediaRef = useRef<MediaRecorder | null>(null)
 	const streamRef = useRef<MediaStream | null>(null) // Will hold the stream for the recorder (can be audio-only)
 	const displayStreamRef = useRef<MediaStream | null>(null) // Will hold the original getDisplayMedia stream
+	const micStreamRef = useRef<MediaStream | null>(null) // Will hold the microphone stream
 	const startTimeRef = useRef<number>(0)
 	const timerRef = useRef<NodeJS.Timeout | null>(null)
 	const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -116,6 +123,20 @@ export default function Record() {
 	useEffect(() => {
 		isRecordingRef.current = isRecording
 	}, [isRecording])
+
+	useEffect(() => {
+		localStorage.setItem('meetscribe_include_mic', JSON.stringify(includeMic))
+	}, [includeMic])
+
+	useEffect(() => {
+		// This effect seamlessly toggles the microphone on and off during a system recording
+		if (isRecording && audioSource === 'system' && micStreamRef.current) {
+			const audioTrack = micStreamRef.current.getAudioTracks()[0]
+			if (audioTrack) {
+				audioTrack.enabled = includeMic
+			}
+		}
+	}, [includeMic, isRecording, audioSource])
 
 	useEffect(() => {
 		if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
@@ -357,7 +378,7 @@ export default function Record() {
 			}
 		}
 
-		/* 6. Kick it off, then schedule a stop in 10 s */
+		/* 6. Kick it off, then schedule a stop in 30s */
 		recorder.start() // no timeslice
 		setTimeout(() => {
 			if (recorder.state === 'recording') {
@@ -375,33 +396,59 @@ export default function Record() {
 	}
 
 	async function start() {
-		let audioStream: MediaStream
+		let finalStreamForRecorder: MediaStream
+
 		try {
 			if (audioSource === 'system') {
 				if (!isSystemAudioSupported) {
 					alert('System audio recording is not supported on your device or browser.')
 					return
 				}
+
+				// --- Get System Audio ---
 				const displayStream = await navigator.mediaDevices.getDisplayMedia({
 					video: true,
 					audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 				})
 				displayStreamRef.current = displayStream
 
-				if (displayStream.getAudioTracks().length === 0) {
-					displayStream.getTracks().forEach((track) => track.stop())
-					displayStreamRef.current = null
-					alert("System audio access was not granted. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.")
-					return
-				}
-
 				displayStream.getVideoTracks()[0].addEventListener('ended', () => {
 					if (isRecordingRef.current) stop()
 				})
 
-				audioStream = new MediaStream(displayStream.getAudioTracks())
+				// --- Get Microphone Audio ---
+				const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+				micStreamRef.current = micStream
+				// Disable mic track initially if the checkbox is unchecked
+				micStream.getAudioTracks()[0].enabled = includeMic
+
+				// --- Combine Streams ---
+				audioCtxRef.current = new AudioContext()
+				const destination = audioCtxRef.current.createMediaStreamDestination()
+
+				// Add system audio to the mix if it exists
+				if (displayStream.getAudioTracks().length > 0) {
+					const displaySource = audioCtxRef.current.createMediaStreamSource(displayStream)
+					displaySource.connect(destination)
+				} else if (!includeMic) {
+					// Edge case: No system audio and mic is disabled.
+					displayStream.getTracks().forEach((track) => track.stop())
+					micStream.getTracks().forEach((track) => track.stop())
+					alert('System audio access was not granted, and the microphone is disabled. Cannot record audio.')
+					return
+				}
+
+				// Add microphone audio to the mix
+				const micSource = audioCtxRef.current.createMediaStreamSource(micStream)
+				micSource.connect(destination)
+
+				// The final stream for the recorder should ONLY contain the mixed audio.
+				// The original displayStream is kept in a ref to keep the video track alive
+				// and maintain the browser's "Stop sharing" UI.
+				finalStreamForRecorder = destination.stream
 			} else {
-				audioStream = await navigator.mediaDevices.getUserMedia({
+				// --- Microphone-only recording ---
+				const micOnlyStream = await navigator.mediaDevices.getUserMedia({
 					audio: {
 						echoCancellation: false,
 						noiseSuppression: false,
@@ -412,15 +459,19 @@ export default function Record() {
 						volume: 1.0, // If supported, maximize input
 					},
 				})
+				micStreamRef.current = micOnlyStream
+				finalStreamForRecorder = micOnlyStream
 			}
 
-			audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
-			const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
+			if (!audioCtxRef.current) {
+				audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
+			}
+			const sourceNode = audioCtxRef.current.createMediaStreamSource(finalStreamForRecorder)
 			analyserRef.current = audioCtxRef.current.createAnalyser()
 			analyserRef.current.fftSize = 2048
 			sourceNode.connect(analyserRef.current)
 
-			streamRef.current = audioStream
+			streamRef.current = finalStreamForRecorder
 
 			setLocalChunksCount(0)
 			setUploadedChunks(0)
@@ -466,14 +517,14 @@ export default function Record() {
 		if (mediaRef.current.state === 'recording') {
 			mediaRef.current.stop()
 		}
-		if (streamRef.current) {
-			streamRef.current.getTracks().forEach((track) => track.stop())
-			streamRef.current = null
-		}
-		if (displayStreamRef.current) {
-			displayStreamRef.current.getTracks().forEach((track) => track.stop())
-			displayStreamRef.current = null
-		}
+
+		// Stop all tracks from all sources
+		streamRef.current?.getTracks().forEach((track) => track.stop())
+		streamRef.current = null
+		displayStreamRef.current?.getTracks().forEach((track) => track.stop())
+		displayStreamRef.current = null
+		micStreamRef.current?.getTracks().forEach((track) => track.stop())
+		micStreamRef.current = null
 
 		if (animationFrameRef.current) {
 			cancelAnimationFrame(animationFrameRef.current)
@@ -679,6 +730,7 @@ export default function Record() {
 								color: currentThemeColors.text, // Example: Or a specific warning text
 								borderRadius: '8px',
 								textAlign: 'center',
+								marginBottom: '16px',
 							}}>
 							⚠️ System audio recording is not supported on your device or browser (e.g., iPhones/iPads). This option is unlikely to work.
 						</div>
@@ -694,11 +746,38 @@ export default function Record() {
 								textAlign: 'center',
 								fontSize: '14px',
 								lineHeight: 1.5,
+								marginBottom: '16px',
 							}}>
 							ℹ️ When prompted, choose a screen, window, or tab to share. <br />
 							<b>Crucially, ensure you check the "Share system audio" or "Share tab audio" box</b> to record sound.
 						</div>
 					)}
+
+					{/* --- NEW: Microphone inclusion checkbox --- */}
+					{audioSource === 'system' && (
+						<div
+							style={{
+								display: 'flex',
+								justifyContent: 'center',
+								alignItems: 'center',
+								padding: '10px',
+								marginBottom: '16px',
+								backgroundColor: currentThemeColors.backgroundSecondary,
+								borderRadius: '8px',
+							}}>
+							<input
+								type="checkbox"
+								id="include-mic-checkbox"
+								checked={includeMic}
+								onChange={(e) => setIncludeMic(e.target.checked)}
+								style={{ marginRight: '8px', width: '16px', height: '16px' }}
+							/>
+							<label htmlFor="include-mic-checkbox" style={{ fontWeight: 500, color: currentThemeColors.text, cursor: 'pointer' }}>
+								Include microphone audio
+							</label>
+						</div>
+					)}
+
 					{audioSource === 'file' && (
 						<div
 							onDragEnter={(e) => {
