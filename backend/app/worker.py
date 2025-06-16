@@ -28,6 +28,15 @@ celery_app = Celery(
 celery_app.conf.update(
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    # === Resilience Change: Only acknowledge tasks after they complete successfully ===
+    task_acks_late=True,
+    # === Resilience Change: Add a periodic task to clean up stuck meetings ===
+    beat_schedule={
+        "cleanup-every-30-minutes": {
+            "task": "app.worker.cleanup_stuck_meetings",
+            "schedule": 1800.0,  # 30 minutes in seconds
+        },
+    },
 )
 
 _whisper_model_instance = None
@@ -67,8 +76,17 @@ def get_whisper_model():
 
 
 @worker_ready.connect
-def load_whisper_on_startup(**kwargs):
+def on_worker_startup(**kwargs):
+    """
+    On worker startup, pre-load the AI model and trigger an immediate
+    cleanup task to recover any jobs interrupted by a restart.
+    """
+    LOGGER.info("Celery worker ready. Pre-loading models and running startup tasks.")
+    # Pre-load the model to have it ready for the first task
     get_whisper_model()
+    # === Resilience Change: Queue a janitor task to run immediately on startup ===
+    LOGGER.info("Queueing initial cleanup task for any jobs interrupted by a restart.")
+    cleanup_stuck_meetings.delay()
 
 
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
@@ -103,7 +121,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                     LOGGER.info(f"Successfully converted {chunk_path.name} to FLAC.")
                 except subprocess.CalledProcessError as e:
                     LOGGER.error(
-                        f"ffmpeg failed for {chunk_path.name}: {e.stderr}. Sending original."
+                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will send original."
                     )
                     path_to_transcribe = chunk_path
             else:
@@ -157,7 +175,7 @@ def summarise_transcript_in_worker(
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
-        system_prompt = """
+        system_prompt = f"""
 You are 'Scribe', an AI analyst with deep expertise in project management and architectural critique. Your primary goal is to transform a raw meeting transcript into a comprehensive, clear, and actionable summary. The final document must be so thorough and insightful that a team member who missed the meeting can grasp all concepts, discussions, and critical feedback as if they were there. Prioritize completeness and clarity over brevity.
 
 <thinking_steps>
@@ -173,7 +191,6 @@ Before writing, you MUST first perform a deep, silent analysis of the transcript
 <output_rules>
 **2. Final Output Generation**
 Your final response MUST BE ONLY the Markdown summary. It must start directly with the `##` heading for the meeting title. DO NOT include any commentary, preamble, or the content from your `<thinking_steps>`. The summary should be detailed and adopt a clear, professional-yet-human tone.
-
 ---
 ## {meeting_title}
 _{date_str} — {time_range}_
@@ -210,7 +227,7 @@ This is the core of the summary. For each **Key Concept** you identified, create
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"## {meeting_title}\n_{date_str} — {time_range}_\n\nFull meeting transcript:\n{full_transcript}",
+                    "content": f"Full meeting transcript:\n{full_transcript}",
                 },
             ],
         )
@@ -241,8 +258,9 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
     mtg.transcript_text = final_transcript
 
     if final_transcript:
+        # These fields were added later, so we calculate them here.
         mtg.word_count = len(final_transcript.split())
-        mtg.duration_seconds = num_chunks * 30
+        mtg.duration_seconds = num_chunks * 30  # Assuming 30s chunks
 
         summary_md = summarise_transcript_in_worker(
             final_transcript, mtg.title, mtg.started_at.isoformat()
@@ -262,6 +280,69 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
     mtg.done = True
     db.add(mtg)
     db.commit()
+
+
+@celery_app.task(name="app.worker.cleanup_stuck_meetings")
+def cleanup_stuck_meetings():
+    """
+    Finds meetings that are not done and have been inactive for a while,
+    then re-queues transcription tasks for any chunks that are missing text.
+    """
+    engine = get_db_engine()
+    STUCK_THRESHOLD_MINUTES = 15
+
+    with Session(engine) as db:
+        stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
+            minutes=STUCK_THRESHOLD_MINUTES
+        )
+
+        stuck_meetings = db.exec(
+            select(Meeting).where(
+                Meeting.done == False,
+                Meeting.final_received == True,
+                Meeting.last_activity < stuck_threshold,
+            )
+        ).all()
+
+        if not stuck_meetings:
+            return
+
+        LOGGER.info(
+            f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings."
+        )
+
+        for mtg in stuck_meetings:
+            unprocessed_chunks = db.exec(
+                select(MeetingChunk).where(
+                    MeetingChunk.meeting_id == mtg.id, MeetingChunk.text.is_(None)
+                )
+            ).all()
+
+            if not unprocessed_chunks:
+                LOGGER.info(
+                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                )
+                continue
+
+            LOGGER.warning(
+                f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s)."
+            )
+            mtg.last_activity = dt.datetime.utcnow()
+            db.add(mtg)
+            db.commit()
+
+            for chunk in unprocessed_chunks:
+                chunk_path = Path(chunk.path)
+                if chunk_path.exists():
+                    process_transcription_and_summary.delay(
+                        meeting_id_str=str(mtg.id),
+                        chunk_index=chunk.chunk_index,
+                        chunk_path_str=str(chunk_path.resolve()),
+                    )
+                else:
+                    LOGGER.error(
+                        f"Janitor task: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
+                    )
 
 
 @celery_app.task(
