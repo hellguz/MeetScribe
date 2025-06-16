@@ -30,6 +30,10 @@ export default function Summary() {
 	const [editedTitle, setEditedTitle] = useState('')
 	const [isTitleHovered, setIsTitleHovered] = useState(false)
 
+	// New state for transcript visibility and regeneration button
+	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
+	const [isRegenerating, setIsRegenerating] = useState(false)
+
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (!mid) return
 
@@ -177,6 +181,34 @@ export default function Summary() {
 			alert("Sorry, we couldn't submit your feedback right now.")
 		}
 	}
+
+	const handleRegenerate = useCallback(async () => {
+		if (!mid) return
+		setIsRegenerating(true)
+		setError(null) // Clear previous errors
+
+		try {
+			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
+				method: 'POST',
+			})
+
+			if (!res.ok) {
+				throw new Error('Failed to start summary regeneration.')
+			}
+
+			// Clear the old summary and start the polling process
+			setSummary(null)
+			setIsProcessing(true)
+		} catch (err) {
+			if (err instanceof Error) {
+				setError(err.message)
+			} else {
+				setError('An unknown error occurred during regeneration.')
+			}
+		} finally {
+			setIsRegenerating(false)
+		}
+	}, [mid])
 
 	// Initial fetch
 	useEffect(() => {
@@ -339,22 +371,66 @@ export default function Summary() {
 			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} />}
 
 			{!isLoading && !error && transcript && (
-				<>
-					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>🎤 Transcript</h2>
-					<pre
+				<div style={{ marginTop: 32 }}>
+					<h4
+						onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
 						style={{
-							...pageTextStyles,
-							whiteSpace: 'pre-wrap',
+							color: currentThemeColors.text,
+							cursor: 'pointer',
+							display: 'flex',
+							alignItems: 'center',
+							gap: '8px',
+							userSelect: 'none',
+						}}>
+						<span
+							style={{
+								display: 'inline-block',
+								transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
+								transition: 'transform 0.2s ease-in-out',
+							}}>
+							▶
+						</span>
+						🎤 Transcript
+					</h4>
+					{isTranscriptVisible && (
+						<pre
+							style={{
+								...pageTextStyles,
+								whiteSpace: 'pre-wrap',
+								backgroundColor: currentThemeColors.backgroundSecondary,
+								color: currentThemeColors.text,
+								padding: 16,
+								borderRadius: 4,
+								overflowX: 'auto',
+								border: `1px solid ${currentThemeColors.border}`,
+							}}>
+							{transcript}
+						</pre>
+					)}
+				</div>
+			)}
+
+			{!isLoading && transcript && (
+				<div style={{ marginTop: '32px', textAlign: 'center' }}>
+					<button
+						onClick={handleRegenerate}
+						disabled={isRegenerating || isProcessing}
+						style={{
+							padding: '10px 20px',
+							fontSize: '15px',
+							fontWeight: '500',
+							border: `1px solid ${currentThemeColors.border}`,
+							borderRadius: '8px',
+							cursor: isRegenerating || isProcessing ? 'not-allowed' : 'pointer',
 							backgroundColor: currentThemeColors.backgroundSecondary,
 							color: currentThemeColors.text,
-							padding: 16,
-							borderRadius: 4,
-							overflowX: 'auto',
-							border: `1px solid ${currentThemeColors.border}`,
-						}}>
-						{transcript}
-					</pre>
-				</>
+							transition: 'opacity 0.2s',
+							opacity: isRegenerating || isProcessing ? 0.6 : 1,
+						}}
+						title="Request a new summary from the existing transcript">
+						{isRegenerating ? 'Queuing...' : isProcessing ? 'Processing New Summary...' : '🔄 Regenerate Summary'}
+					</button>
+				</div>
 			)}
 		</div>
 	)

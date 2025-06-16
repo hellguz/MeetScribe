@@ -160,64 +160,164 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
         return ""
 
 
+def generate_title_for_meeting(summary: str, full_transcript: str) -> str:
+    """Generates a concise, meaningful title from the meeting summary."""
+    if not summary or "error" in summary.lower() or "too short" in summary.lower():
+        LOGGER.info("Summary is too short or an error, cannot generate title.")
+        return ""  # Return empty string, let the calling function handle it
+
+    try:
+        title_prompt = f"""
+Analyze the following meeting summary and the full transcript.
+Your task is to generate a short, dense, and meaningful title for the meeting.
+
+**Instructions:**
+1.  **Language:** The title MUST be in the same language as the summary and transcript.
+2.  **Length:** The title must be between 6 and 15 words.
+3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
+4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
+
+**Meeting Summary:**
+---
+{summary}
+---
+
+**Full Transcript (for context):**
+---
+{full_transcript[:2000]}
+---
+
+Based on the content, generate the title now.
+"""
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.5,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that creates concise meeting titles.",
+                },
+                {"role": "user", "content": title_prompt},
+            ],
+        )
+        generated_title = response.choices[0].message.content.strip().strip('"')
+        LOGGER.info(f"Generated meeting title: '{generated_title}'")
+        return generated_title
+    except Exception as e:
+        LOGGER.error(f"Celery Worker: Title generation failed: {e}", exc_info=True)
+        return ""  # Return empty string on failure
+
+
+def detect_language(transcript_snippet: str) -> str:
+    """Detects the primary language of a text snippet using an API call."""
+    if not transcript_snippet:
+        return "English"  # Default
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a language detection expert. Your task is to identify the main language of the given text. Respond with ONLY the name of the language in English (e.g., 'Russian', 'German', 'Spanish'). Do not add any other words, explanation, or punctuation.",
+                },
+                {"role": "user", "content": transcript_snippet},
+            ],
+        )
+        language = response.choices[0].message.content.strip()
+        LOGGER.info(f"Detected language: {language}")
+        # Basic validation to ensure it's a plausible language name
+        if language and " " not in language and len(language) < 25:
+            return language
+        return "English"  # Fallback on a weird or empty response
+    except Exception as e:
+        LOGGER.error(f"Language detection failed: {e}", exc_info=True)
+        return "English"  # Default on error
+
+
 def summarise_transcript_in_worker(
     full_transcript: str, meeting_title: str, started_at_iso: str
 ) -> str:
-    if not full_transcript or len(full_transcript.strip()) < 20:
-        return "Recording too short to generate a meaningful summary."
+    if not full_transcript or len(full_transcript.strip().split()) < 25:
+        return "Recording is too brief to generate a meaningful summary."
 
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
 
     try:
+        transcript_snippet = full_transcript[:500]
+        detected_language = detect_language(transcript_snippet)
+
         started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
         date_str = started_at_dt.strftime("%Y-%m-%d")
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
         system_prompt = f"""
-You are 'Scribe', an AI analyst with deep expertise in project management and architectural critique. Your primary goal is to transform a raw meeting transcript into a comprehensive, clear, and actionable summary. The final document must be so thorough and insightful that a team member who missed the meeting can grasp all concepts, discussions, and critical feedback as if they were there. Prioritize completeness and clarity over brevity.
+You are 'Scribe', an expert AI analyst. Your goal is to create a summary that is both comprehensive and skimmable. It must capture all essential information for a non-attendee while still being a concise summary, not a verbose reconstruction.
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
-Before writing, you MUST first perform a deep, silent analysis of the transcript:
-- **Purpose & Vibe:** What is the main goal of this meeting (e.g., project critique, brainstorm, planning)? What is the overall tone (e.g., formal, collaborative, critical)?
-- **Key Concepts Presented:** Identify the 2-4 core ideas or components that were presented or discussed (e.g., "Modular Housing Typologies," "Zoning Strategy").
-- **Critiques & Directives:** This is critical. Create a detailed list of every piece of specific feedback, criticism, or suggestion given. For each, note *what* was criticized and *what the specific recommendation was*. Do not generalize; capture the exact suggestions.
-- **Narrative Flow:** How do the concepts and critiques connect? What is the story of the meeting from start to finish?
-- **Dominant Language:** Identify the primary language of the conversation.
+- **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
+- **Classify Content Type:** Is this primarily a **"Review & Critique"** (one party presents, another gives feedback) or a **"General Discussion / Narration"**? Your output format depends on this.
+- **Identify Key Themes:** Deconstruct the transcript into its main thematic parts.
+- **Extract Key Points:** For each theme, extract the essential arguments, conclusions, and feedback.
 </thinking_steps>
 
 <output_rules>
 **2. Final Output Generation**
-Your final response MUST BE ONLY the Markdown summary. It must start directly with the `##` heading for the meeting title. DO NOT include any commentary, preamble, or the content from your `<thinking_steps>`. The summary should be detailed and adopt a clear, professional-yet-human tone.
+- Your response MUST BE ONLY the Markdown summary. Start directly with the `##` heading.
+- Use the format you chose in the classification step.
+
 ---
+### FORMAT 1: For "Review & Critique"
+Use this for design reviews, presentations, and feedback sessions.
+
 ## {meeting_title}
 _{date_str} — {time_range}_
 
-### Summary
-Write an approachable and insightful paragraph (3-5 sentences) that sets the scene for the meeting. It should summarize the project's state, the main topics discussed, and the overall 'vibe' of the conversation, including the nature of the feedback received. Use a natural, conversational tone.
+#### Summary
+A concise paragraph (3-4 sentences) that sets the scene, covering the main purpose and key outcomes.
+
+*(For each Key Theme you identified, create a new section)*
+---
+### [Thematic Heading 1]
+Succinctly summarize the core concept that was presented by the team in a short paragraph.
+
+**Feedback & Discussion:**
+- Use a detailed bulleted list for every specific piece of feedback, critique, or suggestion given. This part should be comprehensive.
+- Example: `- It was suggested to use grey for existing buildings to improve clarity.`
 
 ---
-*(...Thematic Sections Go Here...)*
----
+### [Thematic Heading 2]
+...(Repeat for all themes)...
 
-### Key Decisions & Actionable Next Steps
-- This section must be comprehensive.
-- **Decisions:** List any firm decisions made.
-- **Action Items:** List both EXPLICIT and IMPLICIT tasks. If someone says, "It would be nice to see a section view," that is an implicit action item. Capture everything a team member would need to act on.
-- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision, including the 'why' or context].`
-- *(Omit this section ONLY if there were absolutely no decisions or actionable suggestions).*
+---
+#### Key Decisions & Actionable Next Steps
+- A mandatory section. List all firm decisions and actionable next steps.
+- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision].`
+
+---
+### FORMAT 2: For "General Discussion / Narration"
+Use this for brainstorms, status updates, and monologues. This format is denser.
+
+## {meeting_title}
+_{date_str} — {time_range}_
+
+#### Summary
+A concise paragraph (3-4 sentences) that sets the scene, covering the main purpose and key outcomes.
+
+*(For each Key Theme you identified, create a new section)*
+### [Thematic Heading]
+- Use a bulleted list to succinctly summarize the key points, main arguments, and conclusions for this topic.
+- Do not write long paragraphs; focus on extracting the essence into scannable points.
+
+---
+#### Key Decisions & Actionable Next Steps
+- A mandatory section. List all firm decisions and actionable next steps.
+- **Format:** `- **[Topic/Owner]:** [Description of the action or decision].`
+---
 </output_rules>
-
-<thematic_body_instructions>
-This is the core of the summary. For each **Key Concept** you identified, create a `###` heading.
-- **Explain the Concept:** First, use a paragraph to describe the idea as it was presented by the team.
-- **Capture All Specific Critiques and Suggestions:** Then, create a sub-section titled `**Feedback & Discussion:**`. Under this, use a detailed bulleted list to present EVERY piece of critique and all suggestions you extracted for that topic.
-- **Do not generalize with phrases like "suggestions were made."** Instead, list the exact suggestions. For example, instead of "The visuals needed to be clearer," write "- It was suggested to use grey for existing buildings and saturated colors for new interventions to improve clarity on the masterplan." This level of detail is mandatory.
-
-**CRITICAL:** The entire summary, including all headings and text, **MUST be in the dominant language** you identified in your internal analysis.
-</thematic_body_instructions>
 """
 
         response = openai.chat.completions.create(
@@ -227,7 +327,7 @@ This is the core of the summary. For each **Key Concept** you identified, create
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Full meeting transcript:\n{full_transcript}",
+                    "content": f"Please summarize the following transcript, following all instructions including the language requirement:\n\n{full_transcript}",
                 },
             ],
         )
@@ -266,7 +366,15 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             final_transcript, mtg.title, mtg.started_at.isoformat()
         )
         mtg.summary_markdown = summary_md
-        LOGGER.info(f"✅ Meeting {mtg.id} summarized successfully by worker.")
+
+        # New: Generate and update the title
+        if summary_md and "error" not in summary_md.lower():
+            # FIX: Use the correct variable name 'final_transcript' instead of 'full_transcript'
+            new_title = generate_title_for_meeting(summary_md, final_transcript)
+            if new_title:
+                mtg.title = new_title
+
+        LOGGER.info(f"✅ Meeting {mtg.id} summarized and titled successfully by worker.")
     else:
         LOGGER.warning(
             f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."

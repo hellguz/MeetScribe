@@ -21,6 +21,8 @@ from .models import (
     MeetingTitleUpdate,
     Feedback,
     FeedbackCreate,
+    MeetingMeta,
+    MeetingSyncRequest,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -165,6 +167,31 @@ async def upload_chunk(
     return {"ok": True, "skipped": False}
 
 
+@app.post("/api/meetings/sync", response_model=list[MeetingMeta])
+def sync_meetings_history(payload: MeetingSyncRequest):
+    """
+    Receives a list of meeting IDs from a client and returns the latest
+    metadata for only those meetings, ensuring privacy.
+    """
+    if not payload.ids:
+        return []
+
+    with Session(engine) as db:
+        meetings = db.exec(select(Meeting).where(Meeting.id.in_(payload.ids))).all()
+
+        history = []
+        for mtg in meetings:
+            history.append(
+                MeetingMeta(
+                    id=mtg.id,
+                    title=mtg.title,
+                    started_at=mtg.started_at,
+                    status="complete" if mtg.done else "pending",
+                )
+            )
+        return history
+
+
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
 def get_meeting(mid: uuid.UUID):
     with Session(engine) as db:
@@ -220,6 +247,29 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
         db.commit()
         db.refresh(mtg)
         return mtg
+
+
+@app.post("/api/meetings/{mid}/regenerate", status_code=200)
+def regenerate_meeting_summary(mid: uuid.UUID):
+    """
+    Resets a meeting's summary state, which will cause the frontend's
+    polling to trigger a regeneration task.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # Reset the meeting state to indicate a new summary is needed
+        mtg.done = False
+        mtg.summary_markdown = None
+        mtg.summary_task_queued = False  # Set to false so the polling logic can set it to true
+
+        db.add(mtg)
+        db.commit()
+        LOGGER.info("Reset summary state for meeting %s to trigger regeneration.", mid)
+
+        return {"ok": True, "message": "Regeneration will be triggered on next poll."}
 
 
 @app.post("/api/feedback", status_code=201)

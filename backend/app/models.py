@@ -95,3 +95,22 @@ class MeetingTitleUpdate(SQLModel):
     """
 
     title: str
+
+
+class MeetingMeta(SQLModel):
+    """
+    Slimmed-down meeting model for history lists.
+    """
+
+    id: uuid.UUID
+    title: str
+    started_at: dt.datetime
+    status: str  # "pending" | "complete"
+
+
+class MeetingSyncRequest(SQLModel):
+    """
+    Payload for the sync endpoint, containing the list of
+    meeting IDs the client is aware of.
+    """
+    ids: list[uuid.UUID]
