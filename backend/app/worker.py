@@ -31,9 +31,9 @@ celery_app.conf.update(
     task_acks_late=True,
     # Add this beat schedule
     beat_schedule={
-        'cleanup-every-30-minutes': {
-            'task': 'app.worker.cleanup_stuck_meetings',
-            'schedule': 1800.0,  # 30 minutes in seconds
+        "cleanup-every-30-minutes": {
+            "task": "app.worker.cleanup_stuck_meetings",
+            "schedule": 1800.0,  # 30 minutes in seconds
         },
     },
 )
@@ -76,7 +76,12 @@ def get_whisper_model():
 
 @worker_ready.connect
 def load_whisper_on_startup(**kwargs):
+    # This part already exists
     get_whisper_model()
+
+    # Add these lines to run the janitor on startup
+    LOGGER.info("Queueing initial cleanup task for any jobs interrupted by a restart.")
+    cleanup_stuck_meetings.delay()
 
 
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
@@ -250,25 +255,28 @@ def cleanup_stuck_meetings():
     STUCK_THRESHOLD_MINUTES = 15
 
     with Session(engine) as db:
-        stuck_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=STUCK_THRESHOLD_MINUTES)
+        stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
+            minutes=STUCK_THRESHOLD_MINUTES
+        )
 
         # Find meetings that are not done, have received a final chunk, but haven't been updated recently.
         stuck_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
                 Meeting.final_received == True,
-                Meeting.last_activity < stuck_threshold
+                Meeting.last_activity < stuck_threshold,
             )
         ).all()
 
-        LOGGER.info(f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings.")
+        LOGGER.info(
+            f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings."
+        )
 
         for mtg in stuck_meetings:
             # Find all chunks for this meeting that have not been transcribed (text is None)
             unprocessed_chunks = db.exec(
                 select(MeetingChunk).where(
-                    MeetingChunk.meeting_id == mtg.id,
-                    MeetingChunk.text.is_(None)
+                    MeetingChunk.meeting_id == mtg.id, MeetingChunk.text.is_(None)
                 )
             ).all()
 
@@ -276,10 +284,14 @@ def cleanup_stuck_meetings():
                 # If all chunks are processed, maybe the summary task failed.
                 # The existing lazy-summary logic in main.py will handle this on the next user request.
                 # Or perhaps the meeting just finished and is about to be marked done.
-                LOGGER.info(f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping.")
+                LOGGER.info(
+                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                )
                 continue
 
-            LOGGER.warning(f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s).")
+            LOGGER.warning(
+                f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s)."
+            )
             # Update last_activity to prevent re-queueing immediately if tasks fail quickly
             mtg.last_activity = dt.datetime.utcnow()
             db.add(mtg)
@@ -294,7 +306,9 @@ def cleanup_stuck_meetings():
                         chunk_path_str=str(chunk_path.resolve()),
                     )
                 else:
-                    LOGGER.error(f"Janitor task: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue.")
+                    LOGGER.error(
+                        f"Janitor task: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
+                    )
 
 
 @celery_app.task(
