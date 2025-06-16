@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo, useContext } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom' // Import Link
 import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
 import ThemeToggle from '../components/ThemeToggle'
 import { ThemeContext } from '../contexts/ThemeContext'
@@ -640,7 +640,28 @@ export default function Record() {
 
 	return (
 		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' /* fontFamily, backgroundColor and color are inherited from body */ }}>
-			<ThemeToggle />
+			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+				<ThemeToggle />
+				<Link
+					to="/dashboard"
+					style={{
+						padding: '8px 12px',
+						textDecoration: 'none',
+						color: currentThemeColors.button.primary,
+						backgroundColor: currentThemeColors.backgroundSecondary,
+						border: `1px solid ${currentThemeColors.border}`,
+						borderRadius: '6px',
+						fontSize: '14px',
+						fontWeight: '500',
+						fontFamily: 'inherit',
+						transition: 'background-color 0.2s ease-in-out',
+					}}
+					onMouseOver={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.button.hoverBackground}
+					onMouseOut={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary}
+				>
+					📊 Dashboard
+				</Link>
+			</div>
 			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
 			{!isUiLocked && (

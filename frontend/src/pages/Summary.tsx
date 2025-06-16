@@ -29,6 +29,57 @@ export default function Summary() {
 	const [editedTitle, setEditedTitle] = useState('')
 	const [isTitleHovered, setIsTitleHovered] = useState(false)
 
+	// State for feedback
+	const [showFeatureSuggestionInput, setShowFeatureSuggestionInput] = useState(false)
+	const [featureSuggestionText, setFeatureSuggestionText] = useState('')
+	const [feedbackLoading, setFeedbackLoading] = useState(false)
+	const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
+
+
+	const handleFeedback = async (feedbackType: string, suggestion?: string) => {
+		if (!mid) return
+		setFeedbackLoading(true)
+		setFeedbackMessage(null)
+
+		try {
+			const payload: { meeting_id: string; feedback_type: string; feature_suggestion?: string } = {
+				meeting_id: mid,
+				feedback_type: feedbackType,
+			}
+			if (suggestion) {
+				payload.feature_suggestion = suggestion
+			}
+
+			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			})
+
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}))
+				throw new Error(errorData.detail || 'Failed to submit feedback')
+			}
+
+			setFeedbackMessage(`Feedback "${feedbackType}" submitted successfully!`)
+			if (feedbackType === 'feature_suggestion') {
+				setFeatureSuggestionText('')
+				setShowFeatureSuggestionInput(false)
+			}
+			// Clear message after a few seconds
+			setTimeout(() => setFeedbackMessage(null), 3000);
+
+		} catch (err) {
+			console.error('Error submitting feedback:', err)
+			const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred'
+			setFeedbackMessage(`Error: ${errorMessage}`)
+			// Clear error message after a few seconds
+			setTimeout(() => setFeedbackMessage(null), 5000);
+		} finally {
+			setFeedbackLoading(false)
+		}
+	}
+
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (!mid) return
 
@@ -340,6 +391,97 @@ export default function Summary() {
 					}}>
 					{summary}
 				</ReactMarkdown>
+			)}
+
+			{/* Feedback Section */}
+			{summary && !isProcessing && !isLoading && !error && (
+				<div style={{ marginTop: '24px', marginBottom: '24px', padding: '16px', border: `1px solid ${currentThemeColors.border}`, borderRadius: '8px', backgroundColor: currentThemeColors.backgroundSecondary }}>
+					<h3 style={{ marginTop: 0, marginBottom: '12px', color: currentThemeColors.text }}>Provide Feedback:</h3>
+					<div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+						{[
+							{ label: 'Spot on!', type: 'spot_on', color: '#e6ffed', textColor: '#006400' },
+							{ label: 'Too short', type: 'too_short', color: '#fff9e6', textColor: '#665200' },
+							{ label: 'Too detailed', type: 'too_detailed', color: '#fff9e6', textColor: '#665200' },
+							{ label: 'Too general', type: 'too_general', color: '#fff9e6', textColor: '#665200' },
+							{ label: 'Not accurate', type: 'not_accurate', color: '#ffe6e6', textColor: '#a80000' },
+						].map(fb => (
+							<button
+								key={fb.type}
+								onClick={() => handleFeedback(fb.type)}
+								disabled={feedbackLoading}
+								style={{
+									padding: '8px 12px',
+									borderRadius: '16px',
+									border: `1px solid ${currentThemeColors.border}`,
+									backgroundColor: fb.color,
+									color: fb.textColor,
+									cursor: 'pointer',
+									fontFamily: 'inherit',
+									opacity: feedbackLoading ? 0.7 : 1,
+								}}
+							>
+								{fb.label}
+							</button>
+						))}
+						<button
+							onClick={() => setShowFeatureSuggestionInput(!showFeatureSuggestionInput)}
+							disabled={feedbackLoading}
+							style={{
+								padding: '8px 12px',
+								borderRadius: '16px',
+								border: `1px solid ${currentThemeColors.border}`,
+								backgroundColor: '#e6f7ff',
+								color: '#005f80',
+								cursor: 'pointer',
+								fontFamily: 'inherit',
+								opacity: feedbackLoading ? 0.7 : 1,
+							}}
+						>
+							Suggest a feature
+						</button>
+					</div>
+					{showFeatureSuggestionInput && (
+						<div style={{ marginTop: '12px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+							<input
+								type="text"
+								value={featureSuggestionText}
+								onChange={(e) => setFeatureSuggestionText(e.target.value)}
+								placeholder="Your feature suggestion..."
+								style={{
+									flexGrow: 1,
+									padding: '10px',
+									borderRadius: '6px',
+									border: `1px solid ${currentThemeColors.input.border}`,
+									backgroundColor: currentThemeColors.input.background,
+									color: currentThemeColors.input.text,
+									fontFamily: 'inherit',
+								}}
+								disabled={feedbackLoading}
+							/>
+							<button
+								onClick={() => handleFeedback('feature_suggestion', featureSuggestionText)}
+								disabled={feedbackLoading || !featureSuggestionText.trim()}
+								style={{
+									padding: '10px 15px',
+									borderRadius: '6px',
+									border: 'none',
+									backgroundColor: currentThemeColors.button.primaryBackground,
+									color: currentThemeColors.button.primaryText,
+									cursor: (feedbackLoading || !featureSuggestionText.trim()) ? 'not-allowed' : 'pointer',
+									fontFamily: 'inherit',
+									opacity: (feedbackLoading || !featureSuggestionText.trim()) ? 0.7 : 1,
+								}}
+							>
+								{feedbackLoading && showFeatureSuggestionInput ? 'Sending...' : 'Send'}
+							</button>
+						</div>
+					)}
+					{feedbackMessage && (
+						<p style={{ marginTop: '10px', color: feedbackMessage.startsWith('Error:') ? currentThemeColors.button.danger : currentThemeColors.text, fontSize: '14px' }}>
+							{feedbackMessage}
+						</p>
+					)}
+				</div>
 			)}
 
 			{/* Always show the transcript (even if no summary yet) */}

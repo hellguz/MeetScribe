@@ -84,3 +84,15 @@ class MeetingTitleUpdate(SQLModel):
     """
 
     title: str
+
+
+class Feedback(SQLModel, table=True):
+    """
+    Stores feedback for meetings.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
+    feedback_type: str  # e.g., "general", "feature_request", "bug_report"
+    feature_suggestion: str | None = Field(default=None)  # Textual suggestion
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)

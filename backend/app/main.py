@@ -18,6 +18,7 @@ from .models import (
     MeetingCreate,
     MeetingStatus,
     MeetingTitleUpdate,
+    Feedback,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -282,6 +283,71 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
         db.commit()
         db.refresh(mtg)
         return mtg
+
+
+class FeedbackCreate(SQLModel):
+    """
+    Payload for submitting feedback.
+    """
+    meeting_id: uuid.UUID
+    feedback_type: str
+    feature_suggestion: str | None = None
+
+
+class FeedbackStatsResponse(SQLModel):
+    """
+    Response model for feedback statistics.
+    """
+    button_clicks: dict[str, int]
+    feature_suggestions: list[Feedback]
+
+
+@app.post("/api/feedback", response_model=Feedback, status_code=201)
+def create_feedback(payload: FeedbackCreate):
+    """
+    Submit new feedback for a meeting.
+    """
+    with Session(engine) as db:
+        # Check if meeting exists
+        meeting = db.get(Meeting, payload.meeting_id)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        feedback_data = payload.model_dump()
+        db_feedback = Feedback(**feedback_data)
+
+        db.add(db_feedback)
+        db.commit()
+        db.refresh(db_feedback)
+        return db_feedback
+
+
+@app.get("/api/feedback/stats", response_model=FeedbackStatsResponse)
+def get_feedback_stats():
+    """
+    Retrieve statistics for feedback button clicks and feature suggestions.
+    """
+    with Session(engine) as db:
+        # Aggregate button clicks (excluding 'feature_suggestion' type)
+        click_counts_statement = (
+            select(Feedback.feedback_type, func.count(Feedback.id).label("count"))
+            .where(Feedback.feedback_type != "feature_suggestion")
+            .group_by(Feedback.feedback_type)
+        )
+        click_results = db.exec(click_counts_statement).all()
+        button_clicks_dict = {row.feedback_type: row.count for row in click_results}
+
+        # Get all feature suggestions, ordered by creation date
+        suggestions_statement = (
+            select(Feedback)
+            .where(Feedback.feedback_type == "feature_suggestion")
+            .order_by(Feedback.created_at.desc()) # type: ignore
+        )
+        suggestions = db.exec(suggestions_statement).all()
+
+        return FeedbackStatsResponse(
+            button_clicks=button_clicks_dict, feature_suggestions=suggestions
+        )
 
 
 @app.get("/healthz")
