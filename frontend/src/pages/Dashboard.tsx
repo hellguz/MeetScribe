@@ -1,22 +1,36 @@
-import React, { useState, useEffect, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ThemeContext } from '../contexts/ThemeContext';
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
 
+// --- Type definitions for our new complex stats object ---
+interface StatSet {
+    total_summaries: number;
+    total_words: number;
+    total_hours: number;
+}
 interface FeatureSuggestion {
     suggestion: string;
     submitted_at: string;
     meeting_id: string;
     meeting_title: string;
 }
-
-interface FeedbackStats {
-    total_summaries: number;
+interface UsageTimelinePoint {
+    date: string;
+    count: number;
+}
+interface DashboardStats {
+    all_time: StatSet;
+    today: StatSet;
+    device_distribution: { [key: string]: number };
     feedback_counts: { [key: string]: number };
     feature_suggestions: FeatureSuggestion[];
+    usage_timeline: UsageTimelinePoint[];
 }
 
-const StatCard = ({ title, value, icon, color }) => (
+// --- Reusable Components for the Dashboard ---
+
+const StatCard = ({ title, value, icon, subtext, color }) => (
     <div style={{ 
         backgroundColor: color.bg, 
         padding: '20px', 
@@ -24,64 +38,35 @@ const StatCard = ({ title, value, icon, color }) => (
         border: `1px solid ${color.border}`,
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'space-between',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)'
     }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 500, color: color.text }}>{title}</h3>
-            <span style={{ fontSize: '24px' }}>{icon}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', color: color.text }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 500 }}>{title}</h3>
+            <span style={{ fontSize: '24px', opacity: 0.8 }}>{icon}</span>
         </div>
-        <p style={{ margin: 0, fontSize: '36px', fontWeight: 'bold', color: color.text }}>{value}</p>
+        <p style={{ margin: '8px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: color.text }}>{value.toLocaleString()}</p>
+        {subtext && <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: color.text, opacity: 0.7 }}>{subtext}</p>}
     </div>
 );
 
-const PieChart = ({ data, theme }) => {
-    const colors = {
-        accurate: '#22c55e',
-        too_short: '#facc15',
-        too_detailed: '#f59e0b',
-        general: '#fbbf24',
-        inaccurate: '#ef4444',
-        feature_suggestion: '#3b82f6',
-    };
-    const total = Object.values(data).reduce((acc, val) => acc + val, 0);
-    if (total === 0) return <div style={{textAlign: 'center', color: theme.secondaryText, padding: '40px 0'}}>No feedback data for chart.</div>;
-
-    let cumulativePercent = 0;
-    const segments = Object.entries(data).map(([key, value]) => {
-        const percent = (value / total) * 100;
-        const startAngle = (cumulativePercent / 100) * 360;
-        cumulativePercent += percent;
-        const endAngle = (cumulativePercent / 100) * 360;
-
-        const startX = 50 + 40 * Math.cos((startAngle - 90) * Math.PI / 180);
-        const startY = 50 + 40 * Math.sin((startAngle - 90) * Math.PI / 180);
-        const endX = 50 + 40 * Math.cos((endAngle - 90) * Math.PI / 180);
-        const endY = 50 + 40 * Math.sin((endAngle - 90) * Math.PI / 180);
-        const largeArcFlag = percent > 50 ? 1 : 0;
-
-        return {
-            key,
-            value,
-            percent: percent.toFixed(1),
-            color: colors[key] || '#9ca3af',
-            path: `M ${startX} ${startY} A 40 40 0 ${largeArcFlag} 1 ${endX} ${endY}`
-        };
-    });
-
+const BarChart = ({ data, title, theme }) => {
+    const maxValue = Math.max(...Object.values(data));
     return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-            <svg viewBox="0 0 100 100" width="150" height="150">
-                {segments.map(seg => (
-                     <path key={seg.key} d={seg.path} stroke={seg.color} strokeWidth="20" fill="none" />
-                ))}
-            </svg>
-            <div style={{flex: 1, minWidth: '200px'}}>
-                {segments.map(seg => (
-                    <div key={seg.key} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', fontSize: '14px' }}>
-                        <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: seg.color, marginRight: '8px' }}></span>
-                        <span style={{color: theme.text, textTransform: 'capitalize'}}>{seg.key.replace(/_/g, ' ')}:</span>
-                        <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: theme.text }}>{seg.value} ({seg.percent}%)</span>
+        <div className="chart-container">
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>{title}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Object.entries(data).map(([key, value]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ width: '80px', fontSize: '12px', color: theme.secondaryText, textAlign: 'right', flexShrink: 0 }}>{key}</span>
+                        <div style={{ flexGrow: 1, backgroundColor: theme.backgroundSecondary, borderRadius: '4px' }}>
+                            <div style={{
+                                width: `${(value / maxValue) * 100}%`,
+                                backgroundColor: theme.button.primary,
+                                height: '20px',
+                                borderRadius: '4px',
+                                transition: 'width 0.5s ease-out'
+                            }}></div>
+                        </div>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold' }}>{value}</span>
                     </div>
                 ))}
             </div>
@@ -89,6 +74,7 @@ const PieChart = ({ data, theme }) => {
     );
 };
 
+// --- Main Dashboard Component ---
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -97,12 +83,13 @@ export default function Dashboard() {
     const { theme } = themeContext;
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
     
-    const [stats, setStats] = useState<FeedbackStats | null>(null);
+    const [stats, setStats] = useState<DashboardStats | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [timeframe, setTimeframe] = useState<'all_time' | 'today'>('all_time');
 
     useEffect(() => {
-        document.body.style.backgroundColor = currentThemeColors.body;
+        document.body.style.backgroundColor = currentThemeColors.background;
     }, [currentThemeColors]);
 
     useEffect(() => {
@@ -123,86 +110,63 @@ export default function Dashboard() {
 
     const cardColors = {
         green: { bg: theme === 'light' ? '#f0fdf4' : '#143623', border: theme === 'light' ? '#a7f3d0' : '#15803d', text: theme === 'light' ? '#15803d' : '#a7f3d0' },
-        yellow: { bg: theme === 'light' ? '#fefce8' : '#3d3c1a', border: theme === 'light' ? '#fde047' : '#a16207', text: theme === 'light' ? '#a16207' : '#fde047' },
-        red: { bg: theme === 'light' ? '#fef2f2' : '#451a1a', border: theme === 'light' ? '#fecaca' : '#b91c1c', text: theme === 'light' ? '#b91c1c' : '#fecaca' },
         blue: { bg: theme === 'light' ? '#eff6ff' : '#1e3a8a', border: theme === 'light' ? '#bfdbfe' : '#1e40af', text: theme === 'light' ? '#1d4ed8' : '#bfdbfe' },
-        grey: { bg: theme === 'light' ? '#f8fafc' : '#1e293b', border: theme === 'light' ? '#e2e8f0' : '#334155', text: theme === 'light' ? '#334155' : '#e2e8f0' },
-    }
+        amber: { bg: theme === 'light' ? '#fffbeb' : '#422006', border: theme === 'light' ? '#fde68a' : '#b45309', text: theme === 'light' ? '#b45309' : '#fde68a' },
+    };
 
     if (isLoading) return <div style={{color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px'}}>Loading Dashboard...</div>;
     if (error) return <div style={{color: 'red', textAlign: 'center', paddingTop: '50px'}}>Error: {error}</div>;
     if (!stats) return <div style={{color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px'}}>No stats available.</div>;
 
-    const feedbackForChart = { ...stats.feedback_counts };
+    const displayStats = stats[timeframe];
 
     return (
-        <div style={{ backgroundColor: currentThemeColors.body, color: currentThemeColors.text, padding: '24px', fontFamily: "'Inter', sans-serif", minHeight: '100vh' }}>
+        <div style={{ backgroundColor: currentThemeColors.background, color: currentThemeColors.text, padding: '24px', fontFamily: "'Inter', sans-serif", minHeight: '100vh' }}>
             <button
 				onClick={() => navigate('/record')}
-				style={{
-					background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText,
-					fontSize: '15px', display: 'inline-flex', alignItems: 'center', gap: '8px',
-					padding: '0', marginBottom: '24px', transition: 'color 0.2s', fontFamily: 'inherit',
-				}}
-				onMouseOver={(e) => (e.currentTarget.style.color = currentThemeColors.text)}
-				onMouseOut={(e) => (e.currentTarget.style.color = currentThemeColors.secondaryText)}>
+				style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '15px', display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '0', marginBottom: '24px' }}
+            >
 				← Back to Recordings
 			</button>
 
-            <header style={{ marginBottom: '32px' }}>
-                <h1 style={{ margin: '0 0 4px 0', fontSize: '28px', fontWeight: 'bold' }}>Dashboard</h1>
-                <p style={{ margin: 0, color: currentThemeColors.secondaryText }}>Summary feedback and usage statistics.</p>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                <div>
+                    <h1 style={{ margin: '0 0 4px 0', fontSize: '28px', fontWeight: 'bold' }}>Dashboard</h1>
+                    <p style={{ margin: 0, color: currentThemeColors.secondaryText }}>Platform usage and feedback overview.</p>
+                </div>
+                <div style={{ display: 'flex', backgroundColor: currentThemeColors.backgroundSecondary, borderRadius: '8px', padding: '4px' }}>
+                    <button onClick={() => setTimeframe('today')} style={{ padding: '6px 12px', border: 'none', borderRadius: '6px', backgroundColor: timeframe === 'today' ? currentThemeColors.body : 'transparent', color: currentThemeColors.text, cursor: 'pointer' }}>Today</button>
+                    <button onClick={() => setTimeframe('all_time')} style={{ padding: '6px 12px', border: 'none', borderRadius: '6px', backgroundColor: timeframe === 'all_time' ? currentThemeColors.body : 'transparent', color: currentThemeColors.text, cursor: 'pointer' }}>All-Time</button>
+                </div>
             </header>
             
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
-                <StatCard title="Total Summaries" value={stats.total_summaries} icon="📝" color={cardColors.grey}/>
-                <StatCard title="Accurate" value={stats.feedback_counts.accurate || 0} icon="🎯" color={cardColors.green}/>
-                <StatCard title="Needs Improvement" value={(stats.feedback_counts.inaccurate || 0) + (stats.feedback_counts.too_short || 0) + (stats.feedback_counts.too_detailed || 0) + (stats.feedback_counts.general || 0)} icon="🛠️" color={cardColors.yellow}/>
-                <StatCard title="Feature Suggestions" value={stats.feedback_counts.feature_suggestion || 0} icon="💡" color={cardColors.blue}/>
-
-                <div style={{ 
-                    gridColumn: '1 / -1',
-                    backgroundColor: currentThemeColors.background, 
-                    padding: '20px', 
-                    borderRadius: '12px',
-                    border: `1px solid ${currentThemeColors.border}`,
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)'
-                }}>
-                    <h3 style={{ margin: '0 0 20px 0', fontSize: '16px', fontWeight: 500 }}>Feedback Distribution</h3>
-                    <PieChart data={feedbackForChart} theme={currentThemeColors} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '20px' }}>
+                <StatCard title="Summaries Generated" value={displayStats.total_summaries} icon="📝" color={cardColors.blue}/>
+                <StatCard title="Words Transcribed" value={displayStats.total_words} icon="✍️" color={cardColors.amber}/>
+                <StatCard title="Hours Recorded" value={displayStats.total_hours} icon="⏱️" color={cardColors.green}/>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', lg: { gridTemplateColumns: 'repeat(2, 1fr)' }, gap: '20px' }}>
+                <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
+                    <BarChart title="Device Types" data={stats.device_distribution} theme={currentThemeColors} />
                 </div>
-
+                
                 <div style={{ 
                     gridColumn: '1 / -1',
-                    backgroundColor: currentThemeColors.background, 
+                    backgroundColor: currentThemeColors.body, 
                     padding: '20px', 
                     borderRadius: '12px',
-                    border: `1px solid ${currentThemeColors.border}`,
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)'
+                    border: `1px solid ${currentThemeColors.border}`
                 }}>
                     <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 500 }}>💡 Feature Suggestions</h3>
-                    <div style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '10px' }}>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                         {stats.feature_suggestions.length > 0 ? (
                             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                                 {stats.feature_suggestions.map((item, index) => (
-                                    <li key={index} 
-                                        onClick={() => navigate(`/summary/${item.meeting_id}`)}
-                                        style={{
-                                            padding: '12px',
-                                            borderBottom: index === stats.feature_suggestions.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
-                                            cursor: 'pointer',
-                                            borderRadius: '6px',
-                                            transition: 'background-color 0.2s ease',
-                                        }}
-                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary}
-                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                                    >
-                                        <p style={{ margin: 0, fontWeight: 500, color: currentThemeColors.text }}>{item.suggestion}</p>
+                                    <li key={index} onClick={() => navigate(`/summary/${item.meeting_id}`)} style={{ padding: '12px', borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`, cursor: 'pointer' }}>
+                                        <p style={{ margin: 0, fontWeight: 500 }}>{item.suggestion}</p>
                                         <p style={{ margin: '4px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>
                                             From: <span style={{fontWeight: '500'}}>{item.meeting_title}</span>
-                                        </p>
-                                        <p style={{ margin: '2px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>
-                                            Submitted on {new Date(item.submitted_at).toLocaleDateString()}
                                         </p>
                                     </li>
                                 ))}

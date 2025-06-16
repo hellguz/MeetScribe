@@ -8,7 +8,7 @@ import datetime as dt
 from collections import Counter
 
 import openai
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select, func
 
@@ -48,8 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# How long (in seconds) without a new real chunk before we auto-finalize:
-INACTIVITY_TIMEOUT_SECONDS = 120  # 2 minutes
+INACTIVITY_TIMEOUT_SECONDS = 120
 
 
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
@@ -72,34 +71,28 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
         .where(MeetingChunk.meeting_id == meeting_id)
         .order_by(MeetingChunk.chunk_index)
     ).all()
-
     chunks_map = {chunk.chunk_index: chunk for chunk in all_meeting_chunks}
-
     display_texts = []
-    for i in range(max_chunk_count):  # Iterate from 0 to N-1
+    for i in range(max_chunk_count):
         chunk = chunks_map.get(i)
         if chunk and chunk.text is not None:
-            # Append actual text, including empty strings ""
             display_texts.append(chunk.text)
         else:
-            # Chunk doesn't exist, or text is None (pending, or will be set by worker if failed)
             display_texts.append("[...]")
-
     return " ".join(display_texts).strip()
 
 
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
-def create_meeting(body: MeetingCreate):
+def create_meeting(body: MeetingCreate, request: Request):
     """
-    Create a new meeting. At creation, `received_chunks=0`, `expected_chunks=None`,
-    `final_received=False`, `last_activity = now`.
+    Create a new meeting. Now captures User-Agent.
     """
     with Session(engine) as db:
-        mtg = Meeting(**body.model_dump())
+        user_agent = request.headers.get("user-agent")
+        mtg = Meeting(**body.model_dump(), user_agent=user_agent)
         db.add(mtg)
         db.commit()
         db.refresh(mtg)
-
         return MeetingStatus(**mtg.model_dump(), transcribed_chunks=0)
 
 
@@ -121,10 +114,8 @@ async def upload_chunk(
         mtg = db.get(Meeting, meeting_id)
         if not mtg:
             raise HTTPException(404, "Meeting not found")
-
         mtg_dir = AUDIO_DIR / str(meeting_id)
         mtg_dir.mkdir(parents=True, exist_ok=True)
-
         chunk_path = mtg_dir / f"chunk_{chunk_index:03d}.webm"
         with chunk_path.open("wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -302,18 +293,90 @@ def create_feedback(body: FeedbackCreate):
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats():
     """
-    Get aggregated statistics for the dashboard.
-    NOW INCLUDES meeting_id and meeting_title for each suggestion.
+    Heavily upgraded endpoint for rich dashboard statistics.
     """
     with Session(engine) as db:
-        total_summaries = db.scalar(select(func.count(Meeting.id)).where(Meeting.done == True)) or 0
-        
+        today = dt.date.today()
+        start_of_today = dt.datetime.combine(today, dt.time.min)
+
+        # --- Total Stats ---
+        total_summaries = (
+            db.scalar(select(func.count(Meeting.id)).where(Meeting.done == True)) or 0
+        )
+        total_words = (
+            db.scalar(
+                select(func.sum(Meeting.word_count)).where(
+                    Meeting.word_count.is_not(None)
+                )
+            )
+            or 0
+        )
+        total_duration_sec = (
+            db.scalar(
+                select(func.sum(Meeting.duration_seconds)).where(
+                    Meeting.duration_seconds.is_not(None)
+                )
+            )
+            or 0
+        )
+
+        # --- Today's Stats ---
+        summaries_today = (
+            db.scalar(
+                select(func.count(Meeting.id)).where(
+                    Meeting.done == True, Meeting.started_at >= start_of_today
+                )
+            )
+            or 0
+        )
+        words_today = (
+            db.scalar(
+                select(func.sum(Meeting.word_count)).where(
+                    Meeting.word_count.is_not(None),
+                    Meeting.started_at >= start_of_today,
+                )
+            )
+            or 0
+        )
+        duration_today_sec = (
+            db.scalar(
+                select(func.sum(Meeting.duration_seconds)).where(
+                    Meeting.duration_seconds.is_not(None),
+                    Meeting.started_at >= start_of_today,
+                )
+            )
+            or 0
+        )
+
+        # --- Device/User Agent Stats ---
+        user_agent_results = db.exec(
+            select(Meeting.user_agent).where(Meeting.user_agent.is_not(None))
+        ).all()
+        # Basic parsing for major browsers/OS
+        device_counts = Counter()
+        for ua in user_agent_results:
+            ua_lower = ua.lower()
+            if "windows" in ua_lower:
+                device_counts["Windows"] += 1
+            elif "macintosh" in ua_lower:
+                device_counts["Mac"] += 1
+            elif "linux" in ua_lower:
+                device_counts["Linux"] += 1
+            elif "iphone" in ua_lower:
+                device_counts["iPhone"] += 1
+            elif "android" in ua_lower:
+                device_counts["Android"] += 1
+            else:
+                device_counts["Other"] += 1
+
+        # --- Feedback Stats (same as before) ---
         feedback_counts_query = db.exec(
-            select(Feedback.feedback_type, func.count(Feedback.id)).group_by(Feedback.feedback_type)
+            select(Feedback.feedback_type, func.count(Feedback.id)).group_by(
+                Feedback.feedback_type
+            )
         ).all()
         feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
 
-        # --- MODIFIED QUERY: Join Feedback with Meeting to get titles ---
         suggestions_query = db.exec(
             select(Feedback, Meeting.title)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -321,21 +384,41 @@ def get_dashboard_stats():
             .where(Feedback.suggestion_text.is_not(None))
             .order_by(Feedback.created_at.desc())
         ).all()
-        
         feature_suggestions = [
             {
-                "suggestion": feedback.suggestion_text,
-                "submitted_at": feedback.created_at,
-                "meeting_id": feedback.meeting_id,
-                "meeting_title": meeting_title,
+                "suggestion": f.suggestion_text,
+                "submitted_at": f.created_at,
+                "meeting_id": f.meeting_id,
+                "meeting_title": title,
             }
-            for feedback, meeting_title in suggestions_query
+            for f, title in suggestions_query
         ]
 
+        # --- Timeline data ---
+        meetings_by_day = db.exec(
+            select(func.date(Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.date(Meeting.started_at))
+            .order_by(func.date(Meeting.started_at))
+            .limit(90)  # Last 90 days
+        ).all()
+
     return {
-        "total_summaries": total_summaries,
+        "all_time": {
+            "total_summaries": total_summaries,
+            "total_words": total_words,
+            "total_hours": round(total_duration_sec / 3600, 1),
+        },
+        "today": {
+            "total_summaries": summaries_today,
+            "total_words": words_today,
+            "total_hours": round(duration_today_sec / 3600, 1),
+        },
+        "device_distribution": dict(device_counts),
         "feedback_counts": feedback_counts,
         "feature_suggestions": feature_suggestions,
+        "usage_timeline": [
+            {"date": str(date), "count": count} for date, count in meetings_by_day
+        ],
     }
 
 

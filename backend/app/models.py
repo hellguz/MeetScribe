@@ -37,6 +37,10 @@ class Meeting(SQLModel, table=True):
     summary_markdown: Optional[str] = None
     done: bool = False
     summary_task_queued: bool = False
+    # --- NEW COLUMNS ---
+    word_count: int | None = None
+    duration_seconds: int | None = None
+    user_agent: str | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -57,7 +61,7 @@ class Feedback(SQLModel, table=True):
     """
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
-    feedback_type: str  # e.g., 'too_short', 'too_detailed', 'accurate', 'inaccurate', 'general', 'feature_suggestion'
+    feedback_type: str
     suggestion_text: Optional[str] = None
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
