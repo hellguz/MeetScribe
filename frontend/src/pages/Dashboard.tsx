@@ -1,23 +1,33 @@
-import React, { useState, useEffect, useContext } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useEffect, useContext, useMemo } from 'react'
+import { useNavigate, NavigateFunction } from 'react-router-dom'
 import { ThemeContext } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 
-// --- Type definitions for our new complex stats object ---
+// --- Type definitions ---
 interface StatSet {
 	total_summaries: number
 	total_words: number
 	total_hours: number
 }
+
+interface Feedback {
+	type: string
+	suggestion: string | null
+	created_at: string
+}
+
+interface MeetingWithFeedback {
+	id: string
+	title: string
+	started_at: string
+	feedback: Feedback[]
+}
+
 interface FeatureSuggestion {
 	suggestion: string
 	submitted_at: string
 	meeting_id: string
 	meeting_title: string
-}
-interface UsageTimelinePoint {
-	date: string
-	count: number
 }
 interface DashboardStats {
 	all_time: StatSet
@@ -25,12 +35,18 @@ interface DashboardStats {
 	device_distribution: { [key: string]: number }
 	feedback_counts: { [key: string]: number }
 	feature_suggestions: FeatureSuggestion[]
-	usage_timeline: UsageTimelinePoint[]
+	meetings_with_feedback: MeetingWithFeedback[]
 }
 
-// --- Reusable Components for the Dashboard ---
+// --- Reusable Components with Types ---
+interface StatCardProps {
+	title: string
+	value: number
+	icon: string
+	color: { bg: string; border: string; text: string }
+}
 
-const StatCard = ({ title, value, icon, color }) => (
+const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color }) => (
 	<div
 		style={{
 			backgroundColor: color.bg,
@@ -48,8 +64,13 @@ const StatCard = ({ title, value, icon, color }) => (
 	</div>
 )
 
-const BarChart = ({ data, title, theme }) => {
-	const maxValue = Math.max(...Object.values(data))
+interface BarChartProps {
+	data: { [key: string]: number }
+	title: string
+	theme: AppTheme
+}
+const BarChart: React.FC<BarChartProps> = ({ data, title, theme }) => {
+	const maxValue = Math.max(...(Object.values(data) as number[]))
 	if (maxValue === 0) {
 		return (
 			<div>
@@ -68,14 +89,14 @@ const BarChart = ({ data, title, theme }) => {
 						<div style={{ flexGrow: 1, backgroundColor: theme.backgroundSecondary, borderRadius: '4px' }}>
 							<div
 								style={{
-									width: `${(value / maxValue) * 100}%`,
+									width: `${((value as number) / maxValue) * 100}%`,
 									backgroundColor: theme.button.primary,
 									height: '20px',
 									borderRadius: '4px',
 									transition: 'width 0.5s ease-out',
 								}}></div>
 						</div>
-						<span style={{ fontSize: '12px', fontWeight: 'bold' }}>{value}</span>
+						<span style={{ fontSize: '12px', fontWeight: 'bold' }}>{value as number}</span>
 					</div>
 				))}
 			</div>
@@ -83,64 +104,163 @@ const BarChart = ({ data, title, theme }) => {
 	)
 }
 
-const PieChart = ({ data, theme }) => {
-	const colors = {
-		accurate: '#22c55e',
-		too_short: '#facc15',
-		too_detailed: '#f59e0b',
-		general: '#fbbf24',
-		inaccurate: '#ef4444',
-		feature_suggestion: '#3b82f6',
-	}
-	const total = Object.values(data).reduce((acc: number, val) => acc + (val as number), 0)
-	if (total === 0) return <div style={{ textAlign: 'center', color: theme.secondaryText, padding: '40px 0' }}>No feedback data for chart.</div>
+interface FeedbackTableProps {
+	meetings: MeetingWithFeedback[]
+	theme: AppTheme
+	navigate: NavigateFunction
+}
 
-	let cumulativePercent = 0
-	const segments = Object.entries(data).map(([key, value]) => {
-		const percent = (value / total) * 100
-		const startAngle = (cumulativePercent / 100) * 360
-		cumulativePercent += percent
-		const endAngle = (cumulativePercent / 100) * 360
+const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate }) => {
+	const [activeFilters, setActiveFilters] = useState<string[]>([])
 
-		const startX = 50 + 40 * Math.cos(((startAngle - 90) * Math.PI) / 180)
-		const startY = 50 + 40 * Math.sin(((startAngle - 90) * Math.PI) / 180)
-		const endX = 50 + 40 * Math.cos(((endAngle - 90) * Math.PI) / 180)
-		const endY = 50 + 40 * Math.sin(((endAngle - 90) * Math.PI) / 180)
-		const largeArcFlag = percent > 50 ? 1 : 0
-
-		return {
-			key,
-			value,
-			percent: percent.toFixed(1),
-			color: colors[key] || '#9ca3af',
-			path: `M ${startX} ${startY} A 40 40 0 ${largeArcFlag} 1 ${endX} ${endY}`,
+	const feedbackColors = useMemo(() => {
+		const light = {
+			accurate: { text: '#057a55', bg: '#def7ec', border: '#a7f3d0' },
+			inaccurate: { text: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
+			too_short: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+			too_detailed: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+			general: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+			'💡 Suggestion': { text: '#1d4ed8', bg: '#eff6ff', border: '#bfdbfe' },
 		}
-	})
+		const dark = {
+			accurate: { text: '#a7f3d0', bg: '#143623', border: '#15803d' },
+			inaccurate: { text: '#fecaca', bg: '#451a1a', border: '#b91c1c' },
+			too_short: { text: '#fde68a', bg: '#422006', border: '#b45309' },
+			too_detailed: { text: '#fde68a', bg: '#422006', border: '#b45309' },
+			general: { text: '#fde68a', bg: '#422006', border: '#b45309' },
+			'💡 Suggestion': { text: '#bfdbfe', bg: '#1e3a8a', border: '#1e40af' },
+		}
+		return theme.text === lightTheme.text ? light : dark
+	}, [theme])
+
+	const allFeedbackTypes = useMemo(() => {
+		const types = new Set<string>()
+		meetings.forEach((m: MeetingWithFeedback) => m.feedback.forEach((f: Feedback) => f.type !== 'feature_suggestion' && types.add(f.type)))
+		return Array.from(types).sort()
+	}, [meetings])
+
+	const filteredMeetings = useMemo(() => {
+		if (activeFilters.length === 0) return meetings
+		return meetings.filter((m: MeetingWithFeedback) => m.feedback.some((f: Feedback) => activeFilters.includes(f.type)))
+	}, [meetings, activeFilters])
+
+	const toggleFilter = (type: string) => {
+		setActiveFilters((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]))
+	}
+
+	const getLabel = (type: string) => type.replace(/_/g, ' ')
+
+	const feedbackPill = (type: string, key: number | string) => {
+		const label = getLabel(type)
+		const colors = feedbackColors[type] || { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
+		return (
+			<span
+				key={key}
+				style={{
+					display: 'inline-block',
+					padding: '4px 8px',
+					borderRadius: '12px',
+					fontSize: '12px',
+					fontWeight: 500,
+					backgroundColor: colors.bg,
+					color: colors.text,
+					border: `1px solid ${colors.border}`,
+					whiteSpace: 'nowrap',
+				}}>
+				{label}
+			</span>
+		)
+	}
 
 	return (
-		<div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-			<svg viewBox="0 0 100 100" width="150" height="150">
-				{segments.map((seg) => (
-					<path key={seg.key} d={seg.path} stroke={seg.color} strokeWidth="20" fill="none" />
-				))}
-			</svg>
-			<div style={{ flex: 1, minWidth: '200px' }}>
-				{segments.map((seg) => (
-					<div key={seg.key} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', fontSize: '14px' }}>
-						<span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: seg.color, marginRight: '8px' }}></span>
-						<span style={{ color: theme.text, textTransform: 'capitalize' }}>{seg.key.replace(/_/g, ' ')}:</span>
-						<span style={{ marginLeft: 'auto', fontWeight: 'bold', color: theme.text }}>
-							{seg.value} ({seg.percent}%)
-						</span>
-					</div>
-				))}
+		<div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+			<div>
+				<h3 style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 500 }}>Filter by Feedback</h3>
+				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+					{allFeedbackTypes.map((type) => {
+						const isActive = activeFilters.includes(type)
+						const colors = feedbackColors[type] || { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
+
+						return (
+							<button
+								key={type}
+								onClick={() => toggleFilter(type)}
+								style={{
+									padding: '6px 12px',
+									border: `1.5px solid ${colors.border}`,
+									borderRadius: '16px',
+									cursor: 'pointer',
+									backgroundColor: isActive ? colors.bg : 'transparent',
+									color: isActive ? colors.text : theme.text,
+									fontWeight: isActive ? 600 : 400,
+									transition: 'all 0.2s ease',
+								}}>
+								{getLabel(type)}
+							</button>
+						)
+					})}
+					{activeFilters.length > 0 && (
+						<button
+							onClick={() => setActiveFilters([])}
+							style={{ border: 'none', background: 'none', color: theme.secondaryText, cursor: 'pointer', textDecoration: 'underline' }}>
+							Clear
+						</button>
+					)}
+				</div>
+			</div>
+			<div style={{ maxHeight: '600px', overflowY: 'auto', border: `1px solid ${theme.border}`, borderRadius: '8px' }}>
+				<table style={{ width: '100%', borderCollapse: 'collapse' }}>
+					<thead style={{ position: 'sticky', top: 0, zIndex: 1, background: theme.background, backdropFilter: 'blur(5px)' }}>
+						<tr>
+							<th style={{ padding: '12px', textAlign: 'left', borderBottom: `1px solid ${theme.border}` }}>Meeting</th>
+							<th style={{ padding: '12px', textAlign: 'left', borderBottom: `1px solid ${theme.border}` }}>Date</th>
+							<th style={{ padding: '12px', textAlign: 'left', borderBottom: `1px solid ${theme.border}` }}>Feedback Received</th>
+						</tr>
+					</thead>
+					<tbody>
+						{filteredMeetings.length > 0 ? (
+							filteredMeetings.map((meeting: MeetingWithFeedback) => (
+								<tr
+									key={meeting.id}
+									onClick={() => navigate(`/summary/${meeting.id}`)}
+									style={{
+										cursor: 'pointer',
+										backgroundColor: theme.body,
+										transition: 'background-color 0.2s ease',
+									}}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.body)}>
+									<td style={{ padding: '12px', fontWeight: 500, borderBottom: `1px solid ${theme.border}` }}>{meeting.title}</td>
+									<td style={{ padding: '12px', whiteSpace: 'nowrap', borderBottom: `1px solid ${theme.border}` }}>
+										{new Date(meeting.started_at).toLocaleDateString()}
+									</td>
+									<td style={{ padding: '12px', borderBottom: `1px solid ${theme.border}` }}>
+										<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+											{meeting.feedback.map((f: Feedback, i: number) => {
+												if (f.type === 'feature_suggestion') {
+													return feedbackPill('💡 Suggestion', `sugg-${i}`)
+												}
+												return feedbackPill(f.type, i)
+											})}
+										</div>
+									</td>
+								</tr>
+							))
+						) : (
+							<tr>
+								<td colSpan={3} style={{ textAlign: 'center', padding: '20px', color: theme.secondaryText }}>
+									No meetings match the selected filters.
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
 			</div>
 		</div>
 	)
 }
 
 // --- Main Dashboard Component ---
-
 export default function Dashboard() {
 	const navigate = useNavigate()
 	const themeContext = useContext(ThemeContext)
@@ -185,12 +305,6 @@ export default function Dashboard() {
 			border: theme === 'light' ? '#fde68a' : '#b45309',
 			text: theme === 'light' ? '#b45309' : '#fde68a',
 		},
-		red: { bg: theme === 'light' ? '#fef2f2' : '#451a1a', border: theme === 'light' ? '#fecaca' : '#b91c1c', text: theme === 'light' ? '#b91c1c' : '#fecaca' },
-		yellow: {
-			bg: theme === 'light' ? '#fefce8' : '#3d3c1a',
-			border: theme === 'light' ? '#fde047' : '#a16207',
-			text: theme === 'light' ? '#a16207' : '#fde047',
-		},
 	}
 
 	if (isLoading) return <div style={{ color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px' }}>Loading Dashboard...</div>
@@ -198,11 +312,6 @@ export default function Dashboard() {
 	if (!stats) return <div style={{ color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px' }}>No stats available.</div>
 
 	const displayStats = stats[timeframe]
-	const needsImprovementCount =
-		(stats.feedback_counts.inaccurate || 0) +
-		(stats.feedback_counts.too_short || 0) +
-		(stats.feedback_counts.too_detailed || 0) +
-		(stats.feedback_counts.general || 0)
 
 	return (
 		<div
@@ -230,7 +339,7 @@ export default function Dashboard() {
 				← Back to Recordings
 			</button>
 
-			<header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+			<header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
 				<div>
 					<h1 style={{ margin: '0 0 4px 0', fontSize: '28px', fontWeight: 'bold' }}>Dashboard</h1>
 					<p style={{ margin: 0, color: currentThemeColors.secondaryText }}>Platform usage and feedback overview.</p>
@@ -263,38 +372,33 @@ export default function Dashboard() {
 				</div>
 			</header>
 
-			<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '20px' }}>
+			<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '32px' }}>
 				<StatCard title="Summaries Generated" value={displayStats.total_summaries} icon="📝" color={cardColors.blue} />
 				<StatCard title="Words Transcribed" value={displayStats.total_words} icon="✍️" color={cardColors.amber} />
 				<StatCard title="Hours Recorded" value={displayStats.total_hours} icon="⏱️" color={cardColors.green} />
 			</div>
 
-			<div style={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: '20px' }}>
-				<div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
-					<PieChart data={stats.feedback_counts} theme={currentThemeColors} />
-				</div>
-
+			<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '32px' }}>
 				<div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
 					<BarChart title="Device Types" data={stats.device_distribution} theme={currentThemeColors} />
 				</div>
-
-				<div
-					style={{
-						gridColumn: '1 / -1',
-						backgroundColor: currentThemeColors.body,
-						padding: '20px',
-						borderRadius: '12px',
-						border: `1px solid ${currentThemeColors.border}`,
-					}}>
-					<h3 style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 500 }}>💡 Feature Suggestions</h3>
+				<div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
+					<h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>Feature Suggestions</h3>
 					<div style={{ maxHeight: '300px', overflowY: 'auto' }}>
 						{stats.feature_suggestions.length > 0 ? (
 							<ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-								{stats.feature_suggestions.map((item, index) => (
+								{stats.feature_suggestions.map((item: FeatureSuggestion, index: number) => (
 									<li
 										key={index}
 										onClick={() => navigate(`/summary/${item.meeting_id}`)}
-										style={{ padding: '12px', borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`, cursor: 'pointer' }}>
+										style={{
+											padding: '12px',
+											borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`,
+											cursor: 'pointer',
+											transition: 'background-color 0.2s ease',
+										}}
+										onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+										onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 										<p style={{ margin: 0, fontWeight: 500 }}>{item.suggestion}</p>
 										<p style={{ margin: '4px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>
 											From: <span style={{ fontWeight: '500' }}>{item.meeting_title}</span>
@@ -307,6 +411,17 @@ export default function Dashboard() {
 						)}
 					</div>
 				</div>
+			</div>
+			<div
+				style={{
+					marginTop: '32px',
+					backgroundColor: currentThemeColors.body,
+					padding: '20px',
+					borderRadius: '12px',
+					border: `1px solid ${currentThemeColors.border}`,
+				}}>
+				<h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold' }}>Feedback Log</h2>
+				<FeedbackTable meetings={stats.meetings_with_feedback} theme={currentThemeColors} navigate={navigate} />
 			</div>
 		</div>
 	)

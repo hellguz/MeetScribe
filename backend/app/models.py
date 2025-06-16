@@ -1,19 +1,18 @@
-import uuid
 import datetime as dt
-from typing import Optional
+import uuid
+from typing import List, Optional
 
-from sqlmodel import SQLModel, Field
+from sqlmodel import Field, SQLModel
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Data-models
 # ──────────────────────────────────────────────────────────────────────────────
-
-
 class Meeting(SQLModel, table=True):
     """
     Main DB table for a recorded meeting.
     """
+
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     title: str
     started_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
@@ -35,6 +34,7 @@ class MeetingChunk(SQLModel, table=True):
     """
     Stores metadata & transcription text for every uploaded chunk.
     """
+
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     chunk_index: int
@@ -46,6 +46,7 @@ class Feedback(SQLModel, table=True):
     """
     Stores user feedback on summaries.
     """
+
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     feedback_type: str
@@ -57,6 +58,7 @@ class MeetingCreate(SQLModel):
     """
     Payload for creating a meeting from the frontend.
     """
+
     title: str
     expected_chunks: int | None = None
 
@@ -65,8 +67,9 @@ class FeedbackCreate(SQLModel):
     """
     Payload for submitting feedback.
     """
+
     meeting_id: uuid.UUID
-    feedback_type: str
+    feedback_types: List[str]
     suggestion_text: Optional[str] = None
 
 
@@ -74,6 +77,7 @@ class MeetingStatus(SQLModel):
     """
     What we send back to the frontend for status polling:
     """
+
     id: uuid.UUID
     title: str
     started_at: dt.datetime
@@ -89,4 +93,5 @@ class MeetingTitleUpdate(SQLModel):
     """
     Payload for updating a meeting's title.
     """
+
     title: str

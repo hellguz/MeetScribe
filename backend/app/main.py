@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
-from pathlib import Path
 import datetime as dt
-from collections import Counter
+from collections import Counter, defaultdict
+from pathlib import Path
 
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
@@ -228,8 +228,21 @@ def create_feedback(body: FeedbackCreate):
         meeting = db.get(Meeting, body.meeting_id)
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
-        feedback = Feedback.model_validate(body)
-        db.add(feedback)
+
+        for f_type in body.feedback_types:
+            if not f_type:
+                continue
+            feedback_entry = Feedback(meeting_id=body.meeting_id, feedback_type=f_type)
+            db.add(feedback_entry)
+
+        if body.suggestion_text and body.suggestion_text.strip():
+            suggestion_entry = Feedback(
+                meeting_id=body.meeting_id,
+                feedback_type="feature_suggestion",
+                suggestion_text=body.suggestion_text.strip(),
+            )
+            db.add(suggestion_entry)
+
         db.commit()
         return {"ok": True, "message": "Feedback received"}
 
@@ -330,6 +343,29 @@ def get_dashboard_stats():
             .order_by(func.date(Meeting.started_at))
             .limit(90)
         ).all()
+
+        all_feedback_query = db.exec(
+            select(Feedback, Meeting.title, Meeting.started_at)
+            .join(Meeting, Feedback.meeting_id == Meeting.id)
+            .order_by(Meeting.started_at.desc(), Feedback.created_at.desc())
+        ).all()
+
+        meetings_with_feedback = defaultdict(lambda: {"feedback": []})
+        for feedback, title, started_at in all_feedback_query:
+            mid_str = str(feedback.meeting_id)
+            if "id" not in meetings_with_feedback[mid_str]:
+                meetings_with_feedback[mid_str]["id"] = mid_str
+                meetings_with_feedback[mid_str]["title"] = title
+                meetings_with_feedback[mid_str]["started_at"] = started_at
+
+            meetings_with_feedback[mid_str]["feedback"].append(
+                {
+                    "type": feedback.feedback_type,
+                    "suggestion": feedback.suggestion_text,
+                    "created_at": feedback.created_at,
+                }
+            )
+
     return {
         "all_time": {
             "total_summaries": total_summaries,
@@ -344,6 +380,7 @@ def get_dashboard_stats():
         "device_distribution": dict(device_counts),
         "feedback_counts": feedback_counts,
         "feature_suggestions": feature_suggestions,
+        "meetings_with_feedback": list(meetings_with_feedback.values()),
         "usage_timeline": [
             {"date": str(date), "count": count} for date, count in meetings_by_day
         ],

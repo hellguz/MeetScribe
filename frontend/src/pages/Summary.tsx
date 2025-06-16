@@ -24,7 +24,6 @@ export default function Summary() {
 	const [meetingTitle, setMeetingTitle] = useState<string | null>(null)
 	const [meetingStartedAt, setMeetingStartedAt] = useState<string>('')
 	const [loadedFromCache, setLoadedFromCache] = useState(false)
-	const [feedbackSubmitted, setFeedbackSubmitted] = useState(false)
 
 	// State for inline title editing
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -160,7 +159,7 @@ export default function Summary() {
 		[mid, loadedFromCache, meetingTitle],
 	)
 
-	const handleFeedbackSubmit = async (feedbackType: string, suggestionText?: string) => {
+	const handleFeedbackSubmit = async (feedbackTypes: string[], suggestionText?: string) => {
 		if (!mid) return
 		try {
 			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
@@ -168,11 +167,11 @@ export default function Summary() {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					meeting_id: mid,
-					feedback_type: feedbackType,
+					feedback_types: feedbackTypes,
 					suggestion_text: suggestionText,
 				}),
 			})
-			setFeedbackSubmitted(true)
+			// The component will show its own "thank you" message
 		} catch (error) {
 			console.error('Failed to submit feedback:', error)
 			alert("Sorry, we couldn't submit your feedback right now.")
@@ -194,7 +193,7 @@ export default function Summary() {
 			}
 		}
 		fetchMeetingData(true)
-	}, [mid])
+	}, [mid, fetchMeetingData])
 
 	// Polling mechanism
 	useEffect(() => {
@@ -337,7 +336,7 @@ export default function Summary() {
 				</ReactMarkdown>
 			)}
 
-			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} submitted={feedbackSubmitted} />}
+			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} />}
 
 			{!isLoading && !error && transcript && (
 				<>
