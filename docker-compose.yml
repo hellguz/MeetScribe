@@ -1,6 +1,9 @@
+# ./docker-compose.yml
+
 services:
   redis:
     image: redis:alpine
+    # Add persistence: ensures task queue survives restarts
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
@@ -24,6 +27,7 @@ services:
       - ./backend:/app             # code
     env_file: [.env]
     depends_on: [redis]
+    # Add grace period: allows worker to finish its current task
     stop_grace_period: 1m
 
   frontend:
@@ -39,4 +43,5 @@ services:
 
 volumes:
   whisper-cache: {}               # named volume persists model weights
+  # Define the named volume for Redis data
   redis-data: {}

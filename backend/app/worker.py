@@ -28,8 +28,9 @@ celery_app = Celery(
 celery_app.conf.update(
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    # === Resilience Change: Only acknowledge tasks after they complete successfully ===
     task_acks_late=True,
-    # Add this beat schedule
+    # === Resilience Change: Add a periodic task to clean up stuck meetings ===
     beat_schedule={
         "cleanup-every-30-minutes": {
             "task": "app.worker.cleanup_stuck_meetings",
@@ -75,11 +76,15 @@ def get_whisper_model():
 
 
 @worker_ready.connect
-def load_whisper_on_startup(**kwargs):
-    # This part already exists
+def on_worker_startup(**kwargs):
+    """
+    On worker startup, pre-load the AI model and trigger an immediate
+    cleanup task to recover any jobs interrupted by a restart.
+    """
+    LOGGER.info("Celery worker ready. Pre-loading models and running startup tasks.")
+    # Pre-load the model to have it ready for the first task
     get_whisper_model()
-
-    # Add these lines to run the janitor on startup
+    # === Resilience Change: Queue a janitor task to run immediately on startup ===
     LOGGER.info("Queueing initial cleanup task for any jobs interrupted by a restart.")
     cleanup_stuck_meetings.delay()
 
@@ -87,9 +92,6 @@ def load_whisper_on_startup(**kwargs):
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
     """
     Transcribes an audio chunk using either a cloud API (Groq) or a local model.
-    - For cloud transcription, it first converts the chunk to a standardized
-      16kHz mono FLAC file using ffmpeg for maximum compatibility and speed.
-    - For local transcription, it uses the faster-whisper model with VAD.
     """
     chunk_path = Path(chunk_path_str)
     whisper = get_whisper_model()
@@ -126,6 +128,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                 LOGGER.warning(
                     "ffmpeg not found. Sending original WebM file to cloud API."
                 )
+
             try:
                 with open(path_to_transcribe, "rb") as audio_file:
                     resp = _groq_client.audio.transcriptions.create(
@@ -188,7 +191,6 @@ Before writing, you MUST first perform a deep, silent analysis of the transcript
 <output_rules>
 **2. Final Output Generation**
 Your final response MUST BE ONLY the Markdown summary. It must start directly with the `##` heading for the meeting title. DO NOT include any commentary, preamble, or the content from your `<thinking_steps>`. The summary should be detailed and adopt a clear, professional-yet-human tone.
-
 ---
 ## {meeting_title}
 _{date_str} — {time_range}_
@@ -219,8 +221,8 @@ This is the core of the summary. For each **Key Concept** you identified, create
 """
 
         response = openai.chat.completions.create(
-            model="gpt-4.1-mini",  # Using a cost-effective model with strong reasoning.
-            temperature=0.3,  # Slightly higher temperature for more natural language
+            model="gpt-4.1-mini",
+            temperature=0.3,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -235,14 +237,49 @@ This is the core of the summary. For each **Key Concept** you identified, create
         return "Error: Summary generation failed."
 
 
-def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> str:
-    chunk_texts = db_session.exec(
+def rebuild_full_transcript(
+    db_session: Session, meeting_id_uuid: uuid.UUID
+) -> tuple[str, int]:
+    """Returns the full transcript text and the total number of chunks used."""
+    chunks = db_session.exec(
         select(MeetingChunk.text)
         .where(MeetingChunk.meeting_id == meeting_id_uuid)
         .where(MeetingChunk.text.is_not(None))
         .order_by(MeetingChunk.chunk_index)
     ).all()
-    return " ".join(text for text in chunk_texts if text).strip()
+    transcript_text = " ".join(text for text in chunks if text).strip()
+    return transcript_text, len(chunks)
+
+
+def finalize_meeting_processing(db: Session, mtg: Meeting):
+    """Centralized logic to finalize a meeting."""
+    LOGGER.info(f"Meeting {mtg.id}: Finalizing. Building transcript and summarizing.")
+    final_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
+    mtg.transcript_text = final_transcript
+
+    if final_transcript:
+        # These fields were added later, so we calculate them here.
+        mtg.word_count = len(final_transcript.split())
+        mtg.duration_seconds = num_chunks * 30  # Assuming 30s chunks
+
+        summary_md = summarise_transcript_in_worker(
+            final_transcript, mtg.title, mtg.started_at.isoformat()
+        )
+        mtg.summary_markdown = summary_md
+        LOGGER.info(f"✅ Meeting {mtg.id} summarized successfully by worker.")
+    else:
+        LOGGER.warning(
+            f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."
+        )
+        mtg.word_count = 0
+        mtg.duration_seconds = 0
+        mtg.summary_markdown = (
+            "Error: Transcript was empty, summary could not be generated."
+        )
+
+    mtg.done = True
+    db.add(mtg)
+    db.commit()
 
 
 @celery_app.task(name="app.worker.cleanup_stuck_meetings")
@@ -259,7 +296,6 @@ def cleanup_stuck_meetings():
             minutes=STUCK_THRESHOLD_MINUTES
         )
 
-        # Find meetings that are not done, have received a final chunk, but haven't been updated recently.
         stuck_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
@@ -268,12 +304,14 @@ def cleanup_stuck_meetings():
             )
         ).all()
 
+        if not stuck_meetings:
+            return
+
         LOGGER.info(
             f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings."
         )
 
         for mtg in stuck_meetings:
-            # Find all chunks for this meeting that have not been transcribed (text is None)
             unprocessed_chunks = db.exec(
                 select(MeetingChunk).where(
                     MeetingChunk.meeting_id == mtg.id, MeetingChunk.text.is_(None)
@@ -281,18 +319,14 @@ def cleanup_stuck_meetings():
             ).all()
 
             if not unprocessed_chunks:
-                # If all chunks are processed, maybe the summary task failed.
-                # The existing lazy-summary logic in main.py will handle this on the next user request.
-                # Or perhaps the meeting just finished and is about to be marked done.
-                # LOGGER.info(
-                #     f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
-                # )
+                LOGGER.info(
+                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                )
                 continue
 
             LOGGER.warning(
                 f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s)."
             )
-            # Update last_activity to prevent re-queueing immediately if tasks fail quickly
             mtg.last_activity = dt.datetime.utcnow()
             db.add(mtg)
             db.commit()
@@ -339,12 +373,14 @@ def process_transcription_and_summary(
             mc.text = chunk_text
             db.add(mc)
             db.commit()
+
             mtg = db.get(Meeting, meeting_id_uuid)
             if not mtg:
                 LOGGER.error(
                     f"Meeting {meeting_id_str}: object not found after transcribing chunk."
                 )
                 return
+
             transcribed_count = (
                 db.scalar(
                     select(func.count(MeetingChunk.id)).where(
@@ -354,68 +390,26 @@ def process_transcription_and_summary(
                 )
                 or 0
             )
+
             effective_expected = (
                 mtg.expected_chunks
                 if mtg.expected_chunks is not None
                 else mtg.received_chunks
             )
+
             if (
                 not mtg.done
                 and mtg.final_received
                 and effective_expected > 0
                 and transcribed_count >= effective_expected
             ):
-                LOGGER.info(
-                    f"Meeting {meeting_id_str}: All chunks transcribed. Building final transcript and summarizing."
-                )
-                final_transcript = rebuild_full_transcript(db, meeting_id_uuid)
-                mtg.transcript_text = final_transcript
-                if final_transcript:
-                    summary_md = summarise_transcript_in_worker(
-                        final_transcript, mtg.title, mtg.started_at.isoformat()
-                    )
-                    mtg.summary_markdown = summary_md
-                    mtg.done = True
-                    LOGGER.info(
-                        f"✅ Meeting {meeting_id_str} summarized successfully by worker."
-                    )
-                else:
-                    LOGGER.warning(
-                        f"Meeting {meeting_id_str}: Transcript text is empty, cannot generate summary."
-                    )
-                    mtg.summary_markdown = (
-                        "Error: Transcript was empty, summary could not be generated."
-                    )
-                    mtg.done = True
-                db.add(mtg)
-                db.commit()
+                finalize_meeting_processing(db, mtg)
     except Exception as exc:
         LOGGER.error(
-            f"Error processing task for meeting {meeting_id_str}, chunk {chunk_index}: {exc}",
+            f"Error processing task for {meeting_id_str}, chunk {chunk_index}: {exc}",
             exc_info=True,
         )
-        try:
-            raise self.retry(exc=exc, countdown=60)
-        except self.MaxRetriesExceededError:
-            LOGGER.error(
-                f"Max retries exceeded for task: meeting {meeting_id_str}, chunk {chunk_index}."
-            )
-            fail_engine = get_db_engine()
-            fail_meeting_id_uuid = uuid.UUID(meeting_id_str)
-            with Session(fail_engine) as db_fail_session:
-                mc_fail = db_fail_session.exec(
-                    select(MeetingChunk).where(
-                        MeetingChunk.meeting_id == fail_meeting_id_uuid,
-                        MeetingChunk.chunk_index == chunk_index,
-                    )
-                ).first()
-                if mc_fail:
-                    mc_fail.text = None
-                    db_fail_session.add(mc_fail)
-                    db_fail_session.commit()
-                    LOGGER.info(
-                        f"Set chunk {chunk_index} of meeting {meeting_id_str} text to None after max retries."
-                    )
+        self.retry(exc=exc)
 
 
 @celery_app.task(
@@ -433,21 +427,13 @@ def generate_summary_only(self, meeting_id_str: str):
         if not mtg:
             LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
             return
-        final_transcript = mtg.transcript_text or rebuild_full_transcript(
-            db, meeting_id
-        )
-        if not final_transcript:
-            LOGGER.warning(
-                "Meeting %s has no transcript – aborting regen.", meeting_id_str
+
+        if mtg.done:
+            LOGGER.info(
+                "Meeting %s already summarized. Aborting regen.", meeting_id_str
             )
             return
-        mtg.transcript_text = final_transcript
+
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
-        summary_md = summarise_transcript_in_worker(
-            final_transcript, mtg.title, mtg.started_at.isoformat()
-        )
-        mtg.summary_markdown = summary_md
-        mtg.done = True
-        db.add(mtg)
-        db.commit()
+        finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
