@@ -35,6 +35,18 @@ export default function Record() {
 	const [pollingStarted, setPollingStarted] = useState(false)
 	const [audioSource, setAudioSource] = useState<AudioSource>('mic')
 	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true)
+	const [recordMicrophoneWithSystem, setRecordMicrophoneWithSystem] = useState<boolean>(true);
+
+	useEffect(() => {
+		const savedPreference = localStorage.getItem('recordMicrophoneWithSystem');
+		if (savedPreference !== null) {
+			setRecordMicrophoneWithSystem(JSON.parse(savedPreference));
+		}
+	}, []);
+
+	useEffect(() => {
+		localStorage.setItem('recordMicrophoneWithSystem', JSON.stringify(recordMicrophoneWithSystem));
+	}, [recordMicrophoneWithSystem]);
 
 	/* ─── new state for file upload ─────────────────────────────────── */
 	const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -106,6 +118,7 @@ export default function Record() {
 	const meetingId = useRef<string | null>(null)
 	const mediaRef = useRef<MediaRecorder | null>(null)
 	const streamRef = useRef<MediaStream | null>(null) // Will hold the stream for the recorder (can be audio-only)
+	const micStreamRef = useRef<MediaStream | null>(null);
 	const displayStreamRef = useRef<MediaStream | null>(null) // Will hold the original getDisplayMedia stream
 	const startTimeRef = useRef<number>(0)
 	const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -388,37 +401,88 @@ export default function Record() {
 				})
 				displayStreamRef.current = displayStream
 
-				if (displayStream.getAudioTracks().length === 0) {
-					displayStream.getTracks().forEach((track) => track.stop())
-					displayStreamRef.current = null
-					alert("System audio access was not granted. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.")
-					return
+				// Video track ended listener
+				if (displayStream.getVideoTracks().length > 0) {
+					displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+						if (isRecordingRef.current) stop()
+					})
 				}
 
-				displayStream.getVideoTracks()[0].addEventListener('ended', () => {
-					if (isRecordingRef.current) stop()
-				})
+				if (recordMicrophoneWithSystem) {
+					// Recording system audio AND microphone
+					if (displayStream.getAudioTracks().length === 0) {
+						displayStream.getTracks().forEach((track) => track.stop())
+						displayStreamRef.current = null
+						alert("System audio access was not granted or no audio track is present. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.")
+						return
+					}
 
-				audioStream = new MediaStream(displayStream.getAudioTracks())
-			} else {
+					try {
+						const micStream = await navigator.mediaDevices.getUserMedia({
+							audio: {
+								echoCancellation: false,
+								noiseSuppression: false,
+								autoGainControl: false,
+							},
+						})
+						micStreamRef.current = micStream
+
+						const combinedStream = new MediaStream()
+						displayStream.getAudioTracks().forEach((track) => combinedStream.addTrack(track.clone()))
+						micStream.getAudioTracks().forEach((track) => combinedStream.addTrack(track.clone()))
+						audioStream = combinedStream
+
+						// Setup analyser with system audio part
+						const systemAudioOnlyStreamForAnalyser = new MediaStream(displayStream.getAudioTracks().map(t => t.clone()))
+						audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
+						const sourceNode = audioCtxRef.current.createMediaStreamSource(systemAudioOnlyStreamForAnalyser)
+						analyserRef.current = audioCtxRef.current.createAnalyser()
+						analyserRef.current.fftSize = 2048
+						sourceNode.connect(analyserRef.current)
+					} catch (micError) {
+						console.error('Failed to get microphone stream:', micError)
+						displayStream.getTracks().forEach((track) => track.stop())
+						displayStreamRef.current = null
+						alert('Could not access microphone. Recording cannot start. Please check permissions.')
+						return
+					}
+				} else {
+					// Recording system audio ONLY
+					if (displayStream.getAudioTracks().length === 0) {
+						displayStream.getTracks().forEach((track) => track.stop())
+						displayStreamRef.current = null
+						alert("System audio access was not granted. Please check the 'Share system audio' or 'Share tab audio' box in the prompt and try again.")
+						return
+					}
+					audioStream = new MediaStream(displayStream.getAudioTracks().map(t => t.clone()))
+
+					// Setup analyser for system audio only
+					audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
+					const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
+					analyserRef.current = audioCtxRef.current.createAnalyser()
+					analyserRef.current.fftSize = 2048
+					sourceNode.connect(analyserRef.current)
+				}
+			} else { // audioSource === 'mic'
 				audioStream = await navigator.mediaDevices.getUserMedia({
 					audio: {
 						echoCancellation: false,
 						noiseSuppression: false,
 						autoGainControl: false,
-						voiceIsolation: false, // Use your supported constraint
+						voiceIsolation: false,
 						channelCount: 1,
 						latency: 0,
-						volume: 1.0, // If supported, maximize input
+						volume: 1.0,
 					},
 				})
-			}
 
-			audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
-			const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
-			analyserRef.current = audioCtxRef.current.createAnalyser()
-			analyserRef.current.fftSize = 2048
-			sourceNode.connect(analyserRef.current)
+				// Setup analyser for mic audio
+				audioCtxRef.current = new AudioContext({ sampleRate: 48000 })
+				const sourceNode = audioCtxRef.current.createMediaStreamSource(audioStream)
+				analyserRef.current = audioCtxRef.current.createAnalyser()
+				analyserRef.current.fftSize = 2048
+				sourceNode.connect(analyserRef.current)
+			}
 
 			streamRef.current = audioStream
 
@@ -445,7 +509,9 @@ export default function Record() {
 			pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
 			setPollingStarted(true)
 
-			drawWaveform()
+			if (analyserRef.current) {
+				drawWaveform()
+			}
 			createAndStartRecorder()
 		} catch (error) {
 			console.error('Failed to start recording:', error)
@@ -469,6 +535,10 @@ export default function Record() {
 		if (streamRef.current) {
 			streamRef.current.getTracks().forEach((track) => track.stop())
 			streamRef.current = null
+		}
+		if (micStreamRef.current) { // Clean up mic stream if it exists
+			micStreamRef.current.getTracks().forEach(track => track.stop());
+			micStreamRef.current = null;
 		}
 		if (displayStreamRef.current) {
 			displayStreamRef.current.getTracks().forEach((track) => track.stop())
@@ -668,6 +738,24 @@ export default function Record() {
 							<option value="system">System Audio (Speakers)</option>
 							<option value="file">Upload Audio File</option>
 						</select>
+						{audioSource === 'system' && (
+							<div style={{ marginTop: '10px', textAlign: 'center' }}>
+								<label htmlFor="record-mic-checkbox" style={{ marginRight: '8px', color: currentThemeColors.text }}>
+									Record microphone with system audio:
+								</label>
+								<input
+									type="checkbox"
+									id="record-mic-checkbox"
+									checked={recordMicrophoneWithSystem}
+									onChange={(e) => setRecordMicrophoneWithSystem(e.target.checked)}
+									style={{
+										width: '16px',
+										height: '16px',
+										verticalAlign: 'middle',
+									}}
+								/>
+							</div>
+						)}
 					</div>
 
 					{audioSource === 'system' && !isSystemAudioSupported && (
