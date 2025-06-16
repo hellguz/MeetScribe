@@ -5,6 +5,7 @@ import shutil
 import uuid
 from pathlib import Path
 import datetime as dt
+from collections import Counter
 
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -18,6 +19,8 @@ from .models import (
     MeetingCreate,
     MeetingStatus,
     MeetingTitleUpdate,
+    Feedback,
+    FeedbackCreate,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -282,6 +285,58 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
         db.commit()
         db.refresh(mtg)
         return mtg
+
+
+@app.post("/api/feedback", status_code=201)
+def create_feedback(body: FeedbackCreate):
+    with Session(engine) as db:
+        meeting = db.get(Meeting, body.meeting_id)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        feedback = Feedback.model_validate(body)
+        db.add(feedback)
+        db.commit()
+        return {"ok": True, "message": "Feedback received"}
+
+
+@app.get("/api/dashboard/stats")
+def get_dashboard_stats():
+    """
+    Get aggregated statistics for the dashboard.
+    NOW INCLUDES meeting_id and meeting_title for each suggestion.
+    """
+    with Session(engine) as db:
+        total_summaries = db.scalar(select(func.count(Meeting.id)).where(Meeting.done == True)) or 0
+        
+        feedback_counts_query = db.exec(
+            select(Feedback.feedback_type, func.count(Feedback.id)).group_by(Feedback.feedback_type)
+        ).all()
+        feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
+
+        # --- MODIFIED QUERY: Join Feedback with Meeting to get titles ---
+        suggestions_query = db.exec(
+            select(Feedback, Meeting.title)
+            .join(Meeting, Feedback.meeting_id == Meeting.id)
+            .where(Feedback.feedback_type == "feature_suggestion")
+            .where(Feedback.suggestion_text.is_not(None))
+            .order_by(Feedback.created_at.desc())
+        ).all()
+        
+        feature_suggestions = [
+            {
+                "suggestion": feedback.suggestion_text,
+                "submitted_at": feedback.created_at,
+                "meeting_id": feedback.meeting_id,
+                "meeting_title": meeting_title,
+            }
+            for feedback, meeting_title in suggestions_query
+        ]
+
+    return {
+        "total_summaries": total_summaries,
+        "feedback_counts": feedback_counts,
+        "feature_suggestions": feature_suggestions,
+    }
 
 
 @app.get("/healthz")

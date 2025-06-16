@@ -1,16 +1,17 @@
 // ./frontend/src/pages/Summary.tsx
-import React, { useEffect, useState, useCallback, useContext } from 'react' // Add useContext
-import { useParams, useNavigate } from 'react-router-dom' // <<< Add useNavigate
+import React, { useEffect, useState, useCallback, useContext } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import { saveMeeting, getHistory, MeetingMeta } from '../utils/history' // Added getHistory and MeetingMeta
+import { saveMeeting, getHistory } from '../utils/history'
 import { getCached, saveCached } from '../utils/summaryCache'
 import ThemeToggle from '../components/ThemeToggle'
-import { ThemeContext } from '../contexts/ThemeContext' // Import ThemeContext
-import { lightTheme, darkTheme, AppTheme } from '../styles/theme' // Import themes and AppTheme
+import { ThemeContext } from '../contexts/ThemeContext'
+import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
+import FeedbackComponent from '../components/FeedbackComponent' // Import the new component
 
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
-	const navigate = useNavigate() // <<< Initialize navigate
+	const navigate = useNavigate()
 	const themeContext = useContext(ThemeContext)
 	if (!themeContext) throw new Error('ThemeContext not found')
 	const { theme } = themeContext
@@ -20,9 +21,10 @@ export default function Summary() {
 	const [isLoading, setIsLoading] = useState(true)
 	const [isProcessing, setIsProcessing] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const [meetingTitle, setMeetingTitle] = useState<string | null>(null) // Changed initial state to null
+	const [meetingTitle, setMeetingTitle] = useState<string | null>(null)
 	const [meetingStartedAt, setMeetingStartedAt] = useState<string>('')
 	const [loadedFromCache, setLoadedFromCache] = useState(false)
+	const [feedbackSubmitted, setFeedbackSubmitted] = useState(false)
 
 	// State for inline title editing
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -54,31 +56,27 @@ export default function Summary() {
 			const updatedMeetingFromServer = await response.json()
 			setMeetingTitle(updatedMeetingFromServer.title) // Update title with server response
 
-			// Update localStorage
 			const history = getHistory()
 			const currentMeetingInHistory = history.find((m) => m.id === mid)
 			saveMeeting({
 				id: mid,
 				title: updatedMeetingFromServer.title,
 				started_at: meetingStartedAt || updatedMeetingFromServer.started_at || new Date().toISOString(),
-				status: currentMeetingInHistory?.status || 'complete', // Preserve status or default
+				status: currentMeetingInHistory?.status || 'complete',
 			})
 
-			// Also update the summaryCache with the new title
 			if (mid) {
-				// Ensure mid is defined
 				saveCached({
 					id: mid,
 					title: updatedMeetingFromServer.title,
-					summary: summary || '', // Use current summary state, fallback to empty string
-					transcript: transcript, // Use current transcript state
+					summary: summary || '',
+					transcript: transcript,
 					updatedAt: new Date().toISOString(),
 				})
 			}
 		} catch (err) {
 			console.error('Error updating meeting title:', err)
 			alert(`Error updating title: ${err instanceof Error ? err.message : String(err)}`)
-			// Optionally revert editedTitle or allow retry
 		} finally {
 			setIsEditingTitle(false)
 		}
@@ -104,24 +102,17 @@ export default function Summary() {
 				}
 
 				const data = await res.json()
-
-				// Always update transcript to show partial text, even if not 'done'
 				const trn = data.transcript_text || null
 				setTranscript(trn)
 
 				if (isInitialFetch) {
-					// Store title and started_at from the first successful fetch
-					// These might be needed if the meeting is not yet in local history
-					// If title comes from cache, this might be overwritten later by fetch, which is fine.
 					if (!meetingTitle && data.title) {
-						// Only set if not already set (e.g., from cache) to avoid flicker if fetch is slower
 						setMeetingTitle(data.title)
 					} else if (!meetingTitle) {
 						setMeetingTitle(`Meeting ${mid}`)
 					}
 					setMeetingStartedAt(data.started_at || new Date().toISOString())
 				} else if (data.title && data.title !== meetingTitle) {
-					// If title changes on a subsequent fetch (e.g. user edited it elsewhere)
 					setMeetingTitle(data.title)
 				}
 
@@ -133,13 +124,12 @@ export default function Summary() {
 
 					saveCached({
 						id: data.id,
-						title: data.title || meetingTitle || `Meeting ${data.id}`, // Save title to cache
+						title: data.title || meetingTitle || `Meeting ${data.id}`,
 						summary: sum,
 						transcript: trn,
-						updatedAt: new Date().toISOString(), // saveCached itself should handle this, but explicit for clarity if needed
+						updatedAt: new Date().toISOString(),
 					})
 
-					// Update history with status 'complete'
 					const historyList = getHistory()
 					const existingMeta = historyList.find((m) => m.id === data.id)
 
@@ -150,15 +140,12 @@ export default function Summary() {
 						status: 'complete',
 					})
 				} else {
-					// Not done or no summary markdown yet
 					setIsProcessing(true)
-					setIsLoading(false) // No longer initial loading, now it's processing
+					setIsLoading(false)
 				}
 			} catch (err) {
 				if (loadedFromCache) {
 					console.error('Network fetch failed, displaying cached version. Error:', err)
-					// Optionally set a state for a subtle offline/error indicator
-					// e.g., setNetworkErrorOccurred(true);
 				} else {
 					if (err instanceof Error) {
 						setError(err.message)
@@ -170,8 +157,27 @@ export default function Summary() {
 				setIsProcessing(false)
 			}
 		},
-		[mid, loadedFromCache, meetingTitle], // added meetingTitle to dep array
+		[mid, loadedFromCache, meetingTitle],
 	)
+
+	const handleFeedbackSubmit = async (feedbackType: string, suggestionText?: string) => {
+		if (!mid) return
+		try {
+			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					meeting_id: mid,
+					feedback_type: feedbackType,
+					suggestion_text: suggestionText,
+				}),
+			})
+			setFeedbackSubmitted(true)
+		} catch (error) {
+			console.error('Failed to submit feedback:', error)
+			alert("Sorry, we couldn't submit your feedback right now.")
+		}
+	}
 
 	// Initial fetch
 	useEffect(() => {
@@ -181,42 +187,36 @@ export default function Summary() {
 				setSummary(cachedData.summary)
 				setTranscript(cachedData.transcript || null)
 				if (cachedData.title) {
-					// Load title from cache
 					setMeetingTitle(cachedData.title)
 				}
-				// setMeetingStartedAt(cachedData.updatedAt); // Or a specific 'cachedAt' field
 				setLoadedFromCache(true)
-				setIsLoading(false) // Show cached content quickly
+				setIsLoading(false)
 			}
 		}
-		// Existing fetchMeetingData call will still run to get latest
 		fetchMeetingData(true)
-	}, [mid]) // fetchMeetingData is not needed here as it's stable due to useCallback and mid is the real trigger
+	}, [mid])
 
 	// Polling mechanism
 	useEffect(() => {
 		if (!mid || !isProcessing) return
 
 		const pollInterval = setInterval(() => {
-			fetchMeetingData(false) // Not an initial fetch
+			fetchMeetingData(false)
 		}, 5000)
 
 		return () => clearInterval(pollInterval)
 	}, [mid, isProcessing, fetchMeetingData])
 
-	/* ─── styling ───────────────────────────────────────────────────── */
 	const pageTextStyles: React.CSSProperties = {
-		// <<< FIX: Explicitly set fontFamily from the theme >>>
 		fontFamily: currentThemeColors.fontFamily,
 		fontSize: 15,
 		lineHeight: 1.6,
 	}
 
 	return (
-		<div style={{ ...pageTextStyles, maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text /* Main text color */ }}>
+		<div style={{ ...pageTextStyles, maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
 			<ThemeToggle />
 
-			{/* <<< NEW: Back Button >>> */}
 			<button
 				onClick={() => navigate('/record')}
 				style={{
@@ -231,17 +231,14 @@ export default function Summary() {
 					padding: '0',
 					marginBottom: '24px',
 					transition: 'color 0.2s',
-					fontFamily: 'inherit', // Ensure button inherits the page font
+					fontFamily: 'inherit',
 				}}
 				onMouseOver={(e) => (e.currentTarget.style.color = currentThemeColors.text)}
 				onMouseOut={(e) => (e.currentTarget.style.color = currentThemeColors.secondaryText)}>
 				← Back to Recordings
 			</button>
 
-			{/* Title Display and Editing */}
 			<div style={{ marginBottom: '24px' }}>
-				{' '}
-				{/* Outer div for margin only */}
 				{isEditingTitle ? (
 					<input
 						type="text"
@@ -252,19 +249,19 @@ export default function Summary() {
 							if (e.key === 'Enter') handleTitleUpdateConfirm()
 							if (e.key === 'Escape') {
 								setIsEditingTitle(false)
-								setEditedTitle(meetingTitle || '') // Reset to original
+								setEditedTitle(meetingTitle || '')
 							}
 						}}
 						style={{
-							fontSize: '1.3em', // Reduced from 1.75em (approx 26% reduction)
+							fontSize: '1.3em',
 							fontWeight: 'bold',
 							padding: '8px 12px',
 							border: `1px solid ${currentThemeColors.input.border}`,
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
-							width: '100%', // Take full width
-							fontFamily: 'inherit', // Ensure input inherits font
+							width: '100%',
+							fontFamily: 'inherit',
 						}}
 						autoFocus
 					/>
@@ -274,7 +271,6 @@ export default function Summary() {
 						onMouseLeave={() => setIsTitleHovered(false)}
 						onClick={() => {
 							if (meetingTitle) {
-								// Only allow editing if title is loaded
 								setIsEditingTitle(true)
 								setEditedTitle(meetingTitle)
 							}
@@ -282,8 +278,8 @@ export default function Summary() {
 						style={{
 							color: currentThemeColors.text,
 							margin: 0,
-							display: 'inline-flex', // Keep text and icon on one line
-							alignItems: 'center', // Vertically align text and icon
+							display: 'inline-flex',
+							alignItems: 'center',
 							cursor: meetingTitle && !isEditingTitle ? 'pointer' : 'default',
 						}}>
 						{(() => {
@@ -291,32 +287,32 @@ export default function Summary() {
 								return meetingTitle
 							}
 							if (isLoading && !loadedFromCache) {
-								return ' ' // Non-breaking space or "Loading title..."
+								return ' '
 							}
 							if (error) {
 								return `Error loading title`
 							}
-							return `Summary for ${mid}` // Fallback
+							return `Summary for ${mid}`
 						})()}
 						{isTitleHovered && !isEditingTitle && meetingTitle && (
 							<span
 								onClick={(e) => {
-									e.stopPropagation() // Prevent H1's onClick from firing as well
+									e.stopPropagation()
 									if (meetingTitle) {
 										setIsEditingTitle(true)
 										setEditedTitle(meetingTitle)
 									}
 								}}
 								style={{
-									fontSize: '12px', // Reduced from 16px (25% reduction)
+									fontSize: '12px',
 									cursor: 'pointer',
-									marginLeft: '8px', // Space between title text and icon
-									color: currentThemeColors.secondaryText, // Or specific icon color
+									marginLeft: '8px',
+									color: currentThemeColors.secondaryText,
 								}}
 								role="button"
 								aria-label="Edit title"
 								title="Edit title">
-								✏️ {/* Edit icon, can be replaced with an SVG or icon font */}
+								✏️
 							</span>
 						)}
 					</h1>
@@ -324,7 +320,7 @@ export default function Summary() {
 			</div>
 
 			{isLoading && <p>Loading summary...</p>}
-			{error && <p style={{ color: currentThemeColors.button.danger /* Error text color */ }}>Error: {error}</p>}
+			{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
 
 			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
@@ -336,26 +332,26 @@ export default function Summary() {
 						h3: ({ node, ...props }) => <h3 style={{ color: currentThemeColors.text }} {...props} />,
 						p: ({ node, ...props }) => <p style={{ color: currentThemeColors.text }} {...props} />,
 						li: ({ node, ...props }) => <li style={{ color: currentThemeColors.text }} {...props} />,
-						// Add other elements as needed
 					}}>
 					{summary}
 				</ReactMarkdown>
 			)}
 
-			{/* Always show the transcript (even if no summary yet) */}
+			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} submitted={feedbackSubmitted} />}
+
 			{!isLoading && !error && transcript && (
 				<>
 					<h2 style={{ marginTop: 32, color: currentThemeColors.text }}>🎤 Transcript</h2>
 					<pre
 						style={{
-							...pageTextStyles, // Use updated style object
+							...pageTextStyles,
 							whiteSpace: 'pre-wrap',
-							backgroundColor: currentThemeColors.backgroundSecondary, // Themed background
-							color: currentThemeColors.text, // Themed text
+							backgroundColor: currentThemeColors.backgroundSecondary,
+							color: currentThemeColors.text,
 							padding: 16,
 							borderRadius: 4,
 							overflowX: 'auto',
-							border: `1px solid ${currentThemeColors.border}`, // Themed border
+							border: `1px solid ${currentThemeColors.border}`,
 						}}>
 						{transcript}
 					</pre>

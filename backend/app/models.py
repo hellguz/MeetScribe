@@ -51,6 +51,17 @@ class MeetingChunk(SQLModel, table=True):
     text: Optional[str] = None
 
 
+class Feedback(SQLModel, table=True):
+    """
+    Stores user feedback on summaries.
+    """
+    id: int | None = Field(default=None, primary_key=True)
+    meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
+    feedback_type: str  # e.g., 'too_short', 'too_detailed', 'accurate', 'inaccurate', 'general', 'feature_suggestion'
+    suggestion_text: Optional[str] = None
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+
 class MeetingCreate(SQLModel):
     """
     Payload for creating a meeting from the frontend.
@@ -58,6 +69,15 @@ class MeetingCreate(SQLModel):
 
     title: str
     expected_chunks: int | None = None
+
+
+class FeedbackCreate(SQLModel):
+    """
+    Payload for submitting feedback.
+    """
+    meeting_id: uuid.UUID
+    feedback_type: str
+    suggestion_text: Optional[str] = None
 
 
 class MeetingStatus(SQLModel):
