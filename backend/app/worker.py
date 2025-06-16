@@ -74,9 +74,6 @@ def load_whisper_on_startup(**kwargs):
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
     """
     Transcribes an audio chunk using either a cloud API (Groq) or a local model.
-    - For cloud transcription, it first converts the chunk to a standardized
-      16kHz mono FLAC file using ffmpeg for maximum compatibility and speed.
-    - For local transcription, it uses the faster-whisper model with VAD.
     """
     chunk_path = Path(chunk_path_str)
     whisper = get_whisper_model()
@@ -106,13 +103,14 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                     LOGGER.info(f"Successfully converted {chunk_path.name} to FLAC.")
                 except subprocess.CalledProcessError as e:
                     LOGGER.error(
-                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will send original."
+                        f"ffmpeg failed for {chunk_path.name}: {e.stderr}. Sending original."
                     )
                     path_to_transcribe = chunk_path
             else:
                 LOGGER.warning(
                     "ffmpeg not found. Sending original WebM file to cloud API."
                 )
+
             try:
                 with open(path_to_transcribe, "rb") as audio_file:
                     resp = _groq_client.audio.transcriptions.create(
@@ -159,7 +157,7 @@ def summarise_transcript_in_worker(
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
-        system_prompt = f"""
+        system_prompt = """
 You are 'Scribe', an AI analyst with deep expertise in project management and architectural critique. Your primary goal is to transform a raw meeting transcript into a comprehensive, clear, and actionable summary. The final document must be so thorough and insightful that a team member who missed the meeting can grasp all concepts, discussions, and critical feedback as if they were there. Prioritize completeness and clarity over brevity.
 
 <thinking_steps>
@@ -206,13 +204,13 @@ This is the core of the summary. For each **Key Concept** you identified, create
 """
 
         response = openai.chat.completions.create(
-            model="gpt-4.1-mini",  # Using a cost-effective model with strong reasoning.
-            temperature=0.3,  # Slightly higher temperature for more natural language
+            model="gpt-4.1-mini",
+            temperature=0.3,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Full meeting transcript:\n{full_transcript}",
+                    "content": f"## {meeting_title}\n_{date_str} — {time_range}_\n\nFull meeting transcript:\n{full_transcript}",
                 },
             ],
         )
@@ -222,7 +220,9 @@ This is the core of the summary. For each **Key Concept** you identified, create
         return "Error: Summary generation failed."
 
 
-def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> tuple[str, int]:
+def rebuild_full_transcript(
+    db_session: Session, meeting_id_uuid: uuid.UUID
+) -> tuple[str, int]:
     """Returns the full transcript text and the total number of chunks used."""
     chunks = db_session.exec(
         select(MeetingChunk.text)
@@ -236,32 +236,28 @@ def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> 
 
 def finalize_meeting_processing(db: Session, mtg: Meeting):
     """Centralized logic to finalize a meeting."""
-    LOGGER.info(
-        f"Meeting {mtg.id}: Finalizing. Building transcript and summarizing."
-    )
+    LOGGER.info(f"Meeting {mtg.id}: Finalizing. Building transcript and summarizing.")
     final_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
     mtg.transcript_text = final_transcript
-    
-    # --- NEW: Calculate and set word_count and duration ---
+
     if final_transcript:
         mtg.word_count = len(final_transcript.split())
-        # Assuming each chunk is roughly 30s as per frontend logic
         mtg.duration_seconds = num_chunks * 30
-        
+
         summary_md = summarise_transcript_in_worker(
             final_transcript, mtg.title, mtg.started_at.isoformat()
         )
         mtg.summary_markdown = summary_md
-        LOGGER.info(
-            f"✅ Meeting {mtg.id} summarized successfully by worker."
-        )
+        LOGGER.info(f"✅ Meeting {mtg.id} summarized successfully by worker.")
     else:
         LOGGER.warning(
             f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."
         )
         mtg.word_count = 0
         mtg.duration_seconds = 0
-        mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
+        mtg.summary_markdown = (
+            "Error: Transcript was empty, summary could not be generated."
+        )
 
     mtg.done = True
     db.add(mtg)
@@ -289,7 +285,9 @@ def process_transcription_and_summary(
                 )
             ).first()
             if not mc:
-                LOGGER.error(f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}.")
+                LOGGER.error(
+                    f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}."
+                )
                 return
             mc.text = chunk_text
             db.add(mc)
@@ -297,22 +295,39 @@ def process_transcription_and_summary(
 
             mtg = db.get(Meeting, meeting_id_uuid)
             if not mtg:
-                LOGGER.error(f"Meeting {meeting_id_str}: object not found after transcribing chunk.")
+                LOGGER.error(
+                    f"Meeting {meeting_id_str}: object not found after transcribing chunk."
+                )
                 return
 
-            transcribed_count = db.scalar(
-                select(func.count(MeetingChunk.id)).where(
-                    MeetingChunk.meeting_id == meeting_id_uuid,
-                    MeetingChunk.text.is_not(None),
+            transcribed_count = (
+                db.scalar(
+                    select(func.count(MeetingChunk.id)).where(
+                        MeetingChunk.meeting_id == meeting_id_uuid,
+                        MeetingChunk.text.is_not(None),
+                    )
                 )
-            ) or 0
-            
-            effective_expected = mtg.expected_chunks if mtg.expected_chunks is not None else mtg.received_chunks
-            
-            if not mtg.done and mtg.final_received and effective_expected > 0 and transcribed_count >= effective_expected:
+                or 0
+            )
+
+            effective_expected = (
+                mtg.expected_chunks
+                if mtg.expected_chunks is not None
+                else mtg.received_chunks
+            )
+
+            if (
+                not mtg.done
+                and mtg.final_received
+                and effective_expected > 0
+                and transcribed_count >= effective_expected
+            ):
                 finalize_meeting_processing(db, mtg)
     except Exception as exc:
-        LOGGER.error(f"Error processing task for {meeting_id_str}, chunk {chunk_index}: {exc}", exc_info=True)
+        LOGGER.error(
+            f"Error processing task for {meeting_id_str}, chunk {chunk_index}: {exc}",
+            exc_info=True,
+        )
         self.retry(exc=exc)
 
 
@@ -331,10 +346,11 @@ def generate_summary_only(self, meeting_id_str: str):
         if not mtg:
             LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
             return
-        
-        # Ensure we're not re-doing work
+
         if mtg.done:
-            LOGGER.info("Meeting %s already summarized. Aborting regen.", meeting_id_str)
+            LOGGER.info(
+                "Meeting %s already summarized. Aborting regen.", meeting_id_str
+            )
             return
 
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)

@@ -52,20 +52,12 @@ INACTIVITY_TIMEOUT_SECONDS = 120
 
 
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
-    """
-    Assembles a live transcript based on expected or received chunks,
-    using "[...]" as a placeholder for pending or failed chunks.
-    """
     mtg = db.get(Meeting, meeting_id)
     if not mtg:
         return ""
-
-    # Determine the number of chunks to display
     max_chunk_count = mtg.received_chunks
     if mtg.final_received and mtg.expected_chunks is not None:
         max_chunk_count = mtg.expected_chunks
-
-    # Fetch all MeetingChunk objects for the meeting
     all_meeting_chunks = db.exec(
         select(MeetingChunk)
         .where(MeetingChunk.meeting_id == meeting_id)
@@ -84,9 +76,6 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
 def create_meeting(body: MeetingCreate, request: Request):
-    """
-    Create a new meeting. Now captures User-Agent.
-    """
     with Session(engine) as db:
         user_agent = request.headers.get("user-agent")
         mtg = Meeting(**body.model_dump(), user_agent=user_agent)
@@ -103,19 +92,14 @@ async def upload_chunk(
     file: UploadFile = File(...),
     is_final: bool = Form(False),
 ):
-    """
-    Upload a chunk.
-      • Each chunk is saved and queued for transcription.
-      • We increment received_chunks and update last_activity for any chunk with content.
-      • Tiny chunks (<0.1 KB) are treated as signaling (e.g., final empty chunk) and are not transcribed.
-      • If is_final=True, we set final_received=True and expected_chunks=received_chunks.
-    """
     with Session(engine) as db:
         mtg = db.get(Meeting, meeting_id)
         if not mtg:
             raise HTTPException(404, "Meeting not found")
+
         mtg_dir = AUDIO_DIR / str(meeting_id)
         mtg_dir.mkdir(parents=True, exist_ok=True)
+
         chunk_path = mtg_dir / f"chunk_{chunk_index:03d}.webm"
         with chunk_path.open("wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -136,18 +120,10 @@ async def upload_chunk(
                 mtg.final_received = True
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
-            db.add(mtg)
-            db.commit()
-            db.refresh(mtg)
-            return {
-                "ok": True,
-                "skipped": True,
-                "received_chunks": mtg.received_chunks,
-                "done": mtg.done,
-                "expected_chunks": mtg.expected_chunks,
-            }
+                db.add(mtg)
+                db.commit()
+            return {"ok": True, "skipped": True}
 
-        # (size ≥ 0.1 KB) → real chunk
         mc = db.exec(
             select(MeetingChunk).where(
                 MeetingChunk.meeting_id == meeting_id,
@@ -156,22 +132,16 @@ async def upload_chunk(
         ).first()
         if not mc:
             mc = MeetingChunk(
-                meeting_id=meeting_id,
-                chunk_index=chunk_index,
-                path=str(chunk_path),
-                text=None,
+                meeting_id=meeting_id, chunk_index=chunk_index, path=str(chunk_path)
             )
         else:
             mc.path = str(chunk_path)
             mc.text = None
         db.add(mc)
 
-        # Increment and update activity for this chunk.
         mtg.received_chunks += 1
         mtg.last_activity = dt.datetime.utcnow()
 
-        # If a new, real chunk arrives for a meeting that was already
-        # summarized, we must reset its state to allow for re-summarization.
         if mtg.done:
             LOGGER.warning(
                 f"Meeting {meeting_id} was complete but received new chunk {chunk_index}. Resetting summary."
@@ -186,36 +156,21 @@ async def upload_chunk(
 
         db.add(mtg)
         db.commit()
-        db.refresh(mtg)
 
-    # Dispatch Celery task for transcription
     process_transcription_and_summary.delay(
         meeting_id_str=str(meeting_id),
         chunk_index=chunk_index,
         chunk_path_str=str(chunk_path.resolve()),
     )
-
-    return {
-        "ok": True,
-        "skipped": False,
-        "received_chunks": mtg.received_chunks,
-        "done": mtg.done,
-        "expected_chunks": mtg.expected_chunks,
-    }
+    return {"ok": True, "skipped": False}
 
 
 @app.get("/api/meetings/{mid}", response_model=MeetingStatus)
 def get_meeting(mid: uuid.UUID):
-    """
-    Retrieve meeting status and (lazily) trigger a summary regeneration
-    *only if the user asks for this meeting and the summary is missing*.
-    """
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
             raise HTTPException(404, "Meeting not found")
-
-        # ---------------- inactivity timeout (unchanged) -------------
         now = dt.datetime.utcnow()
         if (
             not mtg.final_received
@@ -227,33 +182,26 @@ def get_meeting(mid: uuid.UUID):
             db.add(mtg)
             db.commit()
             db.refresh(mtg)
-
-        # ---------------- count processed chunks ---------------------
         transcribed_count = (
             db.scalar(
                 select(func.count(MeetingChunk.id)).where(
-                    MeetingChunk.meeting_id == mid,
-                    MeetingChunk.text.is_not(None),
+                    MeetingChunk.meeting_id == mid, MeetingChunk.text.is_not(None)
                 )
             )
             or 0
         )
-
-        # ---------------- LAZY summary trigger -----------------------
         if (
             not mtg.done
             and not mtg.summary_task_queued
-            and mtg.summary_markdown in (None, "")
+            and not mtg.summary_markdown
             and mtg.final_received
             and mtg.expected_chunks
             and transcribed_count >= mtg.expected_chunks
         ):
-            LOGGER.info("Queueing summary-only task for meeting %s", mid)
             generate_summary_only.delay(str(mid))
             mtg.summary_task_queued = True
             db.add(mtg)
             db.commit()
-        # ---------------- build live transcript (unchanged) ----------
         live_tx = _build_live_transcript(db, mid)
         data = mtg.model_dump()
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
@@ -263,14 +211,10 @@ def get_meeting(mid: uuid.UUID):
 
 @app.put("/api/meetings/{mid}/title", response_model=Meeting)
 async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
-    """
-    Update the title of a meeting.
-    """
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
-
         mtg.title = payload.title
         db.add(mtg)
         db.commit()
@@ -292,14 +236,9 @@ def create_feedback(body: FeedbackCreate):
 
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats():
-    """
-    Heavily upgraded endpoint for rich dashboard statistics.
-    """
     with Session(engine) as db:
         today = dt.date.today()
         start_of_today = dt.datetime.combine(today, dt.time.min)
-
-        # --- Total Stats ---
         total_summaries = (
             db.scalar(select(func.count(Meeting.id)).where(Meeting.done == True)) or 0
         )
@@ -319,8 +258,6 @@ def get_dashboard_stats():
             )
             or 0
         )
-
-        # --- Today's Stats ---
         summaries_today = (
             db.scalar(
                 select(func.count(Meeting.id)).where(
@@ -347,12 +284,9 @@ def get_dashboard_stats():
             )
             or 0
         )
-
-        # --- Device/User Agent Stats ---
         user_agent_results = db.exec(
             select(Meeting.user_agent).where(Meeting.user_agent.is_not(None))
         ).all()
-        # Basic parsing for major browsers/OS
         device_counts = Counter()
         for ua in user_agent_results:
             ua_lower = ua.lower()
@@ -368,15 +302,12 @@ def get_dashboard_stats():
                 device_counts["Android"] += 1
             else:
                 device_counts["Other"] += 1
-
-        # --- Feedback Stats (same as before) ---
         feedback_counts_query = db.exec(
             select(Feedback.feedback_type, func.count(Feedback.id)).group_by(
                 Feedback.feedback_type
             )
         ).all()
         feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
-
         suggestions_query = db.exec(
             select(Feedback, Meeting.title)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -393,15 +324,12 @@ def get_dashboard_stats():
             }
             for f, title in suggestions_query
         ]
-
-        # --- Timeline data ---
         meetings_by_day = db.exec(
             select(func.date(Meeting.started_at), func.count(Meeting.id))
             .group_by(func.date(Meeting.started_at))
             .order_by(func.date(Meeting.started_at))
-            .limit(90)  # Last 90 days
+            .limit(90)
         ).all()
-
     return {
         "all_time": {
             "total_summaries": total_summaries,
