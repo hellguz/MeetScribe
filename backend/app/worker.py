@@ -72,13 +72,61 @@ def load_whisper_on_startup(**kwargs):
 
 
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
-    # ... (this function remains the same)
+    """
+    Transcribes an audio chunk using either a cloud API (Groq) or a local model.
+    - For cloud transcription, it first converts the chunk to a standardized
+      16kHz mono FLAC file using ffmpeg for maximum compatibility and speed.
+    - For local transcription, it uses the faster-whisper model with VAD.
+    """
     chunk_path = Path(chunk_path_str)
     whisper = get_whisper_model()
     try:
         if settings.recognition_in_cloud:
-            # ... cloud transcription logic
-            return "Cloud transcription logic here"
+            path_to_transcribe = chunk_path
+            output_flac_path = None
+            if shutil.which("ffmpeg"):
+                output_flac_path = chunk_path.with_suffix(".flac")
+                try:
+                    command = [
+                        "ffmpeg",
+                        "-i",
+                        str(chunk_path),
+                        "-y",
+                        "-vn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-sample_fmt",
+                        "s16",
+                        str(output_flac_path),
+                    ]
+                    subprocess.run(command, check=True, capture_output=True, text=True)
+                    path_to_transcribe = output_flac_path
+                    LOGGER.info(f"Successfully converted {chunk_path.name} to FLAC.")
+                except subprocess.CalledProcessError as e:
+                    LOGGER.error(
+                        f"ffmpeg conversion failed for {chunk_path.name}: {e.stderr}. Will send original."
+                    )
+                    path_to_transcribe = chunk_path
+            else:
+                LOGGER.warning(
+                    "ffmpeg not found. Sending original WebM file to cloud API."
+                )
+            try:
+                with open(path_to_transcribe, "rb") as audio_file:
+                    resp = _groq_client.audio.transcriptions.create(
+                        file=(path_to_transcribe.name, audio_file.read()),
+                        model="whisper-large-v3",
+                        response_format="verbose_json",
+                    )
+                LOGGER.info(
+                    f"Cloud transcription succeeded for {path_to_transcribe.name}"
+                )
+                return resp.text.strip()
+            finally:
+                if output_flac_path and output_flac_path.exists():
+                    output_flac_path.unlink()
         else:
             segments, _info = whisper.transcribe(
                 str(chunk_path),
@@ -99,14 +147,79 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
 def summarise_transcript_in_worker(
     full_transcript: str, meeting_title: str, started_at_iso: str
 ) -> str:
-    # ... (this function remains the same)
     if not full_transcript or len(full_transcript.strip()) < 20:
         return "Recording too short to generate a meaningful summary."
 
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
-    # ... rest of the summarization logic
-    return "Summary generation logic here"
+
+    try:
+        started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
+        date_str = started_at_dt.strftime("%Y-%m-%d")
+        end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
+        time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
+
+        system_prompt = f"""
+You are 'Scribe', an AI analyst with deep expertise in project management and architectural critique. Your primary goal is to transform a raw meeting transcript into a comprehensive, clear, and actionable summary. The final document must be so thorough and insightful that a team member who missed the meeting can grasp all concepts, discussions, and critical feedback as if they were there. Prioritize completeness and clarity over brevity.
+
+<thinking_steps>
+**1. Internal Analysis (Do Not Output This Section)**
+Before writing, you MUST first perform a deep, silent analysis of the transcript:
+- **Purpose & Vibe:** What is the main goal of this meeting (e.g., project critique, brainstorm, planning)? What is the overall tone (e.g., formal, collaborative, critical)?
+- **Key Concepts Presented:** Identify the 2-4 core ideas or components that were presented or discussed (e.g., "Modular Housing Typologies," "Zoning Strategy").
+- **Critiques & Directives:** This is critical. Create a detailed list of every piece of specific feedback, criticism, or suggestion given. For each, note *what* was criticized and *what the specific recommendation was*. Do not generalize; capture the exact suggestions.
+- **Narrative Flow:** How do the concepts and critiques connect? What is the story of the meeting from start to finish?
+- **Dominant Language:** Identify the primary language of the conversation.
+</thinking_steps>
+
+<output_rules>
+**2. Final Output Generation**
+Your final response MUST BE ONLY the Markdown summary. It must start directly with the `##` heading for the meeting title. DO NOT include any commentary, preamble, or the content from your `<thinking_steps>`. The summary should be detailed and adopt a clear, professional-yet-human tone.
+
+---
+## {meeting_title}
+_{date_str} — {time_range}_
+
+### Summary
+Write an approachable and insightful paragraph (3-5 sentences) that sets the scene for the meeting. It should summarize the project's state, the main topics discussed, and the overall 'vibe' of the conversation, including the nature of the feedback received. Use a natural, conversational tone.
+
+---
+*(...Thematic Sections Go Here...)*
+---
+
+### Key Decisions & Actionable Next Steps
+- This section must be comprehensive.
+- **Decisions:** List any firm decisions made.
+- **Action Items:** List both EXPLICIT and IMPLICIT tasks. If someone says, "It would be nice to see a section view," that is an implicit action item. Capture everything a team member would need to act on.
+- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision, including the 'why' or context].`
+- *(Omit this section ONLY if there were absolutely no decisions or actionable suggestions).*
+</output_rules>
+
+<thematic_body_instructions>
+This is the core of the summary. For each **Key Concept** you identified, create a `###` heading.
+- **Explain the Concept:** First, use a paragraph to describe the idea as it was presented by the team.
+- **Capture All Specific Critiques and Suggestions:** Then, create a sub-section titled `**Feedback & Discussion:**`. Under this, use a detailed bulleted list to present EVERY piece of critique and all suggestions you extracted for that topic.
+- **Do not generalize with phrases like "suggestions were made."** Instead, list the exact suggestions. For example, instead of "The visuals needed to be clearer," write "- It was suggested to use grey for existing buildings and saturated colors for new interventions to improve clarity on the masterplan." This level of detail is mandatory.
+
+**CRITICAL:** The entire summary, including all headings and text, **MUST be in the dominant language** you identified in your internal analysis.
+</thematic_body_instructions>
+"""
+
+        response = openai.chat.completions.create(
+            model="gpt-4.1-mini",  # Using a cost-effective model with strong reasoning.
+            temperature=0.3,  # Slightly higher temperature for more natural language
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": f"Full meeting transcript:\n{full_transcript}",
+                },
+            ],
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        LOGGER.error(f"Celery Worker: Summary generation failed: {e}", exc_info=True)
+        return "Error: Summary generation failed."
 
 
 def rebuild_full_transcript(db_session: Session, meeting_id_uuid: uuid.UUID) -> tuple[str, int]:
