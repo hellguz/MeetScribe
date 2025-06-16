@@ -1,6 +1,9 @@
 services:
   redis:
     image: redis:alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
 
   backend:
     build: ./backend
@@ -21,6 +24,7 @@ services:
       - ./backend:/app             # code
     env_file: [.env]
     depends_on: [redis]
+    stop_grace_period: 1m
 
   frontend:
     build:
@@ -35,3 +39,4 @@ services:
 
 volumes:
   whisper-cache: {}               # named volume persists model weights
+  redis-data: {}
