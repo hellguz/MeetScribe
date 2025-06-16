@@ -284,9 +284,9 @@ def cleanup_stuck_meetings():
                 # If all chunks are processed, maybe the summary task failed.
                 # The existing lazy-summary logic in main.py will handle this on the next user request.
                 # Or perhaps the meeting just finished and is about to be marked done.
-                LOGGER.info(
-                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
-                )
+                # LOGGER.info(
+                #     f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                # )
                 continue
 
             LOGGER.warning(
