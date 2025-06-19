@@ -28,6 +28,7 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
+    summary_length: str = Field(default="medium")  # short, medium, long, custom
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -61,6 +62,7 @@ class MeetingCreate(SQLModel):
 
     title: str
     expected_chunks: int | None = None
+    summary_length: str | None = None
 
 
 class FeedbackCreate(SQLModel):
@@ -87,6 +89,7 @@ class MeetingStatus(SQLModel):
     received_chunks: int
     expected_chunks: Optional[int]
     transcribed_chunks: int
+    summary_length: str
 
 
 class MeetingTitleUpdate(SQLModel):
@@ -114,3 +117,12 @@ class MeetingSyncRequest(SQLModel):
     meeting IDs the client is aware of.
     """
     ids: list[uuid.UUID]
+
+
+class RegeneratePayload(SQLModel):
+    """
+    Payload for the regenerate endpoint, allowing a new
+    summary length to be specified.
+    """
+
+    summary_length: str | None = None

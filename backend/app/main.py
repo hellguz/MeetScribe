@@ -23,6 +23,7 @@ from .models import (
     FeedbackCreate,
     MeetingMeta,
     MeetingSyncRequest,
+    RegeneratePayload,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -80,7 +81,11 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 def create_meeting(body: MeetingCreate, request: Request):
     with Session(engine) as db:
         user_agent = request.headers.get("user-agent")
-        mtg = Meeting(**body.model_dump(), user_agent=user_agent)
+        mtg_data = body.model_dump()
+        # If summary_length is not provided by client, let the DB model's default apply
+        if body.summary_length is None:
+            mtg_data.pop("summary_length", None)
+        mtg = Meeting(**mtg_data, user_agent=user_agent)
         db.add(mtg)
         db.commit()
         db.refresh(mtg)
@@ -250,15 +255,30 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
 
 
 @app.post("/api/meetings/{mid}/regenerate", status_code=200)
-def regenerate_meeting_summary(mid: uuid.UUID):
+def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
     """
     Resets a meeting's summary state, which will cause the frontend's
-    polling to trigger a regeneration task.
+    polling to trigger a regeneration task. Can optionally update the
+    desired summary length at the same time.
     """
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # If a new length is provided, update it on the meeting object
+        if payload.summary_length and payload.summary_length in [
+            "short",
+            "medium",
+            "long",
+            "custom",
+        ]:
+            mtg.summary_length = payload.summary_length
+            LOGGER.info(
+                "Updated summary length for meeting %s to '%s'",
+                mid,
+                payload.summary_length,
+            )
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False

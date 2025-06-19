@@ -168,15 +168,12 @@ def generate_title_for_meeting(summary: str, full_transcript: str) -> str:
 
     try:
         title_prompt = f"""
-Analyze the following meeting summary and the full transcript.
-Your task is to generate a short, dense, and meaningful title for the meeting.
-
+Analyze the following meeting summary and the full transcript. Your task is to generate a short, dense, and meaningful title for the meeting.
 **Instructions:**
 1.  **Language:** The title MUST be in the same language as the summary and transcript.
 2.  **Length:** The title must be between 6 and 15 words.
 3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
-
 **Meeting Summary:**
 ---
 {summary}
@@ -236,7 +233,10 @@ def detect_language(transcript_snippet: str) -> str:
 
 
 def summarise_transcript_in_worker(
-    full_transcript: str, meeting_title: str, started_at_iso: str
+    full_transcript: str,
+    meeting_title: str,
+    started_at_iso: str,
+    summary_length: str,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
@@ -253,9 +253,16 @@ def summarise_transcript_in_worker(
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
+        LENGTH_PROMPTS = {
+            "short": "The summary should be concise, approximately 250-300 words (about half a standard page). Focus only on the most critical outcomes and action items.",
+            "medium": "The summary should be detailed but well-balanced, approximately 500-600 words (about one standard page). Cover all major topics and their conclusions.",
+            "long": "The summary should be comprehensive, approximately 1000-1200 words (about two standard pages). Provide a thorough account of the discussion, including nuances and supporting arguments.",
+            "custom": "Use your expert judgment to determine the appropriate length and level of detail for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
+        }
+        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["medium"])
+
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
-
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
@@ -264,6 +271,7 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
 - **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
+- **Adhere to Length Requirement:** The user has requested a specific summary length. **Adhere to this constraint:** "{length_instruction}"
 - **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
 - **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
 </thinking_steps>
@@ -272,14 +280,12 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 **2. Final Output Generation**
 - Your response MUST BE ONLY the Markdown summary.
 - Start directly with the `##` heading.
-
 ---
 ## {meeting_title}
 _{date_str} — {time_range}_
 
 #### Summary
 Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
-
 ---
 *(...Thematic Sections Go Here...)*
 ---
@@ -292,7 +298,6 @@ Write an insightful overview paragraph (3-5 sentences). It should set the scene,
 
 <thematic_body_instructions>
 This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
-
 - **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
 - **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Feedback & Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback. **This is crucial for design reviews.**
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
@@ -306,7 +311,7 @@ This is the core of the summary. For each **Key Theme** you identified, create a
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Please summarize the following transcript, following all instructions including the language requirement:\n\n{full_transcript}",
+                    "content": f"Please summarize the following transcript, following all instructions including the language and length requirement:\n\n{full_transcript}",
                 },
             ],
         )
@@ -342,7 +347,10 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         mtg.duration_seconds = num_chunks * 30  # Assuming 30s chunks
 
         summary_md = summarise_transcript_in_worker(
-            final_transcript, mtg.title, mtg.started_at.isoformat()
+            final_transcript,
+            mtg.title,
+            mtg.started_at.isoformat(),
+            mtg.summary_length,
         )
         mtg.summary_markdown = summary_md
 

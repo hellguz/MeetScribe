@@ -2,17 +2,19 @@ import React, { useRef, useState, useEffect, useCallback, useMemo, useContext } 
 import { useNavigate } from 'react-router-dom'
 import { getHistory, MeetingMeta, saveMeeting, syncHistory } from '../utils/history'
 import ThemeToggle from '../components/ThemeToggle'
-import { ThemeContext } from '../contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
+import SummaryLengthSelector from '../components/SummaryLengthSelector'
+import { useSummaryLength } from '../contexts/SummaryLengthContext'
 
 type AudioSource = 'mic' | 'system' | 'file'
 
 export default function Record() {
 	const navigate = useNavigate()
-	const themeContext = useContext(ThemeContext)
-	if (!themeContext) throw new Error('ThemeContext not found')
-	const { theme } = themeContext
+	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
+
+	const { summaryLength } = useSummaryLength()
 
 	/* ─── history list ──────────────────────────────────────────────── */
 	const [history, setHistory] = useState<MeetingMeta[]>([])
@@ -311,26 +313,29 @@ export default function Record() {
 		}
 	}, [editingMeetingId, editingTitle, history])
 
-	const createMeetingOnBackend = useCallback(async (titleOverride?: string) => {
-		const title = titleOverride || `Recording ${new Date().toLocaleString()}`
-		const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title }),
-		})
-		if (!res.ok) throw new Error('Failed to create meeting on backend')
-		const data = await res.json()
-		meetingId.current = data.id
+	const createMeetingOnBackend = useCallback(
+		async (titleOverride?: string) => {
+			const title = titleOverride || `Recording ${new Date().toLocaleString()}`
+			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title, summary_length: summaryLength }),
+			})
+			if (!res.ok) throw new Error('Failed to create meeting on backend')
+			const data = await res.json()
+			meetingId.current = data.id
 
-		saveMeeting({
-			id: data.id,
-			title,
-			started_at: new Date().toISOString(),
-			status: 'pending',
-		})
-		setHistory(getHistory())
-		return data.id
-	}, [])
+			saveMeeting({
+				id: data.id,
+				title,
+				started_at: new Date().toISOString(),
+				status: 'pending',
+			})
+			setHistory(getHistory())
+			return data.id
+		},
+		[summaryLength],
+	)
 
 	const uploadChunk = useCallback(async (blob: Blob, index: number, isFinal = false) => {
 		if (!meetingId.current) {
@@ -726,30 +731,36 @@ export default function Record() {
 			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
 			{!isUiLocked && (
-				<div style={{ marginBottom: '24px' }}>
-					<div style={{ textAlign: 'center', marginBottom: '16px' }}>
-						<label htmlFor="audio-source-select" style={{ marginRight: '10px', fontWeight: 500, color: currentThemeColors.text }}>
-							Audio Source:
-						</label>
-						<select
-							id="audio-source-select"
-							value={audioSource}
-							onChange={(e) => {
-								setAudioSource(e.target.value as AudioSource)
-								setSelectedFile(null)
-							}}
-							style={{
-								padding: '8px 12px',
-								borderRadius: '6px',
-								border: `1px solid ${currentThemeColors.input.border}`,
-								fontSize: '16px',
-								backgroundColor: currentThemeColors.input.background,
-								color: currentThemeColors.input.text,
-							}}>
-							<option value="mic">Microphone</option>
-							<option value="system">System Audio (Speakers)</option>
-							<option value="file">Upload Audio File</option>
-						</select>
+				<div style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+					<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+						<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+							<label htmlFor="audio-source-select" style={{ fontWeight: 500, color: currentThemeColors.text }}>
+								Audio Source:
+							</label>
+							<select
+								id="audio-source-select"
+								value={audioSource}
+								onChange={(e) => {
+									setAudioSource(e.target.value as AudioSource)
+									setSelectedFile(null)
+								}}
+								style={{
+									padding: '8px 12px',
+									borderRadius: '6px',
+									border: `1px solid ${currentThemeColors.input.border}`,
+									fontSize: '16px',
+									backgroundColor: currentThemeColors.input.background,
+									color: currentThemeColors.input.text,
+								}}>
+								<option value="mic">Microphone</option>
+								<option value="system">System Audio (Speakers)</option>
+								<option value="file">Upload Audio File</option>
+							</select>
+						</div>
+						<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+							<label style={{ fontWeight: 500, color: currentThemeColors.text }}>Summary Length:</label>
+							<SummaryLengthSelector />
+						</div>
 					</div>
 
 					{audioSource === 'system' && !isSystemAudioSupported && (

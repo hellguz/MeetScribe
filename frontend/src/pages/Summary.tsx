@@ -5,16 +5,18 @@ import ReactMarkdown from 'react-markdown'
 import { saveMeeting, getHistory } from '../utils/history'
 import { getCached, saveCached } from '../utils/summaryCache'
 import ThemeToggle from '../components/ThemeToggle'
-import { ThemeContext } from '../contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent' // Import the new component
+import SummaryLengthSelector from '../components/SummaryLengthSelector'
+import { useSummaryLength, SummaryLength } from '../contexts/SummaryLengthContext'
 
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
-	const themeContext = useContext(ThemeContext)
-	if (!themeContext) throw new Error('ThemeContext not found')
-	const { theme } = themeContext
+	const { theme } = useTheme()
+	const { summaryLength, setSummaryLength } = useSummaryLength()
+
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const [summary, setSummary] = useState<string | null>(null)
 	const [transcript, setTranscript] = useState<string | null>(null)
@@ -108,6 +110,11 @@ export default function Summary() {
 				const trn = data.transcript_text || null
 				setTranscript(trn)
 
+				// Set summary length from the meeting data on initial load
+				if (data.summary_length) {
+					setSummaryLength(data.summary_length)
+				}
+
 				if (isInitialFetch) {
 					if (!meetingTitle && data.title) {
 						setMeetingTitle(data.title)
@@ -160,7 +167,7 @@ export default function Summary() {
 				setIsProcessing(false)
 			}
 		},
-		[mid, loadedFromCache, meetingTitle],
+		[mid, loadedFromCache, meetingTitle, setSummaryLength],
 	)
 
 	const handleFeedbackSubmit = async (feedbackTypes: string[], suggestionText?: string) => {
@@ -182,33 +189,39 @@ export default function Summary() {
 		}
 	}
 
-	const handleRegenerate = useCallback(async () => {
-		if (!mid) return
-		setIsRegenerating(true)
-		setError(null) // Clear previous errors
+	const handleRegenerate = useCallback(
+		async (newLength?: SummaryLength) => {
+			if (!mid) return
+			setIsRegenerating(true)
+			setError(null) // Clear previous errors
 
-		try {
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
-				method: 'POST',
-			})
+			try {
+				const payload = newLength ? { summary_length: newLength } : {}
+				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				})
 
-			if (!res.ok) {
-				throw new Error('Failed to start summary regeneration.')
+				if (!res.ok) {
+					throw new Error('Failed to start summary regeneration.')
+				}
+
+				// Clear the old summary and start the polling process
+				setSummary(null)
+				setIsProcessing(true)
+			} catch (err) {
+				if (err instanceof Error) {
+					setError(err.message)
+				} else {
+					setError('An unknown error occurred during regeneration.')
+				}
+			} finally {
+				setIsRegenerating(false)
 			}
-
-			// Clear the old summary and start the polling process
-			setSummary(null)
-			setIsProcessing(true)
-		} catch (err) {
-			if (err instanceof Error) {
-				setError(err.message)
-			} else {
-				setError('An unknown error occurred during regeneration.')
-			}
-		} finally {
-			setIsRegenerating(false)
-		}
-	}, [mid])
+		},
+		[mid],
+	)
 
 	// Initial fetch
 	useEffect(() => {
@@ -355,6 +368,20 @@ export default function Summary() {
 
 			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
+			{!isLoading && !error && (
+				<div style={{ marginBottom: '24px' }}>
+					<SummaryLengthSelector
+						disabled={isProcessing || isRegenerating}
+						onSelect={(newLength) => {
+							if (newLength !== summaryLength) {
+								setSummaryLength(newLength) // Update context/localStorage
+								handleRegenerate(newLength) // Trigger API call
+							}
+						}}
+					/>
+				</div>
+			)}
+
 			{summary && (
 				<ReactMarkdown
 					components={{
@@ -413,7 +440,7 @@ export default function Summary() {
 			{!isLoading && transcript && (
 				<div style={{ marginTop: '32px', textAlign: 'center' }}>
 					<button
-						onClick={handleRegenerate}
+						onClick={() => handleRegenerate()}
 						disabled={isRegenerating || isProcessing}
 						style={{
 							padding: '10px 20px',
