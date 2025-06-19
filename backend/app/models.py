@@ -28,6 +28,7 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
+    summary_length: str = Field(default="auto")  # auto, short, medium, long, or a word count as a string
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -45,6 +46,8 @@ class MeetingChunk(SQLModel, table=True):
 class Feedback(SQLModel, table=True):
     """
     Stores user feedback on summaries.
+    Uniqueness on (meeting_id, feedback_type) is enforced by a
+    migration script, not the ORM, to support older SQLite versions.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -61,16 +64,24 @@ class MeetingCreate(SQLModel):
 
     title: str
     expected_chunks: int | None = None
+    summary_length: str | None = None
 
 
 class FeedbackCreate(SQLModel):
     """
-    Payload for submitting feedback.
+    Payload for submitting feedback. Can be a type or a suggestion.
     """
-
     meeting_id: uuid.UUID
-    feedback_types: List[str]
+    feedback_type: str
     suggestion_text: Optional[str] = None
+
+
+class FeedbackDelete(SQLModel):
+    """
+    Payload for deleting a feedback item.
+    """
+    meeting_id: uuid.UUID
+    feedback_type: str
 
 
 class MeetingStatus(SQLModel):
@@ -87,6 +98,8 @@ class MeetingStatus(SQLModel):
     received_chunks: int
     expected_chunks: Optional[int]
     transcribed_chunks: int
+    summary_length: str
+    feedback: list[str] = [] # List of submitted feedback types
 
 
 class MeetingTitleUpdate(SQLModel):
@@ -114,3 +127,20 @@ class MeetingSyncRequest(SQLModel):
     meeting IDs the client is aware of.
     """
     ids: list[uuid.UUID]
+
+
+class RegeneratePayload(SQLModel):
+    """
+    Payload for the regenerate endpoint, allowing a new
+    summary length to be specified.
+    """
+
+    summary_length: str | None = None
+
+
+class MeetingConfigUpdate(SQLModel):
+    """
+    Payload for updating a meeting's configuration, like summary length.
+    """
+
+    summary_length: str

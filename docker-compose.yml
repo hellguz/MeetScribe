@@ -10,21 +10,32 @@ services:
 
   backend:
     build: ./backend
+    command: >
+      sh -c "python /app/utils/add_meeting_metadata_columns.py &&
+             python /app/utils/add_suggestion_column.py &&
+             python /app/utils/add_summary_length_column.py &&
+             python /app/utils/add_feedback_uniqueness.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "4131:8000"
     volumes:
-      - ./data:/app/data           # audio + SQLite
-      - ./backend:/app             # hot-reload code in dev
+      - ./data:/app/data
+      - ./backend:/app
     env_file: [.env]
     depends_on: [redis]
 
   celeryworker:
-    build: ./backend              # same image as backend
-    command: celery -A app.worker.celery_app worker -l info -c 1
+    build: ./backend
+    command: >
+      sh -c "python /app/utils/add_meeting_metadata_columns.py &&
+             python /app/utils/add_suggestion_column.py &&
+             python /app/utils/add_summary_length_column.py &&
+             python /app/utils/add_feedback_uniqueness.py &&
+             celery -A app.worker.celery_app worker -l info -c 1"
     volumes:
-      - whisper-cache:/root/.cache # ← HuggingFace + CTranslate2 cache
-      - ./data:/app/data           # DB + audio
-      - ./backend:/app             # code
+      - whisper-cache:/root/.cache
+      - ./data:/app/data
+      - ./backend:/app
     env_file: [.env]
     depends_on: [redis]
     # Add grace period: allows worker to finish its current task

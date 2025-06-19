@@ -13,6 +13,9 @@ from faster_whisper import WhisperModel
 from groq import BadRequestError, Groq
 import openai
 from sqlmodel import Session, select, func, create_engine
+from langdetect import detect, DetectorFactory
+from langdetect.lang_detect_exception import LangDetectException
+
 
 from .config import settings
 from .models import Meeting, MeetingChunk
@@ -52,6 +55,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s][%(module)s.%(funcName)s:%(lineno)d] %(message)s",
 )
 
+# It's recommended to set a seed for consistent results for short texts
+DetectorFactory.seed = 0
 
 def get_db_engine():
     global _db_engine_instance
@@ -168,15 +173,12 @@ def generate_title_for_meeting(summary: str, full_transcript: str) -> str:
 
     try:
         title_prompt = f"""
-Analyze the following meeting summary and the full transcript.
-Your task is to generate a short, dense, and meaningful title for the meeting.
-
+Analyze the following meeting summary and the full transcript. Your task is to generate a short, dense, and meaningful title for the meeting.
 **Instructions:**
 1.  **Language:** The title MUST be in the same language as the summary and transcript.
 2.  **Length:** The title must be between 6 and 15 words.
 3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
-
 **Meeting Summary:**
 ---
 {summary}
@@ -208,35 +210,33 @@ Based on the content, generate the title now.
         return ""  # Return empty string on failure
 
 
-def detect_language(transcript_snippet: str) -> str:
-    """Detects the primary language of a text snippet using an API call."""
-    if not transcript_snippet:
-        return "English"  # Default
+def detect_language_local(text_snippet: str) -> str:
+    """Detects language locally from a text snippet."""
+    if not text_snippet:
+        return "English"
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a language detection expert. Your task is to identify the main language of the given text. Respond with ONLY the name of the language in English (e.g., 'Russian', 'German', 'Spanish'). Do not add any other words, explanation, or punctuation.",
-                },
-                {"role": "user", "content": transcript_snippet},
-            ],
-        )
-        language = response.choices[0].message.content.strip()
-        LOGGER.info(f"Detected language: {language}")
-        # Basic validation to ensure it's a plausible language name
-        if language and " " not in language and len(language) < 25:
-            return language
-        return "English"  # Fallback on a weird or empty response
-    except Exception as e:
-        LOGGER.error(f"Language detection failed: {e}", exc_info=True)
-        return "English"  # Default on error
+        # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
+        lang_code = detect(text_snippet)
+        # We need to map the code to a full language name for the prompt
+        LANG_MAP = {
+            "en": "English", "es": "Spanish", "fr": "French",
+            "de": "German", "it": "Italian", "pt": "Portuguese",
+            "ru": "Russian", "ja": "Japanese", "zh-cn": "Chinese (Simplified)",
+        }
+        language = LANG_MAP.get(lang_code, "English")
+        LOGGER.info(f"Detected language via langdetect: {language} ({lang_code})")
+        return language
+    except LangDetectException:
+        # This can happen if the text is too short or ambiguous
+        LOGGER.warning("Langdetect failed for snippet, defaulting to English.")
+        return "English"
 
 
 def summarise_transcript_in_worker(
-    full_transcript: str, meeting_title: str, started_at_iso: str
+    full_transcript: str,
+    meeting_title: str,
+    started_at_iso: str,
+    summary_length: str,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
@@ -246,20 +246,28 @@ def summarise_transcript_in_worker(
 
     try:
         transcript_snippet = full_transcript[:500]
-        detected_language = detect_language(transcript_snippet)
+        detected_language = detect_language_local(transcript_snippet)
 
         started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
         date_str = started_at_dt.strftime("%Y-%m-%d")
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
+        # --- Stricter Length Instructions ---
+        LENGTH_PROMPTS = {
+            "quar_page": "The final summary MUST be very concise, approximately 125 words. This is a strict word count requirement.",
+            "half_page": "The final summary MUST be concise, approximately 250 words. This is a strict word count requirement.",
+            "one_page": "The final summary MUST be detailed but well-balanced, approximately 500 words. This is a strict word count requirement.",
+            "two_pages": "The final summary MUST be comprehensive, approximately 1000 words. This is a strict word count requirement.",
+            "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
+        }
+        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
+
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
-
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
-- **Proportionality:** The length and detail of the summary should naturally reflect the length and complexity of the source transcript. A short, simple conversation should result in a short summary. A long, complex critique requires a more detailed one.
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
@@ -271,15 +279,14 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 <output_rules>
 **2. Final Output Generation**
 - Your response MUST BE ONLY the Markdown summary.
+- **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
 - Start directly with the `##` heading.
-
 ---
 ## {meeting_title}
 _{date_str} — {time_range}_
 
 #### Summary
 Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
-
 ---
 *(...Thematic Sections Go Here...)*
 ---
@@ -292,7 +299,6 @@ Write an insightful overview paragraph (3-5 sentences). It should set the scene,
 
 <thematic_body_instructions>
 This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
-
 - **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
 - **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Feedback & Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback. **This is crucial for design reviews.**
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
@@ -306,7 +312,7 @@ This is the core of the summary. For each **Key Theme** you identified, create a
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Please summarize the following transcript, following all instructions including the language requirement:\n\n{full_transcript}",
+                    "content": f"Please summarize the following transcript, following all instructions including the language and length requirement:\n\n{full_transcript}",
                 },
             ],
         )
@@ -342,7 +348,10 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         mtg.duration_seconds = num_chunks * 30  # Assuming 30s chunks
 
         summary_md = summarise_transcript_in_worker(
-            final_transcript, mtg.title, mtg.started_at.isoformat()
+            final_transcript,
+            mtg.title,
+            mtg.started_at.isoformat(),
+            mtg.summary_length,
         )
         mtg.summary_markdown = summary_md
 

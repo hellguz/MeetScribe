@@ -1,20 +1,24 @@
 // ./frontend/src/pages/Summary.tsx
-import React, { useEffect, useState, useCallback, useContext } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { saveMeeting, getHistory } from '../utils/history'
 import { getCached, saveCached } from '../utils/summaryCache'
 import ThemeToggle from '../components/ThemeToggle'
-import { ThemeContext } from '../contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
-import FeedbackComponent from '../components/FeedbackComponent' // Import the new component
+import FeedbackComponent from '../components/FeedbackComponent'
+import SummaryLengthSelector from '../components/SummaryLengthSelector'
+import { SummaryLength } from '../contexts/SummaryLengthContext'
 
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
-	const themeContext = useContext(ThemeContext)
-	if (!themeContext) throw new Error('ThemeContext not found')
-	const { theme } = themeContext
+	const { theme } = useTheme()
+
+	const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto')
+	const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([])
+
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const [summary, setSummary] = useState<string | null>(null)
 	const [transcript, setTranscript] = useState<string | null>(null)
@@ -107,6 +111,13 @@ export default function Summary() {
 				const data = await res.json()
 				const trn = data.transcript_text || null
 				setTranscript(trn)
+				setSubmittedFeedback(data.feedback || [])
+
+				// Set the local state for the selector based on this meeting's data
+				const lengthValue = data.summary_length || 'auto'
+				if (['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(lengthValue)) {
+					setCurrentMeetingLength(lengthValue as SummaryLength)
+				}
 
 				if (isInitialFetch) {
 					if (!meetingTitle && data.title) {
@@ -163,52 +174,87 @@ export default function Summary() {
 		[mid, loadedFromCache, meetingTitle],
 	)
 
-	const handleFeedbackSubmit = async (feedbackTypes: string[], suggestionText?: string) => {
+	const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
 		if (!mid) return
+		const endpoint = `${import.meta.env.VITE_API_BASE_URL}/api/feedback`
+		try {
+			if (isSelected) {
+				// Add feedback
+				setSubmittedFeedback((prev) => [...prev, type]) // Optimistic UI update
+				await fetch(endpoint, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ meeting_id: mid, feedback_type: type }),
+				})
+			} else {
+				// Remove feedback
+				setSubmittedFeedback((prev) => prev.filter((t) => t !== type)) // Optimistic UI update
+				await fetch(endpoint, {
+					method: 'DELETE',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ meeting_id: mid, feedback_type: type }),
+				})
+			}
+		} catch (error) {
+			console.error('Failed to update feedback:', error)
+			// Revert UI on error
+			fetchMeetingData(false)
+		}
+	}
+
+	const handleSuggestionSubmit = async (suggestionText: string) => {
+		if (!mid || !suggestionText) return
 		try {
 			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					meeting_id: mid,
-					feedback_types: feedbackTypes,
+					feedback_type: 'feature_suggestion',
 					suggestion_text: suggestionText,
 				}),
 			})
-			// The component will show its own "thank you" message
 		} catch (error) {
-			console.error('Failed to submit feedback:', error)
-			alert("Sorry, we couldn't submit your feedback right now.")
+			console.error('Failed to submit suggestion:', error)
+			alert("Sorry, we couldn't submit your suggestion right now.")
 		}
 	}
 
-	const handleRegenerate = useCallback(async () => {
-		if (!mid) return
-		setIsRegenerating(true)
-		setError(null) // Clear previous errors
+	const handleRegenerate = useCallback(
+		async (newLength: SummaryLength) => {
+			if (!mid) return
+			// Update the UI immediately to reflect the new selection
+			setCurrentMeetingLength(newLength)
+			setIsRegenerating(true)
+			setError(null)
 
-		try {
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
-				method: 'POST',
-			})
+			try {
+				const payload = { summary_length: newLength }
+				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				})
 
-			if (!res.ok) {
-				throw new Error('Failed to start summary regeneration.')
+				if (!res.ok) {
+					throw new Error('Failed to start summary regeneration.')
+				}
+
+				// Clear the old summary and start the polling process
+				setSummary(null)
+				setIsProcessing(true)
+			} catch (err) {
+				if (err instanceof Error) {
+					setError(err.message)
+				} else {
+					setError('An unknown error occurred during regeneration.')
+				}
+			} finally {
+				setIsRegenerating(false)
 			}
-
-			// Clear the old summary and start the polling process
-			setSummary(null)
-			setIsProcessing(true)
-		} catch (err) {
-			if (err instanceof Error) {
-				setError(err.message)
-			} else {
-				setError('An unknown error occurred during regeneration.')
-			}
-		} finally {
-			setIsRegenerating(false)
-		}
-	}, [mid])
+		},
+		[mid],
+	)
 
 	// Initial fetch
 	useEffect(() => {
@@ -355,6 +401,20 @@ export default function Summary() {
 
 			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
+			{!isLoading && !error && (
+				<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+					<SummaryLengthSelector
+						value={currentMeetingLength}
+						disabled={isProcessing || isRegenerating}
+						onSelect={(newPreset) => {
+							if (newPreset !== currentMeetingLength) {
+								handleRegenerate(newPreset)
+							}
+						}}
+					/>
+				</div>
+			)}
+
 			{summary && (
 				<ReactMarkdown
 					components={{
@@ -368,7 +428,14 @@ export default function Summary() {
 				</ReactMarkdown>
 			)}
 
-			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} />}
+			{!isLoading && !error && summary && (
+				<FeedbackComponent
+					submittedTypes={submittedFeedback}
+					onFeedbackToggle={handleFeedbackToggle}
+					onSuggestionSubmit={handleSuggestionSubmit}
+					theme={theme}
+				/>
+			)}
 
 			{!isLoading && !error && transcript && (
 				<div style={{ marginTop: 32 }}>
@@ -413,7 +480,7 @@ export default function Summary() {
 			{!isLoading && transcript && (
 				<div style={{ marginTop: '32px', textAlign: 'center' }}>
 					<button
-						onClick={handleRegenerate}
+						onClick={() => handleRegenerate(currentMeetingLength)}
 						disabled={isRegenerating || isProcessing}
 						style={{
 							padding: '10px 20px',
