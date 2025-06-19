@@ -7,13 +7,13 @@ import { useTheme } from '../contexts/ThemeContext';
 interface HistoryListProps {
     history: MeetingMeta[];
     onTitleUpdate: (id: string, newTitle: string) => Promise<void>;
+    onDelete: (id: string) => Promise<void>;
 }
 
-const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate }) => {
+const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDelete }) => {
     const navigate = useNavigate();
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
-
     const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
     const [editingTitle, setEditingTitle] = useState<string>('');
     const [hoveredMeetingId, setHoveredMeetingId] = useState<string | null>(null);
@@ -27,6 +27,12 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate }) => 
         await onTitleUpdate(editingMeetingId, editingTitle.trim());
         setEditingMeetingId(null);
         setEditingTitle('');
+    };
+
+    const handleDeleteClick = (id: string) => {
+        if (window.confirm('Are you sure you want to permanently delete this meeting and its summary? This cannot be undone.')) {
+            onDelete(id);
+        }
     };
 
     if (history.length === 0) {
@@ -45,11 +51,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate }) => 
                             borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
                             backgroundColor: index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body,
                             color: currentThemeColors.text,
-                        }}
-                        onClick={(e) => {
-                            if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'SPAN' || (e.target as HTMLElement).tagName === 'DIV') {
-                                navigate(`/summary/${m.id}`);
-                            }
                         }}
                         onMouseEnter={() => setHoveredMeetingId(m.id)}
                         onMouseLeave={() => setHoveredMeetingId(null)}
@@ -87,25 +88,32 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate }) => 
                                     >
                                         {m.title}
                                     </span>
-                                    <span
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditingMeetingId(m.id);
-                                            setEditingTitle(m.title);
-                                        }}
-                                        style={{
-                                            fontSize: '15px',
-                                            cursor: 'pointer',
-                                            marginRight: '10px',
-                                            visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
-                                        }}
-                                        title="Edit title"
-                                    >
-                                        ✏️
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden' }}>
+                                        <span
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingMeetingId(m.id);
+                                                setEditingTitle(m.title);
+                                            }}
+                                            style={{ fontSize: '15px', cursor: 'pointer', marginRight: '10px' }}
+                                            title="Edit title"
+                                        >
+                                            ✏️
+                                        </span>
+                                        <span
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteClick(m.id);
+                                            }}
+                                            style={{ fontSize: '15px', cursor: 'pointer' }}
+                                            title="Delete meeting"
+                                        >
+                                            ❌
+                                        </span>
+                                    </div>
                                 </>
                             )}
-                            <div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px', flexShrink: 0 }}>
                                 {m.status === 'pending' && (
                                     <span style={{
                                         marginRight: 8,

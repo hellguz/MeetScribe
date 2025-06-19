@@ -2,7 +2,7 @@ import datetime as dt
 import uuid
 from typing import List, Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -45,16 +45,18 @@ class MeetingChunk(SQLModel, table=True):
 
 class Feedback(SQLModel, table=True):
     """
-    Stores user feedback on summaries.
-    Uniqueness on (meeting_id, feedback_type) is enforced by a
-    migration script, not the ORM, to support older SQLite versions.
+    Stores user feedback on summaries. Uniqueness on (meeting_id, feedback_type)
+    for non-suggestion feedback is enforced by a unique constraint.
     """
-
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "feedback_type", name="ix_feedback_meeting_id_feedback_type"),
+    )
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     feedback_type: str
     suggestion_text: Optional[str] = None
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    status: str = Field(default="new") # 'new', 'done', etc.
 
 
 class MeetingCreate(SQLModel):
@@ -82,6 +84,13 @@ class FeedbackDelete(SQLModel):
     """
     meeting_id: uuid.UUID
     feedback_type: str
+
+
+class FeedbackStatusUpdate(SQLModel):
+    """
+    Payload for updating the status of a feedback item.
+    """
+    status: str
 
 
 class MeetingStatus(SQLModel):

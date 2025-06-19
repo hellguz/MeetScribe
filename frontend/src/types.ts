@@ -7,9 +7,11 @@ export interface StatSet {
 }
 
 export interface Feedback {
+    id: number;
     type: string;
     suggestion: string | null;
     created_at: string;
+    status: string;
 }
 
 export interface MeetingWithFeedback {
@@ -20,10 +22,12 @@ export interface MeetingWithFeedback {
 }
 
 export interface FeatureSuggestion {
+    id: number;
     suggestion: string;
     submitted_at: string;
     meeting_id: string;
     meeting_title: string;
+    status: string;
 }
 export interface DashboardStats {
     all_time: StatSet;
@@ -33,4 +37,3 @@ export interface DashboardStats {
     feature_suggestions: FeatureSuggestion[];
     meetings_with_feedback: MeetingWithFeedback[];
 }
-

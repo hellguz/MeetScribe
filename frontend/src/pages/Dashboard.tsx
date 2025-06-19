@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ThemeContext } from '../contexts/ThemeContext';
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
-import { DashboardStats } from '../types';
+import { DashboardStats, FeatureSuggestion } from '../types';
 import StatCard from '../components/dashboard/StatCard';
 import BarChart from '../components/dashboard/BarChart';
 import FeedbackTable from '../components/dashboard/FeedbackTable';
@@ -19,21 +19,46 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const [timeframe, setTimeframe] = useState<'all_time' | 'today'>('all_time');
 
+    const fetchStats = useCallback(async () => {
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/stats`);
+            if (!response.ok) throw new Error('Failed to fetch dashboard stats.');
+            setStats(await response.json());
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
         document.body.style.backgroundColor = currentThemeColors.background;
-        const fetchStats = async () => {
-            try {
-                const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/stats`);
-                if (!response.ok) throw new Error('Failed to fetch dashboard stats.');
-                setStats(await response.json());
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-            } finally {
-                setIsLoading(false);
-            }
-        };
         fetchStats();
-    }, [currentThemeColors.background]);
+    }, [currentThemeColors.background, fetchStats]);
+
+    const handleFeedbackAction = async (action: 'delete' | 'update_status', id: number, newStatus?: string) => {
+        let url = `${import.meta.env.VITE_API_BASE_URL}/api/feedback/${id}`;
+        let options: RequestInit = { method: 'DELETE' };
+
+        if (action === 'update_status') {
+            url += '/status';
+            options = {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus }),
+            };
+        }
+
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) throw new Error(`Failed to ${action} feedback.`);
+            // Refresh stats from server to show changes
+            await fetchStats();
+        } catch (err) {
+            console.error(err);
+            alert(`Could not perform action: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+    };
 
     const cardColors = {
         green: { bg: theme === 'light' ? '#f0fdf4' : '#143623', border: theme === 'light' ? '#a7f3d0' : '#15803d', text: theme === 'light' ? '#15803d' : '#a7f3d0' },
@@ -46,7 +71,6 @@ export default function Dashboard() {
     if (!stats) return <div style={{ color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px' }}>No stats available.</div>;
 
     const displayStats = stats[timeframe];
-
     return (
         <div style={{ backgroundColor: currentThemeColors.background, color: currentThemeColors.text, padding: '24px', fontFamily: "'Inter', sans-serif", minHeight: '100vh' }}>
             <button onClick={() => navigate('/record')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '15px', display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '0', marginBottom: '24px' }}>
@@ -79,10 +103,21 @@ export default function Dashboard() {
                     <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                         {stats.feature_suggestions.length > 0 ? (
                             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-                                {stats.feature_suggestions.map((item, index) => (
-                                    <li key={index} onClick={() => navigate(`/summary/${item.meeting_id}`)} style={{ padding: '12px', borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`, cursor: 'pointer', transition: 'background-color 0.2s ease' }} onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)} onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-                                        <p style={{ margin: 0, fontWeight: 500 }}>{item.suggestion}</p>
-                                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>From: <span style={{ fontWeight: '500' }}>{item.meeting_title}</span></p>
+                                {stats.feature_suggestions.map((item: FeatureSuggestion) => (
+                                    <li key={item.id} style={{ padding: '12px', borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`, display: 'flex', alignItems: 'center', gap: '12px', transition: 'background-color 0.2s ease' }} onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)} onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+                                        <input
+                                            type="checkbox"
+                                            checked={item.status === 'done'}
+                                            onChange={(e) => handleFeedbackAction('update_status', item.id, e.target.checked ? 'done' : 'new')}
+                                            style={{ flexShrink: 0, width: '18px', height: '18px', cursor: 'pointer' }}
+                                        />
+                                        <div onClick={() => navigate(`/summary/${item.meeting_id}`)} style={{ flexGrow: 1, cursor: 'pointer' }}>
+                                            <p style={{ margin: 0, fontWeight: 500, textDecoration: item.status === 'done' ? 'line-through' : 'none', color: item.status === 'done' ? currentThemeColors.secondaryText : currentThemeColors.text }}>{item.suggestion}</p>
+                                            <p style={{ margin: '4px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>From: <span style={{ fontWeight: '500' }}>{item.meeting_title}</span></p>
+                                        </div>
+                                        <button onClick={() => handleFeedbackAction('delete', item.id)} title="Delete suggestion" style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '16px' }}>
+                                            ✕
+                                        </button>
                                     </li>
                                 ))}
                             </ul>
@@ -94,9 +129,8 @@ export default function Dashboard() {
             </div>
             <div style={{ marginTop: '32px', backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
                 <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold' }}>Feedback Log</h2>
-                <FeedbackTable meetings={stats.meetings_with_feedback} theme={currentThemeColors} navigate={navigate} />
+                <FeedbackTable meetings={stats.meetings_with_feedback} theme={currentThemeColors} navigate={navigate} onDeleteFeedback={(id) => handleFeedbackAction('delete', id)} />
             </div>
         </div>
     );
 }
-

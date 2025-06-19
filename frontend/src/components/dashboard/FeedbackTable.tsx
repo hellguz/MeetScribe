@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate, NavigateFunction } from 'react-router-dom';
+import { NavigateFunction } from 'react-router-dom';
 import { AppTheme, lightTheme, darkTheme } from '../../styles/theme';
 import { MeetingWithFeedback, Feedback } from '../../types';
 
@@ -7,11 +7,11 @@ interface FeedbackTableProps {
     meetings: MeetingWithFeedback[];
     theme: AppTheme;
     navigate: NavigateFunction;
+    onDeleteFeedback: (feedbackId: number) => void;
 }
 
-const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate }) => {
+const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate, onDeleteFeedback }) => {
     const [activeFilters, setActiveFilters] = useState<string[]>([]);
-
     const feedbackColors = useMemo(() => {
         const light = {
             accurate: { text: '#057a55', bg: '#def7ec', border: '#a7f3d0' },
@@ -55,12 +55,57 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
 
     const getLabel = (type: string) => type.replace(/_/g, ' ');
 
-    const feedbackPill = (type: string, key: number | string) => {
+    const FeedbackPill: React.FC<{ feedback: Feedback }> = ({ feedback }) => {
+        const [isHovered, setIsHovered] = useState(false);
+        const type = feedback.type === 'feature_suggestion' ? '💡 Suggestion' : feedback.type;
         const label = getLabel(type);
         const colors = (feedbackColors as any)[type] || { text: theme.text, bg: theme.backgroundSecondary, border: theme.border };
+
         return (
-            <span key={key} style={{ display: 'inline-block', padding: '4px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 500, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, whiteSpace: 'nowrap' }}>
+            <span
+                style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    backgroundColor: colors.bg,
+                    color: colors.text,
+                    border: `1px solid ${colors.border}`,
+                    whiteSpace: 'nowrap',
+                    position: 'relative',
+                }}
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+            >
                 {label}
+                {isHovered && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFeedback(feedback.id);
+                        }}
+                        style={{
+                            background: 'rgba(0,0,0,0.5)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '16px',
+                            height: '16px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            marginLeft: '6px',
+                            fontSize: '10px',
+                            lineHeight: '16px'
+                        }}
+                        title={`Delete this feedback`}
+                    >
+                        ✕
+                    </button>
+                )}
             </span>
         );
     };
@@ -103,7 +148,7 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
                                     <td style={{ padding: '12px', whiteSpace: 'nowrap', borderBottom: `1px solid ${theme.border}` }}>{new Date(meeting.started_at).toLocaleDateString()}</td>
                                     <td style={{ padding: '12px', borderBottom: `1px solid ${theme.border}` }}>
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                            {meeting.feedback.map((f, i) => f.type === 'feature_suggestion' ? feedbackPill('💡 Suggestion', `sugg-${i}`) : feedbackPill(f.type, i))}
+                                            {meeting.feedback.map((f) => <FeedbackPill key={f.id} feedback={f} />)}
                                         </div>
                                     </td>
                                 </tr>
@@ -121,4 +166,3 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
 };
 
 export default FeedbackTable;
-

@@ -21,7 +21,6 @@ export default function Summary() {
         handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
         loadedFromCache
     } = useMeetingSummary(mid);
-
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
     const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
@@ -91,13 +90,6 @@ export default function Summary() {
                 </div>
             )}
 
-            {summary && (
-                 <div style={{ marginTop: '32px', textAlign: 'center' }}>
-                    <button onClick={() => handleRegenerate(currentMeetingLength)} disabled={isRegenerating || isProcessing} style={{ padding: '10px 20px', cursor: 'pointer', opacity: (isRegenerating || isProcessing) ? 0.6 : 1 }}>
-                        {isRegenerating ? 'Queuing...' : isProcessing ? 'Processing...' : '🔄 Regenerate Summary'}
-                    </button>
-                </div>
-            )}
         </div>
     );
 }

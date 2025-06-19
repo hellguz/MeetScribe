@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import openai
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select, func
@@ -27,6 +27,7 @@ from .models import (
     MeetingSyncRequest,
     RegeneratePayload,
     MeetingConfigUpdate,
+    FeedbackStatusUpdate,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -265,6 +266,37 @@ def get_meeting(mid: uuid.UUID):
         return MeetingStatus(**data)
 
 
+@app.delete("/api/meetings/{mid}", status_code=204)
+def delete_meeting(mid: uuid.UUID):
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            # If it's already gone, that's fine.
+            return Response(status_code=204)
+
+        # Delete associated chunks from filesystem
+        mtg_dir = AUDIO_DIR / str(mid)
+        if mtg_dir.exists() and mtg_dir.is_dir():
+            shutil.rmtree(mtg_dir)
+            LOGGER.info(f"Deleted audio directory for meeting {mid}")
+
+        # Batch delete associated chunks from DB
+        chunks_to_delete = db.exec(select(MeetingChunk).where(MeetingChunk.meeting_id == mid)).all()
+        for chunk in chunks_to_delete:
+            db.delete(chunk)
+
+        # Batch delete associated feedback from DB
+        feedback_to_delete = db.exec(select(Feedback).where(Feedback.meeting_id == mid)).all()
+        for f in feedback_to_delete:
+            db.delete(f)
+
+        # Delete meeting itself
+        db.delete(mtg)
+        db.commit()
+        LOGGER.info(f"Deleted meeting {mid} and all associated data.")
+    return Response(status_code=204)
+
+
 @app.put("/api/meetings/{mid}/title", response_model=Meeting)
 async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
     with Session(engine) as db:
@@ -317,8 +349,8 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
                 mid,
                 payload.summary_length,
             )
-        else:
-            # Fallback or default if an invalid value is somehow passed
+        elif not mtg.summary_length:
+            # Fallback or default if an invalid value is somehow passed or it's not set
             mtg.summary_length = "auto"
 
         # Reset the meeting state to indicate a new summary is needed
@@ -361,6 +393,7 @@ def create_feedback(body: FeedbackCreate):
                 select(Feedback).where(
                     Feedback.meeting_id == body.meeting_id,
                     Feedback.feedback_type == "feature_suggestion",
+                    Feedback.suggestion_text == body.suggestion_text.strip(),
                 )
             ).first()
             if not existing_suggestion:
@@ -376,7 +409,7 @@ def create_feedback(body: FeedbackCreate):
 
 
 @app.delete("/api/feedback", status_code=200)
-def delete_feedback(body: FeedbackDelete):
+def delete_feedback_by_type(body: FeedbackDelete):
     with Session(engine) as db:
         feedback_to_delete = db.exec(
             select(Feedback).where(
@@ -392,6 +425,29 @@ def delete_feedback(body: FeedbackDelete):
         else:
             # It's okay if the feedback is already gone.
             return {"ok": True, "message": "Feedback not found, nothing to delete"}
+
+
+@app.delete("/api/feedback/{fid}", status_code=204)
+def delete_feedback_by_id(fid: int):
+    with Session(engine) as db:
+        feedback_item = db.get(Feedback, fid)
+        if feedback_item:
+            db.delete(feedback_item)
+            db.commit()
+    return Response(status_code=204)
+
+
+@app.put("/api/feedback/{fid}/status", response_model=Feedback)
+def update_feedback_status(fid: int, payload: FeedbackStatusUpdate):
+    with Session(engine) as db:
+        feedback_item = db.get(Feedback, fid)
+        if not feedback_item:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+        feedback_item.status = payload.status
+        db.add(feedback_item)
+        db.commit()
+        db.refresh(feedback_item)
+        return feedback_item
 
 
 @app.get("/api/dashboard/stats")
@@ -477,13 +533,16 @@ def get_dashboard_stats():
         ).all()
         feature_suggestions = [
             {
+                "id": f.id,
                 "suggestion": f.suggestion_text,
                 "submitted_at": f.created_at,
                 "meeting_id": f.meeting_id,
                 "meeting_title": title,
+                "status": f.status,
             }
             for f, title in suggestions_query
         ]
+        
         meetings_by_day = db.exec(
             select(func.date(Meeting.started_at), func.count(Meeting.id))
             .group_by(func.date(Meeting.started_at))
@@ -507,9 +566,11 @@ def get_dashboard_stats():
 
             meetings_with_feedback[mid_str]["feedback"].append(
                 {
+                    "id": feedback.id,
                     "type": feedback.feedback_type,
                     "suggestion": feedback.suggestion_text,
                     "created_at": feedback.created_at,
+                    "status": feedback.status,
                 }
             )
 

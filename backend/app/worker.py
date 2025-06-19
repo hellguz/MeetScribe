@@ -35,9 +35,9 @@ celery_app.conf.update(
     task_acks_late=True,
     # === Resilience Change: Add a periodic task to clean up stuck meetings ===
     beat_schedule={
-        "cleanup-every-30-minutes": {
+        "cleanup-every-15-minutes": {
             "task": "app.worker.cleanup_stuck_meetings",
-            "schedule": 1800.0,  # 30 minutes in seconds
+            "schedule": 900.0,  # 15 minutes in seconds
         },
     },
 )
@@ -179,6 +179,7 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 2.  **Length:** The title must be between 6 and 15 words.
 3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
+
 **Meeting Summary:**
 ---
 {summary}
@@ -265,6 +266,7 @@ def summarise_transcript_in_worker(
 
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
@@ -355,8 +357,9 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         )
         mtg.summary_markdown = summary_md
 
-        # New: Generate and update the title
-        if summary_md and "error" not in summary_md.lower():
+        # Only generate a title if the current one is still a default placeholder.
+        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith("Transcription of ")
+        if summary_md and "error" not in summary_md.lower() and is_default_title:
             new_title = generate_title_for_meeting(summary_md, final_transcript)
             if new_title:
                 mtg.title = new_title
@@ -382,11 +385,33 @@ def cleanup_stuck_meetings():
     """
     Finds meetings that are not done and have been inactive for a while,
     then re-queues transcription tasks for any chunks that are missing text.
+    Also finalizes meetings that were abandoned mid-recording.
     """
     engine = get_db_engine()
     STUCK_THRESHOLD_MINUTES = 15
+    INACTIVITY_TIMEOUT_MINUTES = 5
 
     with Session(engine) as db:
+        # 1. Finalize meetings that were abandoned mid-recording and never got a final chunk.
+        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+        inactive_meetings = db.exec(
+            select(Meeting).where(
+                Meeting.done == False,
+                Meeting.final_received == False,
+                Meeting.last_activity < inactivity_threshold,
+            )
+        ).all()
+
+        if inactive_meetings:
+            LOGGER.info(f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them.")
+            for mtg in inactive_meetings:
+                mtg.final_received = True
+                if mtg.expected_chunks is None:
+                    mtg.expected_chunks = mtg.received_chunks
+                db.add(mtg)
+            db.commit() # Commit finalization before potentially re-queueing
+
+        # 2. Re-queue tasks for finalized meetings that got stuck during transcription.
         stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
             minutes=STUCK_THRESHOLD_MINUTES
         )
@@ -403,7 +428,7 @@ def cleanup_stuck_meetings():
             return
 
         LOGGER.info(
-            f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings."
+            f"Janitor: Found {len(stuck_meetings)} potentially stuck finalized meetings."
         )
 
         for mtg in stuck_meetings:
@@ -415,8 +440,10 @@ def cleanup_stuck_meetings():
 
             if not unprocessed_chunks:
                 LOGGER.info(
-                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                    f"Janitor: Meeting {mtg.id} has no unprocessed chunks, but isn't 'done'. Re-triggering finalization."
                 )
+                # This can happen if the finalization task itself failed.
+                finalize_meeting_processing(db, mtg)
                 continue
 
             LOGGER.warning(
@@ -436,7 +463,7 @@ def cleanup_stuck_meetings():
                     )
                 else:
                     LOGGER.error(
-                        f"Janitor task: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
+                        f"Janitor: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
                     )
 
 
@@ -532,3 +559,4 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+

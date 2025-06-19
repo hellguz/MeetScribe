@@ -15,6 +15,7 @@ services:
              python /app/utils/add_suggestion_column.py &&
              python /app/utils/add_summary_length_column.py &&
              python /app/utils/add_feedback_uniqueness.py &&
+             python /app/utils/add_feedback_status_column.py &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "4131:8000"
@@ -31,7 +32,8 @@ services:
              python /app/utils/add_suggestion_column.py &&
              python /app/utils/add_summary_length_column.py &&
              python /app/utils/add_feedback_uniqueness.py &&
-             celery -A app.worker.celery_app worker -l info -c 1"
+             python /app/utils/add_feedback_status_column.py &&
+             celery -A app.worker.celery_app worker -B -l info -c 1"
     volumes:
       - whisper-cache:/root/.cache
       - ./data:/app/data
@@ -56,3 +58,4 @@ volumes:
   whisper-cache: {}               # named volume persists model weights
   # Define the named volume for Redis data
   redis-data: {}
+

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getHistory, MeetingMeta, syncHistory, saveMeeting } from '../utils/history';
+import { getHistory, MeetingMeta, syncHistory, saveMeeting, removeMeeting } from '../utils/history';
 import ThemeToggle from '../components/ThemeToggle';
 import { useTheme } from '../contexts/ThemeContext';
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
@@ -17,7 +17,6 @@ export default function Record() {
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
     const { summaryLength, setSummaryLength } = useSummaryLength();
-
     const {
         isRecording, isProcessing, localChunksCount, uploadedChunks, expectedTotalChunks,
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
@@ -25,7 +24,6 @@ export default function Record() {
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
         animationFrameRef,
     } = useRecording(summaryLength);
-
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -104,7 +102,7 @@ export default function Record() {
             // Future logic to update summary length mid-recording can go here
         }
     };
-    
+
     const handleTitleUpdate = async (id: string, newTitle: string) => {
         const originalTitle = history.find(m => m.id === id)?.title;
         if (!originalTitle || newTitle === originalTitle) return;
@@ -122,6 +120,27 @@ export default function Record() {
         } catch (error) {
             console.error(error);
             setHistory(prev => prev.map(m => m.id === id ? { ...m, title: originalTitle } : m)); // Revert on error
+        }
+    };
+
+    const handleMeetingDelete = async (id: string) => {
+        // Optimistically remove from UI
+        setHistory(prev => prev.filter(m => m.id !== id));
+        removeMeeting(id);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                // If deletion fails, re-fetch history to revert UI state
+                setHistory(getHistory());
+                throw new Error('Failed to delete meeting on server.');
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Could not delete the meeting. It has been restored to your list.');
+            // Revert optimistic removal
+            setHistory(getHistory());
         }
     };
 
@@ -158,7 +177,7 @@ export default function Record() {
                 audioSource={audioSource}
             />
             
-            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '24px', marginTop: '24px' }}>
                 {!isRecording ? (
                     <button onClick={handleStart} disabled={isUiLocked || (audioSource === 'file' && !selectedFile)} style={{ padding: '16px 32px', fontSize: '18px', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', backgroundColor: currentThemeColors.button.primary, color: currentThemeColors.button.primaryText, opacity: (isUiLocked || (audioSource === 'file' && !selectedFile)) ? 0.5 : 1 }}>
                         {audioSource === 'file' ? '📄 Start Transcription' : '🎙️ Start Recording'}
@@ -170,7 +189,7 @@ export default function Record() {
                 )}
             </div>
 
-            {!isUiLocked && <HistoryList history={history} onTitleUpdate={handleTitleUpdate} />}
+            {!isUiLocked && <HistoryList history={history} onTitleUpdate={handleTitleUpdate} onDelete={handleMeetingDelete} />}
         </div>
     );
 }
