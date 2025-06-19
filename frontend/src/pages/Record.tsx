@@ -744,9 +744,13 @@ export default function Record() {
 		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' /* fontFamily, backgroundColor and color are inherited from body */ }}>
 			<ThemeToggle />
 			<h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
-			<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-				<SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} />
-			</div>
+
+			{/* Show summary length selector only when a recording session is active */}
+			{meetingId.current && (
+				<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+					<SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} />
+				</div>
+			)}
 
 			{!isUiLocked && (
 				<div style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
