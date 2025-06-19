@@ -10,6 +10,7 @@ from pathlib import Path
 import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select, func
 
 from .config import settings
@@ -21,6 +22,7 @@ from .models import (
     MeetingTitleUpdate,
     Feedback,
     FeedbackCreate,
+    FeedbackDelete,
     MeetingMeta,
     MeetingSyncRequest,
     RegeneratePayload,
@@ -100,7 +102,9 @@ def create_meeting(body: MeetingCreate, request: Request):
         db.add(mtg)
         db.commit()
         db.refresh(mtg)
-        return MeetingStatus(**mtg.model_dump(), transcribed_chunks=0)
+        # For a new meeting, feedback is always empty
+        meeting_status = MeetingStatus(**mtg.model_dump(), transcribed_chunks=0, feedback=[])
+        return meeting_status
 
 
 @app.post("/api/chunks")
@@ -225,6 +229,7 @@ def get_meeting(mid: uuid.UUID):
             db.add(mtg)
             db.commit()
             db.refresh(mtg)
+
         transcribed_count = (
             db.scalar(
                 select(func.count(MeetingChunk.id)).where(
@@ -245,10 +250,18 @@ def get_meeting(mid: uuid.UUID):
             mtg.summary_task_queued = True
             db.add(mtg)
             db.commit()
+
         live_tx = _build_live_transcript(db, mid)
         data = mtg.model_dump()
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
         data["transcribed_chunks"] = transcribed_count
+
+        # Get existing feedback
+        feedback_results = db.exec(
+            select(Feedback.feedback_type).where(Feedback.meeting_id == mid)
+        ).all()
+        data["feedback"] = feedback_results
+
         return MeetingStatus(**data)
 
 
@@ -327,22 +340,58 @@ def create_feedback(body: FeedbackCreate):
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        for f_type in body.feedback_types:
-            if not f_type:
-                continue
-            feedback_entry = Feedback(meeting_id=body.meeting_id, feedback_type=f_type)
-            db.add(feedback_entry)
-
-        if body.suggestion_text and body.suggestion_text.strip():
-            suggestion_entry = Feedback(
-                meeting_id=body.meeting_id,
-                feedback_type="feature_suggestion",
-                suggestion_text=body.suggestion_text.strip(),
+        feedback_entry = Feedback(meeting_id=body.meeting_id, feedback_type=body.feedback_type)
+        db.add(feedback_entry)
+        try:
+            db.commit()
+        except IntegrityError:
+            # This happens if the feedback type for this meeting already exists, which is fine.
+            # We treat it as an idempotent operation.
+            db.rollback()
+            LOGGER.warning(
+                "Ignoring duplicate feedback for meeting %s, type %s",
+                body.meeting_id,
+                body.feedback_type,
             )
-            db.add(suggestion_entry)
 
-        db.commit()
+        # Handle text suggestions separately
+        if body.suggestion_text and body.suggestion_text.strip():
+            # Check if a suggestion already exists to avoid duplicates
+            existing_suggestion = db.exec(
+                select(Feedback).where(
+                    Feedback.meeting_id == body.meeting_id,
+                    Feedback.feedback_type == "feature_suggestion",
+                )
+            ).first()
+            if not existing_suggestion:
+                suggestion_entry = Feedback(
+                    meeting_id=body.meeting_id,
+                    feedback_type="feature_suggestion",
+                    suggestion_text=body.suggestion_text.strip(),
+                )
+                db.add(suggestion_entry)
+                db.commit()
+
         return {"ok": True, "message": "Feedback received"}
+
+
+@app.delete("/api/feedback", status_code=200)
+def delete_feedback(body: FeedbackDelete):
+    with Session(engine) as db:
+        feedback_to_delete = db.exec(
+            select(Feedback).where(
+                Feedback.meeting_id == body.meeting_id,
+                Feedback.feedback_type == body.feedback_type,
+            )
+        ).first()
+
+        if feedback_to_delete:
+            db.delete(feedback_to_delete)
+            db.commit()
+            return {"ok": True, "message": "Feedback deleted"}
+        else:
+            # It's okay if the feedback is already gone.
+            return {"ok": True, "message": "Feedback not found, nothing to delete"}
 
 
 @app.get("/api/dashboard/stats")

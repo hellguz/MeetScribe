@@ -16,8 +16,8 @@ export default function Summary() {
 	const navigate = useNavigate()
 	const { theme } = useTheme()
 
-	// This page now manages its own summary length state, independent of the user's global preference.
 	const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto')
+	const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([])
 
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const [summary, setSummary] = useState<string | null>(null)
@@ -111,6 +111,7 @@ export default function Summary() {
 				const data = await res.json()
 				const trn = data.transcript_text || null
 				setTranscript(trn)
+				setSubmittedFeedback(data.feedback || [])
 
 				// Set the local state for the selector based on this meeting's data
 				const lengthValue = data.summary_length || 'auto'
@@ -173,22 +174,49 @@ export default function Summary() {
 		[mid, loadedFromCache, meetingTitle],
 	)
 
-	const handleFeedbackSubmit = async (feedbackTypes: string[], suggestionText?: string) => {
+	const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
 		if (!mid) return
+		const endpoint = `${import.meta.env.VITE_API_BASE_URL}/api/feedback`
+		try {
+			if (isSelected) {
+				// Add feedback
+				setSubmittedFeedback((prev) => [...prev, type]) // Optimistic UI update
+				await fetch(endpoint, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ meeting_id: mid, feedback_type: type }),
+				})
+			} else {
+				// Remove feedback
+				setSubmittedFeedback((prev) => prev.filter((t) => t !== type)) // Optimistic UI update
+				await fetch(endpoint, {
+					method: 'DELETE',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ meeting_id: mid, feedback_type: type }),
+				})
+			}
+		} catch (error) {
+			console.error('Failed to update feedback:', error)
+			// Revert UI on error
+			fetchMeetingData(false)
+		}
+	}
+
+	const handleSuggestionSubmit = async (suggestionText: string) => {
+		if (!mid || !suggestionText) return
 		try {
 			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					meeting_id: mid,
-					feedback_types: feedbackTypes,
+					feedback_type: 'feature_suggestion',
 					suggestion_text: suggestionText,
 				}),
 			})
-			// The component will show its own "thank you" message
 		} catch (error) {
-			console.error('Failed to submit feedback:', error)
-			alert("Sorry, we couldn't submit your feedback right now.")
+			console.error('Failed to submit suggestion:', error)
+			alert("Sorry, we couldn't submit your suggestion right now.")
 		}
 	}
 
@@ -400,7 +428,14 @@ export default function Summary() {
 				</ReactMarkdown>
 			)}
 
-			{!isLoading && !error && summary && <FeedbackComponent onSubmit={handleFeedbackSubmit} theme={theme} />}
+			{!isLoading && !error && summary && (
+				<FeedbackComponent
+					submittedTypes={submittedFeedback}
+					onFeedbackToggle={handleFeedbackToggle}
+					onSuggestionSubmit={handleSuggestionSubmit}
+					theme={theme}
+				/>
+			)}
 
 			{!isLoading && !error && transcript && (
 				<div style={{ marginTop: 32 }}>

@@ -2,7 +2,10 @@ import React, { useState, useMemo } from 'react'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 
 interface FeedbackComponentProps {
-	onSubmit: (feedbackTypes: string[], suggestionText?: string) => Promise<void>
+	// Let the parent component manage the state of submitted feedback
+	submittedTypes: string[]
+	onFeedbackToggle: (type: string, isSelected: boolean) => Promise<void>
+	onSuggestionSubmit: (suggestionText: string) => Promise<void>
 	theme: 'light' | 'dark'
 }
 
@@ -15,17 +18,19 @@ interface FeedbackOption {
 }
 
 const feedbackOptions: FeedbackOption[] = [
-	{ type: 'accurate', label: 'On the spot', color: 'green' },
-	{ type: 'too_short', label: 'Too short', color: 'yellow' },
-	{ type: 'too_detailed', label: 'Too detailed', color: 'yellow' },
-	{ type: 'general', label: 'Too general', color: 'yellow' },
+	{ type: 'accurate', label: 'Accurate', color: 'green' },
+	{ type: 'well_structured', label: 'Well Structured', color: 'green' },
+	{ type: 'too_short', label: 'Too Short', color: 'yellow' },
+	{ type: 'too_detailed', label: 'Too Detailed', color: 'yellow' },
+	{ type: 'missed_key_points', label: 'Missed Key Points', color: 'yellow' },
+	{ type: 'confusing', label: 'Confusing', color: 'red' },
 	{ type: 'inaccurate', label: 'Inaccurate', color: 'red' },
+	{ type: 'hallucinated', label: 'Made things up', color: 'red' },
 ]
 
-const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }) => {
-	const [selectedTypes, setSelectedTypes] = useState<string[]>([])
+const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, onFeedbackToggle, onSuggestionSubmit, theme }) => {
 	const [suggestion, setSuggestion] = useState('')
-	const [isSubmitted, setIsSubmitted] = useState(false)
+	const [isSuggestionSubmitted, setIsSuggestionSubmitted] = useState(false)
 	const [isSubmitting, setIsSubmitting] = useState(false)
 
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
@@ -33,17 +38,17 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 	const chipColors: Record<ChipColor, { border: string; hoverBg: string; selectedBg: string }> = useMemo(
 		() => ({
 			green: {
-				border: theme === 'light' ? '#22c55e' : '#4ade80', // Saturated green
+				border: theme === 'light' ? '#22c55e' : '#4ade80',
 				hoverBg: theme === 'light' ? '#f0fdf4' : '#143623',
 				selectedBg: theme === 'light' ? '#dcfce7' : '#166534',
 			},
 			yellow: {
-				border: theme === 'light' ? '#f59e0b' : '#fabc05', // Saturated amber/yellow
-				hoverBg: theme === 'light' ? '#fffbeb' : '#422006',
-				selectedBg: theme === 'light' ? '#fef3c7' : '#b45309',
+				border: theme === 'light' ? '#f59e0b' : '#facc15',
+				hoverBg: theme === 'light' ? '#fefce8' : '#422006',
+				selectedBg: theme === 'light' ? '#fef9c3' : '#b45309',
 			},
 			red: {
-				border: theme === 'light' ? '#ef4444' : '#f87171', // Saturated red
+				border: theme === 'light' ? '#ef4444' : '#f87171',
 				hoverBg: theme === 'light' ? '#fef2f2' : '#450a0a',
 				selectedBg: theme === 'light' ? '#fee2e2' : '#b91c1c',
 			},
@@ -51,27 +56,23 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 		[theme],
 	)
 
-	const handleTypeSelect = (type: string) => {
-		setSelectedTypes((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]))
+	const handleTypeToggle = (type: string) => {
+		const isCurrentlySelected = submittedTypes.includes(type)
+		onFeedbackToggle(type, !isCurrentlySelected)
 	}
 
-	const handleSubmit = async (e: React.FormEvent) => {
+	const handleSuggestionSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
-		if ((selectedTypes.length === 0 && !suggestion.trim()) || isSubmitting) {
+		if (suggestion.trim() === '' || isSubmitting) {
 			return
 		}
 		setIsSubmitting(true)
-		await onSubmit(selectedTypes, suggestion.trim())
+		await onSuggestionSubmit(suggestion.trim())
 		setIsSubmitting(false)
-		setIsSubmitted(true)
-		setSelectedTypes([])
+		setIsSuggestionSubmitted(true)
 		setSuggestion('')
-
-		// Hide the "thank you" message after a few seconds
-		setTimeout(() => setIsSubmitted(false), 4000)
+		setTimeout(() => setIsSuggestionSubmitted(false), 4000)
 	}
-
-	const isSubmitDisabled = (selectedTypes.length === 0 && !suggestion.trim()) || isSubmitting
 
 	return (
 		<div
@@ -87,11 +88,11 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
 				{feedbackOptions.map((opt) => {
 					const colorSet = chipColors[opt.color]
-					const isSelected = selectedTypes.includes(opt.type)
+					const isSelected = submittedTypes.includes(opt.type)
 					return (
 						<button
 							key={opt.type}
-							onClick={() => handleTypeSelect(opt.type)}
+							onClick={() => handleTypeToggle(opt.type)}
 							style={{
 								padding: '6px 12px',
 								border: `1.5px solid ${colorSet.border}`,
@@ -104,16 +105,10 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 								transition: 'background-color 0.2s ease, color 0.2s ease',
 							}}
 							onMouseEnter={(e) => {
-								if (!isSelected) {
-									e.currentTarget.style.backgroundColor = colorSet.hoverBg
-									e.currentTarget.style.color = currentThemeColors.text
-								}
+								if (!isSelected) e.currentTarget.style.backgroundColor = colorSet.hoverBg
 							}}
 							onMouseLeave={(e) => {
-								if (!isSelected) {
-									e.currentTarget.style.backgroundColor = 'transparent'
-									e.currentTarget.style.color = colorSet.border
-								}
+								if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'
 							}}>
 							{opt.label}
 						</button>
@@ -121,7 +116,7 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 				})}
 			</div>
 
-			<form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+			<form onSubmit={handleSuggestionSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 				<input
 					type="text"
 					value={suggestion}
@@ -137,25 +132,28 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 						fontSize: '14px',
 					}}
 				/>
-				<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-					<button
-						type="submit"
-						style={{
-							padding: '8px 16px',
-							border: 'none',
-							borderRadius: '8px',
-							backgroundColor: isSubmitDisabled ? currentThemeColors.backgroundSecondary : currentThemeColors.button.primary,
-							color: isSubmitDisabled ? currentThemeColors.secondaryText : currentThemeColors.button.primaryText,
-							fontSize: '14px',
-							fontWeight: '500',
-							cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
-							transition: 'background-color 0.2s, color 0.2s',
-							opacity: isSubmitting ? 0.7 : 1,
-						}}
-						disabled={isSubmitDisabled}>
-						{isSubmitting ? 'Submitting...' : 'Submit Feedback'}
-					</button>
-					{isSubmitted && <div style={{ color: currentThemeColors.text, fontWeight: 500 }}>Thanks for your feedback! ✨</div>}
+				<div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+					{isSuggestionSubmitted ? (
+						<div style={{ color: currentThemeColors.text, fontWeight: 500 }}>Thanks for your feedback! ✨</div>
+					) : (
+						<button
+							type="submit"
+							style={{
+								padding: '8px 16px',
+								border: 'none',
+								borderRadius: '8px',
+								backgroundColor: currentThemeColors.button.primary,
+								color: currentThemeColors.button.primaryText,
+								fontSize: '14px',
+								fontWeight: '500',
+								cursor: isSubmitting || !suggestion.trim() ? 'not-allowed' : 'pointer',
+								transition: 'background-color 0.2s, opacity 0.2s',
+								opacity: isSubmitting || !suggestion.trim() ? 0.6 : 1,
+							}}
+							disabled={isSubmitting || !suggestion.trim()}>
+							{isSubmitting ? 'Submitting...' : 'Submit Suggestion'}
+						</button>
+					)}
 				</div>
 			</form>
 		</div>

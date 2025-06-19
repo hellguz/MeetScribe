@@ -46,6 +46,8 @@ class MeetingChunk(SQLModel, table=True):
 class Feedback(SQLModel, table=True):
     """
     Stores user feedback on summaries.
+    Uniqueness on (meeting_id, feedback_type) is enforced by a
+    migration script, not the ORM, to support older SQLite versions.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -67,12 +69,19 @@ class MeetingCreate(SQLModel):
 
 class FeedbackCreate(SQLModel):
     """
-    Payload for submitting feedback.
+    Payload for submitting feedback. Can be a type or a suggestion.
     """
-
     meeting_id: uuid.UUID
-    feedback_types: List[str]
+    feedback_type: str
     suggestion_text: Optional[str] = None
+
+
+class FeedbackDelete(SQLModel):
+    """
+    Payload for deleting a feedback item.
+    """
+    meeting_id: uuid.UUID
+    feedback_type: str
 
 
 class MeetingStatus(SQLModel):
@@ -90,6 +99,7 @@ class MeetingStatus(SQLModel):
     expected_chunks: Optional[int]
     transcribed_chunks: int
     summary_length: str
+    feedback: list[str] = [] # List of submitted feedback types
 
 
 class MeetingTitleUpdate(SQLModel):
