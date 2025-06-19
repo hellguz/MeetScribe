@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 
 interface FeedbackComponentProps {
-	// Let the parent component manage the state of submitted feedback
 	submittedTypes: string[]
 	onFeedbackToggle: (type: string, isSelected: boolean) => Promise<void>
 	onSuggestionSubmit: (suggestionText: string) => Promise<void>
@@ -31,7 +30,8 @@ const feedbackOptions: FeedbackOption[] = [
 const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, onFeedbackToggle, onSuggestionSubmit, theme }) => {
 	const [suggestion, setSuggestion] = useState('')
 	const [isSuggestionSubmitted, setIsSuggestionSubmitted] = useState(false)
-	const [isSubmitting, setIsSubmitting] = useState(false)
+	const [isSubmittingSuggestion, setIsSubmittingSuggestion] = useState(false)
+	const [showChipConfirmation, setShowChipConfirmation] = useState(false)
 
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 
@@ -56,19 +56,25 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 		[theme],
 	)
 
-	const handleTypeToggle = (type: string) => {
+	const handleTypeToggle = async (type: string) => {
 		const isCurrentlySelected = submittedTypes.includes(type)
-		onFeedbackToggle(type, !isCurrentlySelected)
+		await onFeedbackToggle(type, !isCurrentlySelected)
+
+		// Show confirmation only when ADDING feedback (not removing)
+		if (!isCurrentlySelected) {
+			setShowChipConfirmation(true)
+			setTimeout(() => setShowChipConfirmation(false), 3000)
+		}
 	}
 
 	const handleSuggestionSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
-		if (suggestion.trim() === '' || isSubmitting) {
+		if (suggestion.trim() === '' || isSubmittingSuggestion) {
 			return
 		}
-		setIsSubmitting(true)
+		setIsSubmittingSuggestion(true)
 		await onSuggestionSubmit(suggestion.trim())
-		setIsSubmitting(false)
+		setIsSubmittingSuggestion(false)
 		setIsSuggestionSubmitted(true)
 		setSuggestion('')
 		setTimeout(() => setIsSuggestionSubmitted(false), 4000)
@@ -83,7 +89,14 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 				border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
 			}}>
-			<p style={{ margin: '0 0 12px 0', fontWeight: '500', fontSize: '15px', color: currentThemeColors.text }}>Was this summary helpful?</p>
+			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '24px' }}>
+				<p style={{ margin: '0 0 12px 0', fontWeight: '500', fontSize: '15px', color: currentThemeColors.text }}>
+					Was this summary helpful?
+				</p>
+				{showChipConfirmation && (
+					<div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px' }}>Thanks! ✨</div>
+				)}
+			</div>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
 				{feedbackOptions.map((opt) => {
@@ -134,7 +147,9 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 				/>
 				<div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
 					{isSuggestionSubmitted ? (
-						<div style={{ color: currentThemeColors.text, fontWeight: 500 }}>Thanks for your feedback! ✨</div>
+						<div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px' }}>
+							Thanks for your suggestion!
+						</div>
 					) : (
 						<button
 							type="submit"
@@ -146,12 +161,12 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 								color: currentThemeColors.button.primaryText,
 								fontSize: '14px',
 								fontWeight: '500',
-								cursor: isSubmitting || !suggestion.trim() ? 'not-allowed' : 'pointer',
+								cursor: isSubmittingSuggestion || !suggestion.trim() ? 'not-allowed' : 'pointer',
 								transition: 'background-color 0.2s, opacity 0.2s',
-								opacity: isSubmitting || !suggestion.trim() ? 0.6 : 1,
+								opacity: isSubmittingSuggestion || !suggestion.trim() ? 0.6 : 1,
 							}}
-							disabled={isSubmitting || !suggestion.trim()}>
-							{isSubmitting ? 'Submitting...' : 'Submit Suggestion'}
+							disabled={isSubmittingSuggestion || !suggestion.trim()}>
+							{isSubmittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
 						</button>
 					)}
 				</div>
