@@ -51,27 +51,39 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 		[theme],
 	)
 
-	const handleTypeSelect = (type: string) => {
-		setSelectedTypes((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]))
+	const handleTypeSelect = async (type: string) => {
+		const isSelecting = !selectedTypes.includes(type)
+
+		if (isSelecting) {
+			setIsSubmitting(true)
+			await onSubmit([type], '') // Submit with the selected type and empty suggestion
+			setIsSubmitting(false)
+			setIsSubmitted(true)
+			setSelectedTypes((prev) => [...prev, type]) // Add to selected types
+
+			// Hide the "thank you" message after a few seconds
+			setTimeout(() => setIsSubmitted(false), 4000)
+		} else {
+			setSelectedTypes((prev) => prev.filter((t) => t !== type)) // Remove from selected types
+		}
 	}
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
-		if ((selectedTypes.length === 0 && !suggestion.trim()) || isSubmitting) {
+		if (suggestion.trim() === '' || isSubmitting) {
 			return
 		}
 		setIsSubmitting(true)
-		await onSubmit(selectedTypes, suggestion.trim())
+		await onSubmit([], suggestion.trim()) // Only submit suggestion text
 		setIsSubmitting(false)
 		setIsSubmitted(true)
-		setSelectedTypes([])
-		setSuggestion('')
+		setSuggestion('') // Clear only the suggestion
 
 		// Hide the "thank you" message after a few seconds
 		setTimeout(() => setIsSubmitted(false), 4000)
 	}
 
-	const isSubmitDisabled = (selectedTypes.length === 0 && !suggestion.trim()) || isSubmitting
+	const isSubmitDisabled = suggestion.trim() === '' || isSubmitting
 
 	return (
 		<div
@@ -138,10 +150,11 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 					}}
 				/>
 				<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-					<button
-						type="submit"
-						style={{
-							padding: '8px 16px',
+					{suggestion.trim() !== '' && (
+						<button
+							type="submit"
+							style={{
+								padding: '8px 16px',
 							border: 'none',
 							borderRadius: '8px',
 							backgroundColor: isSubmitDisabled ? currentThemeColors.backgroundSecondary : currentThemeColors.button.primary,
@@ -154,8 +167,26 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ onSubmit, theme }
 						}}
 						disabled={isSubmitDisabled}>
 						{isSubmitting ? 'Submitting...' : 'Submit Feedback'}
-					</button>
-					{isSubmitted && <div style={{ color: currentThemeColors.text, fontWeight: 500 }}>Thanks for your feedback! ✨</div>}
+						</button>
+					)}
+					{/* The "Thanks" message is aligned to the right if the button is not visible,
+					    or if it's visible and there's space. We might need to adjust flex properties if needed.
+						For now, let's keep its position relative to the button container. */}
+					{isSubmitted && (
+						<div
+							style={{
+								color: currentThemeColors.text,
+								fontWeight: 500,
+								// If suggestion is empty, the button is hidden, thanks message should take up the start space
+								marginLeft: suggestion.trim() === '' ? '0' : 'auto',
+								// If suggestion is not empty, button is visible, thanks message is to its right.
+								// If button is also there, ensure it's on the right.
+								// This might need more sophisticated layout if designs are very specific.
+							}}
+						>
+							Thanks for your feedback! ✨
+						</div>
+					)}
 				</div>
 			</form>
 		</div>
