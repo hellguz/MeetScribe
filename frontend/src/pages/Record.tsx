@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getHistory, MeetingMeta, saveMeeting } from '../utils/history'
+import { getHistory, MeetingMeta, saveMeeting, syncHistory } from '../utils/history'
 import ThemeToggle from '../components/ThemeToggle'
 import { ThemeContext } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
@@ -17,7 +17,37 @@ export default function Record() {
 	/* ─── history list ──────────────────────────────────────────────── */
 	const [history, setHistory] = useState<MeetingMeta[]>([])
 	useEffect(() => {
-		setHistory(getHistory())
+		const fetchAndSetHistory = async () => {
+			// First, get the list of meeting IDs the client already knows about
+			const localHistory = getHistory()
+			const knownIds = localHistory.map((m) => m.id)
+
+			// If there are no known IDs, no need to call the server
+			if (knownIds.length === 0) {
+				setHistory(localHistory)
+				return
+			}
+
+			try {
+				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/sync`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ ids: knownIds }),
+				})
+
+				if (res.ok) {
+					const serverHistory = (await res.json()) as MeetingMeta[]
+					syncHistory(serverHistory) // Sync server response with local storage
+				}
+			} catch (error) {
+				console.warn('Could not sync history with server:', error)
+			} finally {
+				// Always load from local storage after attempting sync to get the merged list
+				setHistory(getHistory())
+			}
+		}
+
+		fetchAndSetHistory()
 	}, [])
 	const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null)
 	const [editingTitle, setEditingTitle] = useState<string>('')
@@ -270,6 +300,7 @@ export default function Record() {
 
 			// Persist to localStorage
 			saveMeeting(updatedMeetingMeta)
+			setHistory(getHistory())
 		} catch (error) {
 			console.error('Error updating meeting title:', error)
 			alert(`Error updating title: ${error instanceof Error ? error.message : String(error)}`)
