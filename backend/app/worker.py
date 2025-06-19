@@ -254,75 +254,54 @@ def summarise_transcript_in_worker(
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
         system_prompt = f"""
-You are 'Scribe', an expert AI analyst. Your goal is to create a summary that is both comprehensive and skimmable. It must capture all essential information for a non-attendee while still being a concise summary, not a verbose reconstruction.
+You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+
+**Core Philosophy:**
+- **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
+- **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
+- **Proportionality:** The length and detail of the summary should naturally reflect the length and complexity of the source transcript. A short, simple conversation should result in a short summary. A long, complex critique requires a more detailed one.
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
 - **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
-- **Classify Content Type:** Is this primarily a **"Review & Critique"** (one party presents, another gives feedback) or a **"General Discussion / Narration"**? Your output format depends on this.
-- **Identify Key Themes:** Deconstruct the transcript into its main thematic parts.
-- **Extract Key Points:** For each theme, extract the essential arguments, conclusions, and feedback.
+- **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
+- **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
 </thinking_steps>
 
 <output_rules>
 **2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary. Start directly with the `##` heading.
-- Use the format you chose in the classification step.
+- Your response MUST BE ONLY the Markdown summary.
+- Start directly with the `##` heading.
 
 ---
-### FORMAT 1: For "Review & Critique"
-Use this for design reviews, presentations, and feedback sessions.
-
 ## {meeting_title}
 _{date_str} — {time_range}_
 
 #### Summary
-A concise paragraph (3-4 sentences) that sets the scene, covering the main purpose and key outcomes.
-
-*(For each Key Theme you identified, create a new section)*
----
-### [Thematic Heading 1]
-Succinctly summarize the core concept that was presented by the team in a short paragraph.
-
-**Feedback & Discussion:**
-- Use a detailed bulleted list for every specific piece of feedback, critique, or suggestion given. This part should be comprehensive.
-- Example: `- It was suggested to use grey for existing buildings to improve clarity.`
+Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
 
 ---
-### [Thematic Heading 2]
-...(Repeat for all themes)...
-
+*(...Thematic Sections Go Here...)*
 ---
-#### Key Decisions & Actionable Next Steps
-- A mandatory section. List all firm decisions and actionable next steps.
-- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision].`
 
----
-### FORMAT 2: For "General Discussion / Narration"
-Use this for brainstorms, status updates, and monologues. This format is denser.
-
-## {meeting_title}
-_{date_str} — {time_range}_
-
-#### Summary
-A concise paragraph (3-4 sentences) that sets the scene, covering the main purpose and key outcomes.
-
-*(For each Key Theme you identified, create a new section)*
-### [Thematic Heading]
-- Use a bulleted list to succinctly summarize the key points, main arguments, and conclusions for this topic.
-- Do not write long paragraphs; focus on extracting the essence into scannable points.
-
----
-#### Key Decisions & Actionable Next Steps
-- A mandatory section. List all firm decisions and actionable next steps.
-- **Format:** `- **[Topic/Owner]:** [Description of the action or decision].`
----
+#### Key Decisions & Action Items
+- This section is mandatory unless there were absolutely no decisions or actions.
+- List all firm decisions made and all actionable next steps. This section should use bullet points.
+- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision, including necessary context].`
 </output_rules>
+
+<thematic_body_instructions>
+This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
+
+- **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
+- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Feedback & Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback. **This is crucial for design reviews.**
+- **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
+</thematic_body_instructions>
 """
 
         response = openai.chat.completions.create(
             model="gpt-4.1-mini",
-            temperature=0.3,
+            temperature=0.5,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -369,7 +348,6 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
 
         # New: Generate and update the title
         if summary_md and "error" not in summary_md.lower():
-            # FIX: Use the correct variable name 'final_transcript' instead of 'full_transcript'
             new_title = generate_title_for_meeting(summary_md, final_transcript)
             if new_title:
                 mtg.title = new_title
