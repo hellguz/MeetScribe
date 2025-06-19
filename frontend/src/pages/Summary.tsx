@@ -1,5 +1,5 @@
 // ./frontend/src/pages/Summary.tsx
-import React, { useEffect, useState, useCallback, useContext } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { saveMeeting, getHistory } from '../utils/history'
@@ -7,15 +7,17 @@ import { getCached, saveCached } from '../utils/summaryCache'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
-import FeedbackComponent from '../components/FeedbackComponent' // Import the new component
+import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
-import { useSummaryLength, SummaryLength } from '../contexts/SummaryLengthContext'
+import { SummaryLength } from '../contexts/SummaryLengthContext'
 
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
 	const { theme } = useTheme()
-	const { summaryLength, setSummaryLength } = useSummaryLength()
+
+	// This page now manages its own summary length state, independent of the user's global preference.
+	const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto')
 
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const [summary, setSummary] = useState<string | null>(null)
@@ -110,10 +112,10 @@ export default function Summary() {
 				const trn = data.transcript_text || null
 				setTranscript(trn)
 
-				// Set summary length from the meeting data on initial load
+				// Set the local state for the selector based on this meeting's data
 				const lengthValue = data.summary_length || 'auto'
 				if (['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(lengthValue)) {
-					setSummaryLength(lengthValue as SummaryLength)
+					setCurrentMeetingLength(lengthValue as SummaryLength)
 				}
 
 				if (isInitialFetch) {
@@ -168,7 +170,7 @@ export default function Summary() {
 				setIsProcessing(false)
 			}
 		},
-		[mid, loadedFromCache, meetingTitle, setSummaryLength],
+		[mid, loadedFromCache, meetingTitle],
 	)
 
 	const handleFeedbackSubmit = async (feedbackTypes: string[], suggestionText?: string) => {
@@ -191,13 +193,15 @@ export default function Summary() {
 	}
 
 	const handleRegenerate = useCallback(
-		async (newLength?: SummaryLength) => {
+		async (newLength: SummaryLength) => {
 			if (!mid) return
+			// Update the UI immediately to reflect the new selection
+			setCurrentMeetingLength(newLength)
 			setIsRegenerating(true)
-			setError(null) // Clear previous errors
+			setError(null)
 
 			try {
-				const payload = { summary_length: newLength || summaryLength }
+				const payload = { summary_length: newLength }
 				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -221,7 +225,7 @@ export default function Summary() {
 				setIsRegenerating(false)
 			}
 		},
-		[mid, summaryLength],
+		[mid],
 	)
 
 	// Initial fetch
@@ -372,10 +376,10 @@ export default function Summary() {
 			{!isLoading && !error && (
 				<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
 					<SummaryLengthSelector
+						value={currentMeetingLength}
 						disabled={isProcessing || isRegenerating}
 						onSelect={(newPreset) => {
-							// If the user selects the same preset, do nothing. Otherwise, regenerate.
-							if (newPreset !== summaryLength) {
+							if (newPreset !== currentMeetingLength) {
 								handleRegenerate(newPreset)
 							}
 						}}
@@ -441,7 +445,7 @@ export default function Summary() {
 			{!isLoading && transcript && (
 				<div style={{ marginTop: '32px', textAlign: 'center' }}>
 					<button
-						onClick={() => handleRegenerate()}
+						onClick={() => handleRegenerate(currentMeetingLength)}
 						disabled={isRegenerating || isProcessing}
 						style={{
 							padding: '10px 20px',

@@ -703,9 +703,11 @@ export default function Record() {
 	/* ───────────────────────────────────────────────────────────────── */
 
 	const handleLengthChange = (newLength: SummaryLength) => {
+		// This is the only place the user's global preference should be set
 		setSummaryLength(newLength)
+
+		// If a recording is active, update its config on the fly
 		if (isRecording && meetingId.current) {
-			// Update the length on the backend for the current meeting
 			fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/config`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -743,7 +745,7 @@ export default function Record() {
 			<ThemeToggle />
 			<h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 			<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-				<SummaryLengthSelector onSelect={handleLengthChange} />
+				<SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} />
 			</div>
 
 			{!isUiLocked && (
