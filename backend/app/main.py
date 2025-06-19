@@ -518,12 +518,14 @@ def get_dashboard_stats():
                 device_counts["Android"] += 1
             else:
                 device_counts["Other"] += 1
+
         feedback_counts_query = db.exec(
-            select(Feedback.feedback_type, func.count(Feedback.id)).group_by(
-                Feedback.feedback_type
-            )
+            select(Feedback.feedback_type, func.count(Feedback.id))
+            .where(Feedback.feedback_type != 'feature_suggestion')
+            .group_by(Feedback.feedback_type)
         ).all()
         feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
+
         suggestions_query = db.exec(
             select(Feedback, Meeting.title)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -542,14 +544,6 @@ def get_dashboard_stats():
             }
             for f, title in suggestions_query
         ]
-        
-        meetings_by_day = db.exec(
-            select(func.date(Meeting.started_at), func.count(Meeting.id))
-            .group_by(func.date(Meeting.started_at))
-            .order_by(func.date(Meeting.started_at))
-            .limit(90)
-        ).all()
-
         all_feedback_query = db.exec(
             select(Feedback, Meeting.title, Meeting.started_at)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -573,17 +567,45 @@ def get_dashboard_stats():
                     "status": feedback.status,
                 }
             )
+        
+        meetings_by_day = db.exec(
+            select(func.date(Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.date(Meeting.started_at))
+            .order_by(func.date(Meeting.started_at))
+            .limit(90)
+        ).all()
+
+        # --- New Interesting Stats ---
+        avg_summary_words = db.scalar(select(func.avg(Meeting.word_count)).where(Meeting.word_count.is_not(None))) or 0
+        
+        busiest_hour_query = db.exec(
+            select(func.strftime('%H', Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.strftime('%H', Meeting.started_at))
+            .order_by(func.count(Meeting.id).desc())
+            .limit(1)
+        ).first()
+        busiest_hour = f"{busiest_hour_query[0]}:00" if busiest_hour_query else "N/A"
+
+        active_day_query = db.exec(
+            select(func.strftime('%w', Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.strftime('%w', Meeting.started_at))
+            .order_by(func.count(Meeting.id).desc())
+            .limit(1)
+        ).first()
+        day_map = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        most_active_day = day_map[int(active_day_query[0])] if active_day_query else "N/A"
+
 
     return {
         "all_time": {
             "total_summaries": total_summaries,
             "total_words": total_words,
-            "total_hours": round(total_duration_sec / 3600, 1),
+            "total_duration_seconds": total_duration_sec,
         },
         "today": {
             "total_summaries": summaries_today,
             "total_words": words_today,
-            "total_hours": round(duration_today_sec / 3600, 1),
+            "total_duration_seconds": duration_today_sec,
         },
         "device_distribution": dict(device_counts),
         "feedback_counts": feedback_counts,
@@ -592,6 +614,11 @@ def get_dashboard_stats():
         "usage_timeline": [
             {"date": str(date), "count": count} for date, count in meetings_by_day
         ],
+        "interesting_facts": {
+            "avg_summary_words": round(avg_summary_words),
+            "busiest_hour": busiest_hour,
+            "most_active_day": most_active_day
+        }
     }
 
 

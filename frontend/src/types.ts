@@ -3,7 +3,13 @@ export type AudioSource = 'mic' | 'system' | 'file';
 export interface StatSet {
     total_summaries: number;
     total_words: number;
-    total_hours: number;
+    total_duration_seconds: number;
+}
+
+export interface InterestingFacts {
+    avg_summary_words: number;
+    busiest_hour: string;
+    most_active_day: string;
 }
 
 export interface Feedback {
@@ -36,4 +42,5 @@ export interface DashboardStats {
     feedback_counts: { [key: string]: number };
     feature_suggestions: FeatureSuggestion[];
     meetings_with_feedback: MeetingWithFeedback[];
+    interesting_facts: InterestingFacts;
 }

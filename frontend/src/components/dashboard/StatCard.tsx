@@ -4,29 +4,46 @@ interface StatCardProps {
     title: string;
     value: number | string;
     icon: string;
-    color: { bg: string; border: string; text: string };
+    color: {
+        bg: string;
+        border: string;
+        text: string;
+    };
 }
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color }) => (
-    <div
-        style={{
-            backgroundColor: color.bg,
-            padding: '20px',
-            borderRadius: '12px',
-            border: `1px solid ${color.border}`,
-            display: 'flex',
-            flexDirection: 'column',
-        }}
-    >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', color: color.text }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 500 }}>{title}</h3>
-            <span style={{ fontSize: '24px', opacity: 0.8 }}>{icon}</span>
+const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color }) => {
+
+    const formatHours = (val: number): string => {
+        if (isNaN(val)) return "00:00";
+        const totalMinutes = Math.round(val * 60);
+        const hh = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+        const mm = (totalMinutes % 60).toString().padStart(2, '0');
+        return `${hh}:${mm}`;
+    };
+
+    let displayValue = value;
+    if (title.toLowerCase().includes('hours') && typeof value === 'number') {
+        // Convert from seconds to hours before formatting
+        const hours = value / 3600;
+        displayValue = formatHours(hours);
+    } else if (typeof value === 'number') {
+        displayValue = value.toLocaleString();
+    }
+
+
+    return (
+        <div style={{ backgroundColor: color.bg, border: `1px solid ${color.border}`, borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ fontSize: '24px', backgroundColor: 'rgba(255,255,255,0.1)', padding: '12px', borderRadius: '8px' }}>
+                {icon}
+            </div>
+            <div>
+                <p style={{ margin: 0, color: color.text, fontSize: '14px', fontWeight: '500' }}>{title}</p>
+                <p style={{ margin: '4px 0 0', color: color.text, fontSize: '28px', fontWeight: 'bold' }}>
+                    {displayValue}
+                </p>
+            </div>
         </div>
-        <p style={{ margin: '8px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: color.text }}>
-            {typeof value === 'number' ? value.toLocaleString() : value}
-        </p>
-    </div>
-);
+    );
+};
 
 export default StatCard;
-

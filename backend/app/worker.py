@@ -235,8 +235,6 @@ def detect_language_local(text_snippet: str) -> str:
 
 def summarise_transcript_in_worker(
     full_transcript: str,
-    meeting_title: str,
-    started_at_iso: str,
     summary_length: str,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
@@ -246,20 +244,16 @@ def summarise_transcript_in_worker(
         openai.api_key = settings.openai_api_key
 
     try:
-        transcript_snippet = full_transcript[:500]
+        # Use a larger snippet for more reliable language detection
+        transcript_snippet = full_transcript[:2000]
         detected_language = detect_language_local(transcript_snippet)
 
-        started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
-        date_str = started_at_dt.strftime("%Y-%m-%d")
-        end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
-        time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
-
-        # --- Stricter Length Instructions ---
+        # Stricter and clearer length instructions
         LENGTH_PROMPTS = {
-            "quar_page": "The final summary MUST be very concise, approximately 125 words. This is a strict word count requirement.",
-            "half_page": "The final summary MUST be concise, approximately 250 words. This is a strict word count requirement.",
-            "one_page": "The final summary MUST be detailed but well-balanced, approximately 500 words. This is a strict word count requirement.",
-            "two_pages": "The final summary MUST be comprehensive, approximately 1000 words. This is a strict word count requirement.",
+            "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
+            "half_page": "The final summary must be **exactly** around 250 words. This word count is a **strict, non-negotiable requirement**.",
+            "one_page": "The final summary must be **exactly** around 500 words. This word count is a **strict, non-negotiable requirement**.",
+            "two_pages": "The final summary must be **exactly** around 1000 words. This word count is a **strict, non-negotiable requirement**.",
             "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
         }
         length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
@@ -280,13 +274,9 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 
 <output_rules>
 **2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary.
+- Your response MUST BE ONLY the Markdown summary. DO NOT include a title, heading, or date at the top. Start directly with the 'Summary' section.
 - **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
-- Start directly with the `##` heading.
 ---
-## {meeting_title}
-_{date_str} — {time_range}_
-
 #### Summary
 Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
 ---
@@ -306,16 +296,13 @@ This is the core of the summary. For each **Key Theme** you identified, create a
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
-
+        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({detected_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
         response = openai.chat.completions.create(
             model="gpt-4.1-mini",
-            temperature=0.5,
+            temperature=0.4, # Lower temperature for more deterministic output
             messages=[
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": f"Please summarize the following transcript, following all instructions including the language and length requirement:\n\n{full_transcript}",
-                },
+                {"role": "user", "content": user_prompt_content},
             ],
         )
         return response.choices[0].message.content.strip()
@@ -351,8 +338,6 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
 
         summary_md = summarise_transcript_in_worker(
             final_transcript,
-            mtg.title,
-            mtg.started_at.isoformat(),
             mtg.summary_length,
         )
         mtg.summary_markdown = summary_md
@@ -559,4 +544,3 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
-
