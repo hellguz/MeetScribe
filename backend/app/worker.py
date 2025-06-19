@@ -13,6 +13,9 @@ from faster_whisper import WhisperModel
 from groq import BadRequestError, Groq
 import openai
 from sqlmodel import Session, select, func, create_engine
+from langdetect import detect, DetectorFactory
+from langdetect.lang_detect_exception import LangDetectException
+
 
 from .config import settings
 from .models import Meeting, MeetingChunk
@@ -52,6 +55,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s][%(module)s.%(funcName)s:%(lineno)d] %(message)s",
 )
 
+# It's recommended to set a seed for consistent results for short texts
+DetectorFactory.seed = 0
 
 def get_db_engine():
     global _db_engine_instance
@@ -205,31 +210,26 @@ Based on the content, generate the title now.
         return ""  # Return empty string on failure
 
 
-def detect_language(transcript_snippet: str) -> str:
-    """Detects the primary language of a text snippet using an API call."""
-    if not transcript_snippet:
-        return "English"  # Default
+def detect_language_local(text_snippet: str) -> str:
+    """Detects language locally from a text snippet."""
+    if not text_snippet:
+        return "English"
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a language detection expert. Your task is to identify the main language of the given text. Respond with ONLY the name of the language in English (e.g., 'Russian', 'German', 'Spanish'). Do not add any other words, explanation, or punctuation.",
-                },
-                {"role": "user", "content": transcript_snippet},
-            ],
-        )
-        language = response.choices[0].message.content.strip()
-        LOGGER.info(f"Detected language: {language}")
-        # Basic validation to ensure it's a plausible language name
-        if language and " " not in language and len(language) < 25:
-            return language
-        return "English"  # Fallback on a weird or empty response
-    except Exception as e:
-        LOGGER.error(f"Language detection failed: {e}", exc_info=True)
-        return "English"  # Default on error
+        # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
+        lang_code = detect(text_snippet)
+        # We need to map the code to a full language name for the prompt
+        LANG_MAP = {
+            "en": "English", "es": "Spanish", "fr": "French",
+            "de": "German", "it": "Italian", "pt": "Portuguese",
+            "ru": "Russian", "ja": "Japanese", "zh-cn": "Chinese (Simplified)",
+        }
+        language = LANG_MAP.get(lang_code, "English")
+        LOGGER.info(f"Detected language via langdetect: {language} ({lang_code})")
+        return language
+    except LangDetectException:
+        # This can happen if the text is too short or ambiguous
+        LOGGER.warning("Langdetect failed for snippet, defaulting to English.")
+        return "English"
 
 
 def summarise_transcript_in_worker(
@@ -246,32 +246,32 @@ def summarise_transcript_in_worker(
 
     try:
         transcript_snippet = full_transcript[:500]
-        detected_language = detect_language(transcript_snippet)
+        detected_language = detect_language_local(transcript_snippet)
 
         started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
         date_str = started_at_dt.strftime("%Y-%m-%d")
         end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
         time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
 
+        # --- Stricter Length Instructions ---
         LENGTH_PROMPTS = {
-            "short": "The summary should be concise, approximately 250-300 words (about half a standard page). Focus only on the most critical outcomes and action items.",
-            "medium": "The summary should be detailed but well-balanced, approximately 500-600 words (about one standard page). Cover all major topics and their conclusions.",
-            "long": "The summary should be comprehensive, approximately 1000-1200 words (about two standard pages). Provide a thorough account of the discussion, including nuances and supporting arguments.",
-            "custom": "Use your expert judgment to determine the appropriate length and level of detail for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
+            "quar_page": "The final summary MUST be very concise, approximately 125 words. This is a strict word count requirement.",
+            "half_page": "The final summary MUST be concise, approximately 250 words. This is a strict word count requirement.",
+            "one_page": "The final summary MUST be detailed but well-balanced, approximately 500 words. This is a strict word count requirement.",
+            "two_pages": "The final summary MUST be comprehensive, approximately 1000 words. This is a strict word count requirement.",
+            "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
         }
-        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["medium"])
+        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
 
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
-- **Proportionality:** The length and detail of the summary should naturally reflect the length and complexity of the source transcript. A short, simple conversation should result in a short summary. A long, complex critique requires a more detailed one.
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
 - **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
-- **Adhere to Length Requirement:** The user has requested a specific summary length. **Adhere to this constraint:** "{length_instruction}"
 - **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
 - **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
 </thinking_steps>
@@ -279,6 +279,7 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 <output_rules>
 **2. Final Output Generation**
 - Your response MUST BE ONLY the Markdown summary.
+- **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
 - Start directly with the `##` heading.
 ---
 ## {meeting_title}

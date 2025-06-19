@@ -111,8 +111,9 @@ export default function Summary() {
 				setTranscript(trn)
 
 				// Set summary length from the meeting data on initial load
-				if (data.summary_length) {
-					setSummaryLength(data.summary_length)
+				const lengthValue = data.summary_length || 'auto'
+				if (['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(lengthValue)) {
+					setSummaryLength(lengthValue as SummaryLength)
 				}
 
 				if (isInitialFetch) {
@@ -196,7 +197,7 @@ export default function Summary() {
 			setError(null) // Clear previous errors
 
 			try {
-				const payload = newLength ? { summary_length: newLength } : {}
+				const payload = { summary_length: newLength || summaryLength }
 				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -220,7 +221,7 @@ export default function Summary() {
 				setIsRegenerating(false)
 			}
 		},
-		[mid],
+		[mid, summaryLength],
 	)
 
 	// Initial fetch
@@ -369,13 +370,13 @@ export default function Summary() {
 			{!isLoading && !error && isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
 			{!isLoading && !error && (
-				<div style={{ marginBottom: '24px' }}>
+				<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
 					<SummaryLengthSelector
 						disabled={isProcessing || isRegenerating}
-						onSelect={(newLength) => {
-							if (newLength !== summaryLength) {
-								setSummaryLength(newLength) // Update context/localStorage
-								handleRegenerate(newLength) // Trigger API call
+						onSelect={(newPreset) => {
+							// If the user selects the same preset, do nothing. Otherwise, regenerate.
+							if (newPreset !== summaryLength) {
+								handleRegenerate(newPreset)
 							}
 						}}
 					/>

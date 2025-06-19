@@ -24,6 +24,7 @@ from .models import (
     MeetingMeta,
     MeetingSyncRequest,
     RegeneratePayload,
+    MeetingConfigUpdate,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -54,6 +55,13 @@ app.add_middleware(
 INACTIVITY_TIMEOUT_SECONDS = 120
 
 
+def is_valid_summary_length(length_str: str | None) -> bool:
+    """Validates the summary_length parameter."""
+    if length_str is None:
+        return True
+    return length_str in ["auto", "quar_page", "half_page", "one_page", "two_pages"]
+
+
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
     mtg = db.get(Meeting, meeting_id)
     if not mtg:
@@ -80,11 +88,14 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
 def create_meeting(body: MeetingCreate, request: Request):
     with Session(engine) as db:
+        if not is_valid_summary_length(body.summary_length):
+            raise HTTPException(status_code=400, detail="Invalid summary_length value.")
+
         user_agent = request.headers.get("user-agent")
         mtg_data = body.model_dump()
         # If summary_length is not provided by client, let the DB model's default apply
         if body.summary_length is None:
-            mtg_data.pop("summary_length", None)
+            mtg_data["summary_length"] = "auto"
         mtg = Meeting(**mtg_data, user_agent=user_agent)
         db.add(mtg)
         db.commit()
@@ -254,6 +265,25 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
         return mtg
 
 
+@app.put("/api/meetings/{mid}/config", response_model=Meeting)
+def update_meeting_config(mid: uuid.UUID, payload: MeetingConfigUpdate):
+    """Updates the configuration of a meeting, like its summary length."""
+    if not is_valid_summary_length(payload.summary_length):
+        raise HTTPException(status_code=400, detail="Invalid summary_length value.")
+
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        mtg.summary_length = payload.summary_length
+        db.add(mtg)
+        db.commit()
+        db.refresh(mtg)
+        LOGGER.info("Updated summary length for meeting %s to '%s'", mid, payload.summary_length)
+        return mtg
+
+
 @app.post("/api/meetings/{mid}/regenerate", status_code=200)
 def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
     """
@@ -267,18 +297,16 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
             raise HTTPException(status_code=404, detail="Meeting not found")
 
         # If a new length is provided, update it on the meeting object
-        if payload.summary_length and payload.summary_length in [
-            "short",
-            "medium",
-            "long",
-            "custom",
-        ]:
+        if payload.summary_length and is_valid_summary_length(payload.summary_length):
             mtg.summary_length = payload.summary_length
             LOGGER.info(
                 "Updated summary length for meeting %s to '%s'",
                 mid,
                 payload.summary_length,
             )
+        else:
+            # Fallback or default if an invalid value is somehow passed
+            mtg.summary_length = "auto"
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False

@@ -5,7 +5,7 @@ import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
-import { useSummaryLength } from '../contexts/SummaryLengthContext'
+import { useSummaryLength, SummaryLength } from '../contexts/SummaryLengthContext'
 
 type AudioSource = 'mic' | 'system' | 'file'
 
@@ -14,7 +14,7 @@ export default function Record() {
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 
-	const { summaryLength } = useSummaryLength()
+	const { summaryLength, setSummaryLength } = useSummaryLength()
 
 	/* ─── history list ──────────────────────────────────────────────── */
 	const [history, setHistory] = useState<MeetingMeta[]>([])
@@ -316,6 +316,7 @@ export default function Record() {
 	const createMeetingOnBackend = useCallback(
 		async (titleOverride?: string) => {
 			const title = titleOverride || `Recording ${new Date().toLocaleString()}`
+
 			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -701,6 +702,18 @@ export default function Record() {
 	}
 	/* ───────────────────────────────────────────────────────────────── */
 
+	const handleLengthChange = (newLength: SummaryLength) => {
+		setSummaryLength(newLength)
+		if (isRecording && meetingId.current) {
+			// Update the length on the backend for the current meeting
+			fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/config`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ summary_length: newLength }),
+			}).catch((err) => console.error('Failed to update summary length mid-recording:', err))
+		}
+	}
+
 	useEffect(() => {
 		return () => {
 			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
@@ -728,7 +741,10 @@ export default function Record() {
 	return (
 		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' /* fontFamily, backgroundColor and color are inherited from body */ }}>
 			<ThemeToggle />
-			<h1 style={{ textAlign: 'center', marginBottom: '24px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
+			<h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
+			<div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+				<SummaryLengthSelector onSelect={handleLengthChange} />
+			</div>
 
 			{!isUiLocked && (
 				<div style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -756,10 +772,6 @@ export default function Record() {
 								<option value="system">System Audio (Speakers)</option>
 								<option value="file">Upload Audio File</option>
 							</select>
-						</div>
-						<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-							<label style={{ fontWeight: 500, color: currentThemeColors.text }}>Summary Length:</label>
-							<SummaryLengthSelector />
 						</div>
 					</div>
 

@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useMemo, useContext, ReactNode } from 'react'
 
-export type SummaryLength = 'short' | 'medium' | 'long' | 'custom'
+export type SummaryLength = 'auto' | 'quar_page' | 'half_page' | 'one_page' | 'two_pages'
 
 interface SummaryLengthContextType {
 	summaryLength: SummaryLength
@@ -16,10 +16,10 @@ interface SummaryLengthProviderProps {
 export const SummaryLengthProvider: React.FC<SummaryLengthProviderProps> = ({ children }) => {
 	const [summaryLength, setSummaryLength] = useState<SummaryLength>(() => {
 		const storedLength = localStorage.getItem('summary_length')
-		if (storedLength && ['short', 'medium', 'long', 'custom'].includes(storedLength)) {
+		if (storedLength && ['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(storedLength)) {
 			return storedLength as SummaryLength
 		}
-		return 'medium' // Default value
+		return 'auto' // Default value
 	})
 
 	useEffect(() => {

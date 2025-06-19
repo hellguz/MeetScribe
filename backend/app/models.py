@@ -28,7 +28,7 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
-    summary_length: str = Field(default="medium")  # short, medium, long, custom
+    summary_length: str = Field(default="auto")  # auto, short, medium, long, or a word count as a string
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -126,3 +126,11 @@ class RegeneratePayload(SQLModel):
     """
 
     summary_length: str | None = None
+
+
+class MeetingConfigUpdate(SQLModel):
+    """
+    Payload for updating a meeting's configuration, like summary length.
+    """
+
+    summary_length: str

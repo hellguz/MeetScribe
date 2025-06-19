@@ -1,31 +1,32 @@
-import React, { useContext } from 'react'
+import React from 'react'
 import { useSummaryLength, SummaryLength } from '../contexts/SummaryLengthContext'
-import { ThemeContext, useTheme } from '../contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 
 interface SummaryLengthSelectorProps {
-	onSelect?: (length: SummaryLength) => void
 	disabled?: boolean
+	onSelect: (preset: SummaryLength) => void
 }
 
 const options: { label: string; value: SummaryLength }[] = [
-	{ label: '½ Page', value: 'short' },
-	{ label: '1 Page', value: 'medium' },
-	{ label: '2 Pages', value: 'long' },
-	{ label: 'Auto', value: 'custom' },
+	{ label: 'Auto', value: 'auto' },
+	{ label: '¼ Page', value: 'quar_page' },
+	{ label: '½ Page', value: 'half_page' },
+	{ label: '1 Page', value: 'one_page' },
+	{ label: '2 Pages', value: 'two_pages' },
 ]
 
-const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ onSelect, disabled = false }) => {
+const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ disabled = false, onSelect }) => {
 	const { summaryLength, setSummaryLength } = useSummaryLength()
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 
 	const handleSelect = (length: SummaryLength) => {
 		if (disabled) return
+		// Update context immediately for responsive UI
 		setSummaryLength(length)
-		if (onSelect) {
-			onSelect(length)
-		}
+		// Propagate the change to the parent component
+		onSelect(length)
 	}
 
 	return (
@@ -36,7 +37,6 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ onSelect,
 				borderRadius: '8px',
 				padding: '4px',
 				width: 'fit-content',
-				margin: '0 auto',
 				opacity: disabled ? 0.6 : 1,
 				cursor: disabled ? 'not-allowed' : 'default',
 			}}>
