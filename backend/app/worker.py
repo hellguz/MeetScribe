@@ -218,11 +218,38 @@ def detect_language_local(text_snippet: str) -> str:
     try:
         # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
         lang_code = detect(text_snippet)
-        # We need to map the code to a full language name for the prompt
+        
+        # Expanded map for common languages
         LANG_MAP = {
-            "en": "English", "es": "Spanish", "fr": "French",
-            "de": "German", "it": "Italian", "pt": "Portuguese",
-            "ru": "Russian", "ja": "Japanese", "zh-cn": "Chinese (Simplified)",
+            "ar": "Arabic",
+            "cs": "Czech",
+            "da": "Danish",
+            "de": "German",
+            "en": "English",
+            "es": "Spanish",
+            "fi": "Finnish",
+            "fr": "French",
+            "he": "Hebrew",
+            "hi": "Hindi",
+            "hu": "Hungarian",
+            "id": "Indonesian",
+            "it": "Italian",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "nl": "Dutch",
+            "no": "Norwegian",
+            "pl": "Polish",
+            "pt": "Portuguese",
+            "ro": "Romanian",
+            "ru": "Russian",
+            "sk": "Slovak",
+            "sv": "Swedish",
+            "sw": "Swahili",
+            "th": "Thai",
+            "tr": "Turkish",
+            "vi": "Vietnamese",
+            "zh-cn": "Chinese (Simplified)",
+            "zh-tw": "Chinese (Traditional)",
         }
         language = LANG_MAP.get(lang_code, "English")
         LOGGER.info(f"Detected language via langdetect: {language} ({lang_code})")

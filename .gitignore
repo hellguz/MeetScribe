@@ -49,3 +49,5 @@ docker-compose*.override.yml
 Thumbs.db
 
 /.gpt/*.txt
+
+/backend/celerybeat-schedule
