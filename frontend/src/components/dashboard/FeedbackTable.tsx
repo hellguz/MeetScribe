@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { NavigateFunction } from 'react-router-dom';
-import { AppTheme, lightTheme, darkTheme } from '../../styles/theme';
+import { AppTheme } from '../../styles/theme';
 import { MeetingWithFeedback, Feedback } from '../../types';
+import { getFeedbackColors } from '../../utils/feedbackColors';
 
 interface FeedbackTableProps {
     meetings: MeetingWithFeedback[];
@@ -12,31 +13,7 @@ interface FeedbackTableProps {
 
 const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate, onDeleteFeedback }) => {
     const [activeFilters, setActiveFilters] = useState<string[]>([]);
-    const feedbackColors = useMemo(() => {
-        const light = {
-            accurate: { text: '#057a55', bg: '#def7ec', border: '#a7f3d0' },
-            inaccurate: { text: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-            too_short: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
-            too_detailed: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
-            well_structured: { text: '#057a55', bg: '#def7ec', border: '#a7f3d0' },
-            confusing: { text: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-            missed_key_points: { text: '#b45309', bg: '#fffbeb', border: '#fde68a' },
-            hallucinated: { text: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-            '💡 Suggestion': { text: '#1d4ed8', bg: '#eff6ff', border: '#bfdbfe' },
-        };
-        const dark = {
-            accurate: { text: '#a7f3d0', bg: '#143623', border: '#15803d' },
-            inaccurate: { text: '#fecaca', bg: '#451a1a', border: '#b91c1c' },
-            too_short: { text: '#fde68a', bg: '#422006', border: '#b45309' },
-            too_detailed: { text: '#fde68a', bg: '#422006', border: '#b45309' },
-            well_structured: { text: '#a7f3d0', bg: '#143623', border: '#15803d' },
-            confusing: { text: '#fecaca', bg: '#451a1a', border: '#b91c1c' },
-            missed_key_points: { text: '#fde68a', bg: '#422006', border: '#b45309' },
-            hallucinated: { text: '#fecaca', bg: '#451a1a', border: '#b91c1c' },
-            '💡 Suggestion': { text: '#bfdbfe', bg: '#1e3a8a', border: '#1e40af' },
-        };
-        return theme.text === lightTheme.text ? light : dark;
-    }, [theme]);
+    const feedbackColors = useMemo(() => getFeedbackColors(theme), [theme]);
 
     const allFeedbackTypes = useMemo(() => {
         const types = new Set<string>();

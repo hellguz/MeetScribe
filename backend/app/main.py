@@ -506,16 +506,16 @@ def get_dashboard_stats():
         device_counts = Counter()
         for ua in user_agent_results:
             ua_lower = ua.lower()
-            if "windows" in ua_lower:
+            if "iphone" in ua_lower:
+                device_counts["iPhone"] += 1
+            elif "android" in ua_lower:
+                device_counts["Android"] += 1
+            elif "windows" in ua_lower:
                 device_counts["Windows"] += 1
             elif "macintosh" in ua_lower:
                 device_counts["Mac"] += 1
             elif "linux" in ua_lower:
                 device_counts["Linux"] += 1
-            elif "iphone" in ua_lower:
-                device_counts["iPhone"] += 1
-            elif "android" in ua_lower:
-                device_counts["Android"] += 1
             else:
                 device_counts["Other"] += 1
 
