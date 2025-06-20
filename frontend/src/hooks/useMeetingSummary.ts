@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { getCached, saveCached } from '../utils/summaryCache';
 import { getHistory, saveMeeting } from '../utils/history';
 import { SummaryLength } from '../contexts/SummaryLengthContext';
+import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
-export const useMeetingSummary = (mid: string | undefined) => {
+export const useMeetingSummary = (mid: string | undefined, languageState: SummaryLanguageState) => {
     const [summary, setSummary] = useState<string | null>(null);
     const [transcript, setTranscript] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -101,16 +102,21 @@ export const useMeetingSummary = (mid: string | undefined) => {
         }
     };
 
-    const handleRegenerate = useCallback(async (newLength: SummaryLength) => {
+    const handleRegenerate = useCallback(async (newLength: SummaryLength, newLanguageState: SummaryLanguageState) => {
         if (!mid) return;
         setCurrentMeetingLength(newLength);
         setIsRegenerating(true);
         setError(null);
         try {
+            const payload = { 
+                summary_length: newLength,
+                summary_language_mode: newLanguageState.mode,
+                summary_custom_language: newLanguageState.customLanguage,
+            };
             const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ summary_length: newLength }),
+                body: JSON.stringify(payload),
             });
             if (!res.ok) throw new Error('Failed to start summary regeneration.');
             setSummary(null);
@@ -180,4 +186,3 @@ export const useMeetingSummary = (mid: string | undefined) => {
         loadedFromCache,
     };
 };
-

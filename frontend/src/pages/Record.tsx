@@ -12,18 +12,23 @@ import FileUpload from '../components/FileUpload';
 import RecordingStatus from '../components/RecordingStatus';
 import HistoryList from '../components/HistoryList';
 import { AudioSource } from '../types';
+import LanguageSelector from '../components/LanguageSelector';
+import { useSummaryLanguage } from '../contexts/SummaryLanguageContext';
 
 export default function Record() {
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
     const { summaryLength, setSummaryLength } = useSummaryLength();
+    const { languageState } = useSummaryLanguage();
+
     const {
         isRecording, isProcessing, localChunksCount, uploadedChunks, expectedTotalChunks,
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
         animationFrameRef,
-    } = useRecording(summaryLength);
+    } = useRecording(summaryLength, languageState);
+
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -150,8 +155,9 @@ export default function Record() {
             <h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
             {(isRecording || isProcessing) && (
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
                     <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isProcessing} />
+                    <LanguageSelector disabled={isProcessing} />
                 </div>
             )}
             

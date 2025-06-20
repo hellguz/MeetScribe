@@ -28,7 +28,9 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
-    summary_length: str = Field(default="auto")  # auto, short, medium, long, or a word count as a string
+    summary_length: str = Field(default="auto")
+    summary_language_mode: str = Field(default="auto")
+    summary_custom_language: str | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -65,6 +67,8 @@ class MeetingCreate(SQLModel):
     title: str
     expected_chunks: int | None = None
     summary_length: str | None = None
+    summary_language_mode: str | None = None
+    summary_custom_language: str | None = None
 
 
 class FeedbackCreate(SQLModel):
@@ -106,6 +110,8 @@ class MeetingStatus(SQLModel):
     expected_chunks: Optional[int]
     transcribed_chunks: int
     summary_length: str
+    summary_language_mode: str
+    summary_custom_language: str | None = None
     feedback: list[str] = [] # List of submitted feedback types
 
 
@@ -143,6 +149,8 @@ class RegeneratePayload(SQLModel):
     """
 
     summary_length: str | None = None
+    summary_language_mode: str | None = None
+    summary_custom_language: str | None = None
 
 
 class MeetingConfigUpdate(SQLModel):

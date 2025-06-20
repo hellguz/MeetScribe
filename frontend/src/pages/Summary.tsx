@@ -6,21 +6,24 @@ import { useTheme } from '../contexts/ThemeContext';
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme';
 import FeedbackComponent from '../components/FeedbackComponent';
 import SummaryLengthSelector from '../components/SummaryLengthSelector';
-import { SummaryLength } from '../contexts/SummaryLengthContext';
+import LanguageSelector from '../components/LanguageSelector';
 import { useMeetingSummary } from '../hooks/useMeetingSummary';
+import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
 export default function Summary() {
     const { mid } = useParams<{ mid: string }>();
     const navigate = useNavigate();
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
+    const { languageState } = useSummaryLanguage();
 
     const {
         summary, transcript, isLoading, isProcessing, error, meetingTitle,
         currentMeetingLength, submittedFeedback, isRegenerating,
         handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
         loadedFromCache
-    } = useMeetingSummary(mid);
+    } = useMeetingSummary(mid, languageState);
+    
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
     const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
@@ -57,6 +60,11 @@ export default function Summary() {
         );
     };
 
+    const onLanguageChange = (newState: SummaryLanguageState) => {
+        // When language changes, regenerate with the new language and the current length
+        handleRegenerate(currentMeetingLength, newState);
+    };
+
     return (
         <div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
             <ThemeToggle />
@@ -70,8 +78,9 @@ export default function Summary() {
             {isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
 
             {(!isLoading || loadedFromCache) && !error && (
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
-                    <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate(len)} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+                    <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate(len, languageState)} />
+                    <LanguageSelector disabled={isProcessing || isRegenerating} onSelectionChange={onLanguageChange} />
                 </div>
             )}
 
@@ -89,7 +98,6 @@ export default function Summary() {
                     {isTranscriptVisible && <pre style={{ whiteSpace: 'pre-wrap', backgroundColor: currentThemeColors.backgroundSecondary, padding: 16, borderRadius: 4, border: `1px solid ${currentThemeColors.border}` }}>{transcript}</pre>}
                 </div>
             )}
-
         </div>
     );
 }

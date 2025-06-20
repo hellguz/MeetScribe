@@ -96,9 +96,13 @@ def create_meeting(body: MeetingCreate, request: Request):
 
         user_agent = request.headers.get("user-agent")
         mtg_data = body.model_dump()
-        # If summary_length is not provided by client, let the DB model's default apply
+        
+        # Set defaults if not provided by client
         if body.summary_length is None:
             mtg_data["summary_length"] = "auto"
+        if body.summary_language_mode is None:
+            mtg_data["summary_language_mode"] = "auto"
+
         mtg = Meeting(**mtg_data, user_agent=user_agent)
         db.add(mtg)
         db.commit()
@@ -341,17 +345,16 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        # If a new length is provided, update it on the meeting object
+        # Update summary length if provided
         if payload.summary_length and is_valid_summary_length(payload.summary_length):
             mtg.summary_length = payload.summary_length
-            LOGGER.info(
-                "Updated summary length for meeting %s to '%s'",
-                mid,
-                payload.summary_length,
-            )
         elif not mtg.summary_length:
-            # Fallback or default if an invalid value is somehow passed or it's not set
             mtg.summary_length = "auto"
+        
+        # Update language settings if provided
+        if payload.summary_language_mode:
+            mtg.summary_language_mode = payload.summary_language_mode
+            mtg.summary_custom_language = payload.summary_custom_language
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False
