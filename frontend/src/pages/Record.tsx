@@ -13,13 +13,13 @@ import RecordingStatus from '../components/RecordingStatus';
 import HistoryList from '../components/HistoryList';
 import { AudioSource } from '../types';
 import LanguageSelector from '../components/LanguageSelector';
-import { useSummaryLanguage } from '../contexts/SummaryLanguageContext';
+import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
 export default function Record() {
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
     const { summaryLength, setSummaryLength } = useSummaryLength();
-    const { languageState } = useSummaryLanguage();
+    const { languageState, setLanguageState } = useSummaryLanguage();
 
     const {
         isRecording, isProcessing, localChunksCount, uploadedChunks, expectedTotalChunks,
@@ -79,7 +79,7 @@ export default function Record() {
         const centerY = canvas.height / 2;
 
         for (let i = 0; i < bufferLength; i++) {
-            const v = dataArray[i] / 128.0;
+			const v = dataArray[i] / 128.0;
 			const y = v * (canvas.height / 2);
             if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
@@ -103,9 +103,10 @@ export default function Record() {
 
     const handleLengthChange = (newLength: SummaryLength) => {
         setSummaryLength(newLength);
-        if (isRecording && localChunksCount > 0) {
-            // Future logic to update summary length mid-recording can go here
-        }
+    };
+
+    const handleLanguageChange = (update: Partial<SummaryLanguageState>) => {
+        setLanguageState(update);
     };
 
     const handleTitleUpdate = async (id: string, newTitle: string) => {
@@ -154,10 +155,10 @@ export default function Record() {
             <ThemeToggle />
             <h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
-            {(isRecording || isProcessing) && (
+            {!isUiLocked && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
                     <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isProcessing} />
-                    <LanguageSelector disabled={isProcessing} />
+                    <LanguageSelector disabled={isProcessing} onSelectionChange={handleLanguageChange} />
                 </div>
             )}
             

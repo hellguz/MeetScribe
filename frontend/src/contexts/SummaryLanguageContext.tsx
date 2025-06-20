@@ -2,14 +2,16 @@ import React, { createContext, useState, useEffect, useMemo, useContext, ReactNo
 
 export type LanguageMode = 'auto' | 'english' | 'custom';
 
+// This state is now designed to always preserve the last custom language choice
 export interface SummaryLanguageState {
     mode: LanguageMode;
-    customLanguage: string | null;
+    lastCustomLanguage: string;
 }
 
 interface SummaryLanguageContextType {
     languageState: SummaryLanguageState;
-    setLanguageState: (state: SummaryLanguageState) => void;
+    // Allow partial updates for easier state management in components
+    setLanguageState: (update: Partial<SummaryLanguageState>) => void;
 }
 
 export const SummaryLanguageContext = createContext<SummaryLanguageContextType | undefined>(undefined);
@@ -18,37 +20,36 @@ interface SummaryLanguageProviderProps {
     children: ReactNode;
 }
 
-const defaultLanguage = 'English'; // Default for custom dropdown
+const defaultLanguage = 'Arabic'; // Default custom language if none is stored
 
 export const SummaryLanguageProvider: React.FC<SummaryLanguageProviderProps> = ({ children }) => {
-    const [languageState, setLanguageState] = useState<SummaryLanguageState>(() => {
+    const [languageState, setLanguageStateInternal] = useState<SummaryLanguageState>(() => {
         try {
-            const storedState = localStorage.getItem('summary_language_state');
+            const storedState = localStorage.getItem('summary_language_state_v2');
             if (storedState) {
                 const parsed = JSON.parse(storedState) as SummaryLanguageState;
-                // Ensure custom language is set if mode is custom
-                if (parsed.mode === 'custom' && !parsed.customLanguage) {
-                    parsed.customLanguage = defaultLanguage;
+                // Basic validation
+                if (parsed.mode && parsed.lastCustomLanguage) {
+                    return parsed;
                 }
-                return parsed;
             }
         } catch (error) {
             console.warn('Failed to parse summary language state from localStorage', error);
         }
-        return { mode: 'auto', customLanguage: null }; // Default state
+        // Return a clean default state if anything fails
+        return { mode: 'auto', lastCustomLanguage: defaultLanguage };
     });
 
     useEffect(() => {
-        // Ensure state consistency
-        const correctedState = { ...languageState };
-        if (languageState.mode !== 'custom') {
-            correctedState.customLanguage = null;
-        } else if (languageState.mode === 'custom' && !languageState.customLanguage) {
-            correctedState.customLanguage = defaultLanguage;
-        }
-
-        localStorage.setItem('summary_language_state', JSON.stringify(correctedState));
+        // Persist the entire state to localStorage on any change
+        localStorage.setItem('summary_language_state_v2', JSON.stringify(languageState));
     }, [languageState]);
+    
+    // Wrapper to allow partial updates, making it easier for components to use.
+    // e.g., setLanguageState({ mode: 'auto' }) without needing to know lastCustomLanguage
+    const setLanguageState = (update: Partial<SummaryLanguageState>) => {
+        setLanguageStateInternal(prevState => ({ ...prevState, ...update }));
+    };
 
     const contextValue = useMemo(() => ({ languageState, setLanguageState }), [languageState]);
 

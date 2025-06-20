@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { SummaryLength } from '../contexts/SummaryLengthContext';
 import { saveMeeting, getHistory } from '../utils/history';
 import { AudioSource } from '../types';
+import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
 const CHUNK_DURATION_MS = 30_000;
 
@@ -35,7 +36,7 @@ const encodeAudioChunk = (chunkBuffer: AudioBuffer): Promise<Blob> => {
 	});
 };
 
-export const useRecording = (summaryLength: SummaryLength) => {
+export const useRecording = (summaryLength: SummaryLength, languageState: SummaryLanguageState) => {
     const navigate = useNavigate();
     const [isRecording, setRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -50,7 +51,8 @@ export const useRecording = (summaryLength: SummaryLength) => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     const [firstChunkProcessedTime, setFirstChunkProcessedTime] = useState<number | null>(null);
-    const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
+    const [transcriptionStartTime, setTranscriptionStartTime] = useState<number |
+null>(null);
 
     const meetingId = useRef<string | null>(null);
     const mediaRef = useRef<MediaRecorder | null>(null);
@@ -134,14 +136,19 @@ export const useRecording = (summaryLength: SummaryLength) => {
         const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, summary_length: summaryLength }),
+            body: JSON.stringify({ 
+                title, 
+                summary_length: summaryLength,
+                summary_language_mode: languageState.mode,
+                summary_custom_language: languageState.lastCustomLanguage,
+            }),
         });
         if (!res.ok) throw new Error('Failed to create meeting');
         const data = await res.json();
         meetingId.current = data.id;
         saveMeeting({ id: data.id, title, started_at: new Date().toISOString(), status: 'pending' });
         return data.id;
-    }, [summaryLength]);
+    }, [summaryLength, languageState]);
 
     const uploadChunk = useCallback(async (blob: Blob, index: number, isFinal = false) => {
         if (!meetingId.current) return;
@@ -295,13 +302,11 @@ export const useRecording = (summaryLength: SummaryLength) => {
         }
     }, [selectedFile, createMeetingOnBackend, pollMeetingStatus, uploadChunk]);
 
-
     useEffect(() => {
         if (includeMic && isRecording && audioSource === 'system' && micStreamRef.current) {
             micStreamRef.current.getAudioTracks()[0].enabled = includeMic;
         }
     }, [includeMic, isRecording, audioSource]);
-
 
     useEffect(() => {
         return () => {
@@ -319,4 +324,3 @@ export const useRecording = (summaryLength: SummaryLength) => {
         resetState,
     };
 };
-

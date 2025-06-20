@@ -4,7 +4,7 @@ import { getHistory, saveMeeting } from '../utils/history';
 import { SummaryLength } from '../contexts/SummaryLengthContext';
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
-export const useMeetingSummary = (mid: string | undefined, languageState: SummaryLanguageState) => {
+export const useMeetingSummary = (mid: string | undefined) => {
     const [summary, setSummary] = useState<string | null>(null);
     const [transcript, setTranscript] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -27,6 +27,7 @@ export const useMeetingSummary = (mid: string | undefined, languageState: Summar
 
         try {
             const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`);
+            
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({ message: 'Failed to fetch meeting data' }));
                 throw new Error(errorData.detail || `HTTP error! status: ${res.status}`);
@@ -111,7 +112,7 @@ export const useMeetingSummary = (mid: string | undefined, languageState: Summar
             const payload = { 
                 summary_length: newLength,
                 summary_language_mode: newLanguageState.mode,
-                summary_custom_language: newLanguageState.customLanguage,
+                summary_custom_language: newLanguageState.lastCustomLanguage,
             };
             const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
                 method: 'POST',

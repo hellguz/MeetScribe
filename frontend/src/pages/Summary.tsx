@@ -15,15 +15,15 @@ export default function Summary() {
     const navigate = useNavigate();
     const { theme } = useTheme();
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
-    const { languageState } = useSummaryLanguage();
+    const { languageState, setLanguageState } = useSummaryLanguage();
 
     const {
         summary, transcript, isLoading, isProcessing, error, meetingTitle,
         currentMeetingLength, submittedFeedback, isRegenerating,
         handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
         loadedFromCache
-    } = useMeetingSummary(mid, languageState);
-    
+    } = useMeetingSummary(mid);
+
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
     const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
@@ -60,8 +60,9 @@ export default function Summary() {
         );
     };
 
-    const onLanguageChange = (newState: SummaryLanguageState) => {
-        // When language changes, regenerate with the new language and the current length
+    const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
+        const newState = { ...languageState, ...update };
+        setLanguageState(update); // Persist the change
         handleRegenerate(currentMeetingLength, newState);
     };
 
@@ -75,12 +76,12 @@ export default function Summary() {
 
             {isLoading && !loadedFromCache && <p>Loading summary...</p>}
             {error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
-            {isProcessing && !summary && <p>⏳ Processing summary, please wait...</p>}
+            {(isProcessing || isRegenerating) && !summary && <p>⏳ Processing summary, please wait...</p>}
 
             {(!isLoading || loadedFromCache) && !error && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                     <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate(len, languageState)} />
-                    <LanguageSelector disabled={isProcessing || isRegenerating} onSelectionChange={onLanguageChange} />
+                    <LanguageSelector onSelectionChange={onLanguageChange} />
                 </div>
             )}
 

@@ -179,7 +179,6 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 2.  **Length:** The title must be between 6 and 15 words.
 3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
-
 **Meeting Summary:**
 ---
 {summary}
@@ -263,10 +262,11 @@ def detect_language_local(text_snippet: str) -> str:
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
+    summary_language_mode: str | None,
+    summary_custom_language: str | None,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
-
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
 
@@ -274,6 +274,14 @@ def summarise_transcript_in_worker(
         # Use a larger snippet for more reliable language detection
         transcript_snippet = full_transcript[:2000]
         detected_language = detect_language_local(transcript_snippet)
+
+        # Determine target language based on user's preference
+        if summary_language_mode == 'custom' and summary_custom_language:
+            target_language = summary_custom_language
+        elif summary_language_mode == 'english':
+            target_language = "English"
+        else:  # 'auto' or any other case
+            target_language = detected_language
 
         # Stricter and clearer length instructions
         LENGTH_PROMPTS = {
@@ -287,14 +295,13 @@ def summarise_transcript_in_worker(
 
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
-
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
-- **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
+- **Confirm Language:** The user wants the summary in **{target_language}**. Your entire output MUST be in **{target_language}**. This is the most important rule.
 - **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
 - **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
 </thinking_steps>
@@ -323,7 +330,7 @@ This is the core of the summary. For each **Key Theme** you identified, create a
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
-        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({detected_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
+        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
         response = openai.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.4, # Lower temperature for more deterministic output
@@ -366,6 +373,8 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         summary_md = summarise_transcript_in_worker(
             final_transcript,
             mtg.summary_length,
+            mtg.summary_language_mode,
+            mtg.summary_custom_language,
         )
         mtg.summary_markdown = summary_md
 
