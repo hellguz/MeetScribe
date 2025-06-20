@@ -22,7 +22,7 @@ export default function Summary() {
         currentMeetingLength, submittedFeedback, isRegenerating,
         handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
         loadedFromCache
-    } = useMeetingSummary(mid);
+    } = useMeetingSummary({ mid, languageState, setLanguageState });
 
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
@@ -61,8 +61,11 @@ export default function Summary() {
     };
 
     const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
+        // Create the full new state from the partial update
         const newState = { ...languageState, ...update };
-        setLanguageState(update); // Persist the change
+        // Persist the change via the context
+        setLanguageState(newState);
+        // Trigger regeneration with the complete new state
         handleRegenerate(currentMeetingLength, newState);
     };
 

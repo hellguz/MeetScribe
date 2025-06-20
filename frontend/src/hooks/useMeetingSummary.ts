@@ -4,7 +4,13 @@ import { getHistory, saveMeeting } from '../utils/history';
 import { SummaryLength } from '../contexts/SummaryLengthContext';
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
-export const useMeetingSummary = (mid: string | undefined) => {
+interface UseMeetingSummaryProps {
+    mid: string | undefined;
+    languageState: SummaryLanguageState;
+    setLanguageState: (update: Partial<SummaryLanguageState>) => void;
+}
+
+export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseMeetingSummaryProps) => {
     const [summary, setSummary] = useState<string | null>(null);
     const [transcript, setTranscript] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +40,16 @@ export const useMeetingSummary = (mid: string | undefined) => {
             }
 
             const data = await res.json();
+
+            // --- Sync language state with the meeting's settings ---
+            if (data.summary_language_mode) {
+                setLanguageState({
+                    mode: data.summary_language_mode,
+                    // Use the meeting's custom language, but fall back to user's last known one if null
+                    lastCustomLanguage: data.summary_custom_language || languageState.lastCustomLanguage,
+                });
+            }
+
             const trn = data.transcript_text || null;
             setTranscript(trn);
             setSubmittedFeedback(data.feedback || []);
@@ -72,7 +88,7 @@ export const useMeetingSummary = (mid: string | undefined) => {
             setIsLoading(false);
             setIsProcessing(false);
         }
-    }, [mid, loadedFromCache, meetingTitle, meetingStartedAt]);
+    }, [mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState]);
 
     const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
         if (!mid) return;
@@ -162,7 +178,7 @@ export const useMeetingSummary = (mid: string | undefined) => {
             }
             fetchMeetingData(true);
         }
-    }, [mid]);
+    }, [mid]); // Removed fetchMeetingData from dep array to avoid re-running on language change
 
     useEffect(() => {
         if (!isProcessing) return;

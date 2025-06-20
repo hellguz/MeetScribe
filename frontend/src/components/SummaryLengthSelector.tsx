@@ -54,6 +54,12 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 							fontWeight: isActive ? 'bold' : 'normal',
 							transition: 'all 0.2s ease',
 							fontSize: '14px',
+							height: '32px', // Explicit height for consistency
+							boxSizing: 'border-box',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							whiteSpace: 'nowrap',
 						}}>
 						{option.label}
 					</button>

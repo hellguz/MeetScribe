@@ -155,7 +155,7 @@ export default function Record() {
             <ThemeToggle />
             <h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
-            {!isUiLocked && (
+            {isUiLocked && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
                     <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isProcessing} />
                     <LanguageSelector disabled={isProcessing} onSelectionChange={handleLanguageChange} />

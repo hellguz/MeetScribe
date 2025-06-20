@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSummaryLanguage, LanguageMode, SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme';
@@ -8,7 +8,6 @@ interface LanguageSelectorProps {
     onSelectionChange: (update: Partial<SummaryLanguageState>) => void;
 }
 
-// A list of common languages for the dropdown
 const languages = [
     "Arabic", "Chinese (Simplified)", "Czech", "Danish", "Dutch", "English",
     "Finnish", "French", "German", "Greek", "Hebrew", "Hindi",
@@ -18,30 +17,49 @@ const languages = [
 ];
 
 const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, onSelectionChange }) => {
-    const { languageState, setLanguageState } = useSummaryLanguage();
+    const { languageState } = useSummaryLanguage();
     const { theme } = useTheme();
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement>(null);
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
+
+    // --- Close dropdown on outside click ---
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+                setIsDropdownOpen(false);
+            }
+        };
+
+        if (isDropdownOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        } else {
+            document.removeEventListener('mousedown', handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isDropdownOpen]);
 
     const handleModeClick = (mode: LanguageMode) => {
         if (disabled) return;
-        setIsDropdownOpen(false); // Close dropdown on mode change
+        setIsDropdownOpen(false);
         onSelectionChange({ mode });
     };
 
     const handleCustomButtonClick = () => {
         if (disabled) return;
         if (languageState.mode === 'custom') {
-            setIsDropdownOpen(!isDropdownOpen); // Toggle dropdown if already in custom mode
+            setIsDropdownOpen(!isDropdownOpen);
         } else {
-            onSelectionChange({ mode: 'custom' }); // Switch to custom mode
+            onSelectionChange({ mode: 'custom' });
         }
     };
     
     const handleCustomLanguageSelect = (lang: string) => {
         if (disabled) return;
         setIsDropdownOpen(false);
-        // This is a full state update, handled by the parent
         onSelectionChange({ mode: 'custom', lastCustomLanguage: lang });
     };
 
@@ -52,22 +70,23 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'all 0.2s ease',
         fontSize: '14px',
-        lineHeight: '20px', // Ensure consistent height
-        height: '32px', // Explicit height
+        height: '32px', // Explicit height for consistency
         boxSizing: 'border-box',
         backgroundColor: isActive ? currentThemeColors.body : 'transparent',
         color: isActive ? currentThemeColors.text : currentThemeColors.secondaryText,
         fontWeight: isActive ? 'bold' : 'normal',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        whiteSpace: 'nowrap',
     });
     
     return (
         <div
+            ref={wrapperRef}
             style={{
                 display: 'flex',
-                position: 'relative', // For dropdown positioning
+                position: 'relative',
                 backgroundColor: currentThemeColors.backgroundSecondary,
                 borderRadius: '8px',
                 padding: '4px',
@@ -97,7 +116,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
                     style={getBaseStyle(languageState.mode === 'custom')}
                 >
                     {languageState.lastCustomLanguage}
-                    <span style={{ marginLeft: '6px', fontSize: '10px' }}>▼</span>
+                    <span style={{ marginLeft: '6px', fontSize: '10px', color: 'currentColor' }}>▼</span>
                 </button>
                 {isDropdownOpen && (
                     <div style={{
@@ -121,6 +140,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
                                     padding: '8px 16px',
                                     cursor: 'pointer',
                                     whiteSpace: 'nowrap',
+                                    color: currentThemeColors.text,
                                     backgroundColor: languageState.lastCustomLanguage === lang ? currentThemeColors.backgroundSecondary : 'transparent'
                                 }}
                                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary}
