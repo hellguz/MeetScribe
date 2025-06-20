@@ -2,7 +2,7 @@ import datetime as dt
 import uuid
 from typing import List, Optional
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, SQLModel
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -45,12 +45,10 @@ class MeetingChunk(SQLModel, table=True):
 
 class Feedback(SQLModel, table=True):
     """
-    Stores user feedback on summaries. Uniqueness on (meeting_id, feedback_type)
-    for non-suggestion feedback is enforced by a unique constraint.
+    Stores user feedback on summaries. Uniqueness for standard feedback types
+    is enforced in the application layer, not by the database, to allow
+    multiple 'feature_suggestion' entries for the same meeting.
     """
-    __table_args__ = (
-        UniqueConstraint("meeting_id", "feedback_type", name="ix_feedback_meeting_id_feedback_type"),
-    )
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     feedback_type: str

@@ -372,31 +372,9 @@ def create_feedback(body: FeedbackCreate):
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        feedback_entry = Feedback(meeting_id=body.meeting_id, feedback_type=body.feedback_type)
-        db.add(feedback_entry)
-        try:
-            db.commit()
-        except IntegrityError:
-            # This happens if the feedback type for this meeting already exists, which is fine.
-            # We treat it as an idempotent operation.
-            db.rollback()
-            LOGGER.warning(
-                "Ignoring duplicate feedback for meeting %s, type %s",
-                body.meeting_id,
-                body.feedback_type,
-            )
-
-        # Handle text suggestions separately
-        if body.suggestion_text and body.suggestion_text.strip():
-            # Check if a suggestion already exists to avoid duplicates
-            existing_suggestion = db.exec(
-                select(Feedback).where(
-                    Feedback.meeting_id == body.meeting_id,
-                    Feedback.feedback_type == "feature_suggestion",
-                    Feedback.suggestion_text == body.suggestion_text.strip(),
-                )
-            ).first()
-            if not existing_suggestion:
+        # Handle feature suggestions, which can have multiple entries
+        if body.feedback_type == "feature_suggestion":
+            if body.suggestion_text and body.suggestion_text.strip():
                 suggestion_entry = Feedback(
                     meeting_id=body.meeting_id,
                     feedback_type="feature_suggestion",
@@ -404,8 +382,28 @@ def create_feedback(body: FeedbackCreate):
                 )
                 db.add(suggestion_entry)
                 db.commit()
+                return {"ok": True, "message": "Suggestion received"}
+            else:
+                # No text provided for suggestion, so do nothing.
+                return Response(status_code=204)
 
-        return {"ok": True, "message": "Feedback received"}
+        # Handle standard feedback types, which should be unique per meeting
+        else:
+            existing_feedback = db.exec(
+                select(Feedback).where(
+                    Feedback.meeting_id == body.meeting_id,
+                    Feedback.feedback_type == body.feedback_type
+                )
+            ).first()
+
+            if existing_feedback:
+                LOGGER.warning("Ignoring duplicate feedback for meeting %s, type %s", body.meeting_id, body.feedback_type)
+                return {"ok": True, "message": "Feedback already exists"}
+            
+            new_feedback = Feedback(meeting_id=body.meeting_id, feedback_type=body.feedback_type)
+            db.add(new_feedback)
+            db.commit()
+            return {"ok": True, "message": "Feedback received"}
 
 
 @app.delete("/api/feedback", status_code=200)

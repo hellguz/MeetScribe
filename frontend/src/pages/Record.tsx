@@ -158,7 +158,11 @@ export default function Record() {
             {!isUiLocked && (
                 <>
                     <AudioSourceSelector audioSource={audioSource} setAudioSource={(s) => { setAudioSource(s); setSelectedFile(null); }} includeMic={includeMic} setIncludeMic={setIncludeMic} isSystemAudioSupported={isSystemAudioSupported} disabled={isUiLocked} theme={currentThemeColors} />
-                    {audioSource === 'file' && <FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />}
+                    {audioSource === 'file' && (
+                        <div style={{ marginBottom: '24px' }}>
+                            <FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
+                        </div>
+                    )}
                 </>
             )}
 
@@ -177,7 +181,7 @@ export default function Record() {
                 audioSource={audioSource}
             />
             
-            <div style={{ textAlign: 'center', marginBottom: '24px', marginTop: '24px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
                 {!isRecording ? (
                     <button onClick={handleStart} disabled={isUiLocked || (audioSource === 'file' && !selectedFile)} style={{ padding: '16px 32px', fontSize: '18px', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', backgroundColor: currentThemeColors.button.primary, color: currentThemeColors.button.primaryText, opacity: (isUiLocked || (audioSource === 'file' && !selectedFile)) ? 0.5 : 1 }}>
                         {audioSource === 'file' ? '📄 Start Transcription' : '🎙️ Start Recording'}

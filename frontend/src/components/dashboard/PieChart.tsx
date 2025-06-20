@@ -38,7 +38,7 @@ const PieChart: React.FC<PieChartProps> = ({ data, theme, title }) => {
         const pathData = `M 50,50 L ${startX},${startY} A 45,45 0 ${isLargeArc},1 ${endX},${endY} Z`;
         const color = (feedbackColors as any)[key]?.border || theme.secondaryText;
 
-        return <path key={key} d={pathData} fill={color} />;
+        return <path key={key} d={pathData} fill={color} stroke={theme.body} strokeWidth="2" />;
     });
 
     const getLabel = (type: string) => type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -46,11 +46,11 @@ const PieChart: React.FC<PieChartProps> = ({ data, theme, title }) => {
     return (
         <div>
             <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>{title}</h3>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '24px', minHeight: '150px' }}>
-                <svg viewBox="0 0 100 100" width="150" height="150" style={{ flexShrink: 0 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', alignItems: 'center', gap: '24px', minHeight: '150px' }}>
+                <svg viewBox="0 0 100 100" width="150" height="150" style={{ flexShrink: 0, margin: '0 auto' }}>
                     {paths}
                 </svg>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexGrow: 1, alignSelf: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignSelf: 'center' }}>
                     {sortedData.map(([key, value]) => {
                         const color = (feedbackColors as any)[key]?.border || theme.secondaryText;
                         return (
