@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import openai
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select, func
@@ -27,6 +27,7 @@ from .models import (
     MeetingSyncRequest,
     RegeneratePayload,
     MeetingConfigUpdate,
+    FeedbackStatusUpdate,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -95,9 +96,13 @@ def create_meeting(body: MeetingCreate, request: Request):
 
         user_agent = request.headers.get("user-agent")
         mtg_data = body.model_dump()
-        # If summary_length is not provided by client, let the DB model's default apply
+        
+        # Set defaults if not provided by client
         if body.summary_length is None:
             mtg_data["summary_length"] = "auto"
+        if body.summary_language_mode is None:
+            mtg_data["summary_language_mode"] = "auto"
+
         mtg = Meeting(**mtg_data, user_agent=user_agent)
         db.add(mtg)
         db.commit()
@@ -265,6 +270,37 @@ def get_meeting(mid: uuid.UUID):
         return MeetingStatus(**data)
 
 
+@app.delete("/api/meetings/{mid}", status_code=204)
+def delete_meeting(mid: uuid.UUID):
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            # If it's already gone, that's fine.
+            return Response(status_code=204)
+
+        # Delete associated chunks from filesystem
+        mtg_dir = AUDIO_DIR / str(mid)
+        if mtg_dir.exists() and mtg_dir.is_dir():
+            shutil.rmtree(mtg_dir)
+            LOGGER.info(f"Deleted audio directory for meeting {mid}")
+
+        # Batch delete associated chunks from DB
+        chunks_to_delete = db.exec(select(MeetingChunk).where(MeetingChunk.meeting_id == mid)).all()
+        for chunk in chunks_to_delete:
+            db.delete(chunk)
+
+        # Batch delete associated feedback from DB
+        feedback_to_delete = db.exec(select(Feedback).where(Feedback.meeting_id == mid)).all()
+        for f in feedback_to_delete:
+            db.delete(f)
+
+        # Delete meeting itself
+        db.delete(mtg)
+        db.commit()
+        LOGGER.info(f"Deleted meeting {mid} and all associated data.")
+    return Response(status_code=204)
+
+
 @app.put("/api/meetings/{mid}/title", response_model=Meeting)
 async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
     with Session(engine) as db:
@@ -309,17 +345,16 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        # If a new length is provided, update it on the meeting object
+        # Update summary length if provided
         if payload.summary_length and is_valid_summary_length(payload.summary_length):
             mtg.summary_length = payload.summary_length
-            LOGGER.info(
-                "Updated summary length for meeting %s to '%s'",
-                mid,
-                payload.summary_length,
-            )
-        else:
-            # Fallback or default if an invalid value is somehow passed
+        elif not mtg.summary_length:
             mtg.summary_length = "auto"
+        
+        # Update language settings if provided
+        if payload.summary_language_mode:
+            mtg.summary_language_mode = payload.summary_language_mode
+            mtg.summary_custom_language = payload.summary_custom_language
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False
@@ -340,30 +375,9 @@ def create_feedback(body: FeedbackCreate):
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        feedback_entry = Feedback(meeting_id=body.meeting_id, feedback_type=body.feedback_type)
-        db.add(feedback_entry)
-        try:
-            db.commit()
-        except IntegrityError:
-            # This happens if the feedback type for this meeting already exists, which is fine.
-            # We treat it as an idempotent operation.
-            db.rollback()
-            LOGGER.warning(
-                "Ignoring duplicate feedback for meeting %s, type %s",
-                body.meeting_id,
-                body.feedback_type,
-            )
-
-        # Handle text suggestions separately
-        if body.suggestion_text and body.suggestion_text.strip():
-            # Check if a suggestion already exists to avoid duplicates
-            existing_suggestion = db.exec(
-                select(Feedback).where(
-                    Feedback.meeting_id == body.meeting_id,
-                    Feedback.feedback_type == "feature_suggestion",
-                )
-            ).first()
-            if not existing_suggestion:
+        # Handle feature suggestions, which can have multiple entries
+        if body.feedback_type == "feature_suggestion":
+            if body.suggestion_text and body.suggestion_text.strip():
                 suggestion_entry = Feedback(
                     meeting_id=body.meeting_id,
                     feedback_type="feature_suggestion",
@@ -371,12 +385,32 @@ def create_feedback(body: FeedbackCreate):
                 )
                 db.add(suggestion_entry)
                 db.commit()
+                return {"ok": True, "message": "Suggestion received"}
+            else:
+                # No text provided for suggestion, so do nothing.
+                return Response(status_code=204)
 
-        return {"ok": True, "message": "Feedback received"}
+        # Handle standard feedback types, which should be unique per meeting
+        else:
+            existing_feedback = db.exec(
+                select(Feedback).where(
+                    Feedback.meeting_id == body.meeting_id,
+                    Feedback.feedback_type == body.feedback_type
+                )
+            ).first()
+
+            if existing_feedback:
+                LOGGER.warning("Ignoring duplicate feedback for meeting %s, type %s", body.meeting_id, body.feedback_type)
+                return {"ok": True, "message": "Feedback already exists"}
+            
+            new_feedback = Feedback(meeting_id=body.meeting_id, feedback_type=body.feedback_type)
+            db.add(new_feedback)
+            db.commit()
+            return {"ok": True, "message": "Feedback received"}
 
 
 @app.delete("/api/feedback", status_code=200)
-def delete_feedback(body: FeedbackDelete):
+def delete_feedback_by_type(body: FeedbackDelete):
     with Session(engine) as db:
         feedback_to_delete = db.exec(
             select(Feedback).where(
@@ -392,6 +426,29 @@ def delete_feedback(body: FeedbackDelete):
         else:
             # It's okay if the feedback is already gone.
             return {"ok": True, "message": "Feedback not found, nothing to delete"}
+
+
+@app.delete("/api/feedback/{fid}", status_code=204)
+def delete_feedback_by_id(fid: int):
+    with Session(engine) as db:
+        feedback_item = db.get(Feedback, fid)
+        if feedback_item:
+            db.delete(feedback_item)
+            db.commit()
+    return Response(status_code=204)
+
+
+@app.put("/api/feedback/{fid}/status", response_model=Feedback)
+def update_feedback_status(fid: int, payload: FeedbackStatusUpdate):
+    with Session(engine) as db:
+        feedback_item = db.get(Feedback, fid)
+        if not feedback_item:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+        feedback_item.status = payload.status
+        db.add(feedback_item)
+        db.commit()
+        db.refresh(feedback_item)
+        return feedback_item
 
 
 @app.get("/api/dashboard/stats")
@@ -450,24 +507,26 @@ def get_dashboard_stats():
         device_counts = Counter()
         for ua in user_agent_results:
             ua_lower = ua.lower()
-            if "windows" in ua_lower:
+            if "iphone" in ua_lower:
+                device_counts["iPhone"] += 1
+            elif "android" in ua_lower:
+                device_counts["Android"] += 1
+            elif "windows" in ua_lower:
                 device_counts["Windows"] += 1
             elif "macintosh" in ua_lower:
                 device_counts["Mac"] += 1
             elif "linux" in ua_lower:
                 device_counts["Linux"] += 1
-            elif "iphone" in ua_lower:
-                device_counts["iPhone"] += 1
-            elif "android" in ua_lower:
-                device_counts["Android"] += 1
             else:
                 device_counts["Other"] += 1
+
         feedback_counts_query = db.exec(
-            select(Feedback.feedback_type, func.count(Feedback.id)).group_by(
-                Feedback.feedback_type
-            )
+            select(Feedback.feedback_type, func.count(Feedback.id))
+            .where(Feedback.feedback_type != 'feature_suggestion')
+            .group_by(Feedback.feedback_type)
         ).all()
         feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
+
         suggestions_query = db.exec(
             select(Feedback, Meeting.title)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -477,20 +536,15 @@ def get_dashboard_stats():
         ).all()
         feature_suggestions = [
             {
+                "id": f.id,
                 "suggestion": f.suggestion_text,
                 "submitted_at": f.created_at,
                 "meeting_id": f.meeting_id,
                 "meeting_title": title,
+                "status": f.status,
             }
             for f, title in suggestions_query
         ]
-        meetings_by_day = db.exec(
-            select(func.date(Meeting.started_at), func.count(Meeting.id))
-            .group_by(func.date(Meeting.started_at))
-            .order_by(func.date(Meeting.started_at))
-            .limit(90)
-        ).all()
-
         all_feedback_query = db.exec(
             select(Feedback, Meeting.title, Meeting.started_at)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
@@ -507,22 +561,52 @@ def get_dashboard_stats():
 
             meetings_with_feedback[mid_str]["feedback"].append(
                 {
+                    "id": feedback.id,
                     "type": feedback.feedback_type,
                     "suggestion": feedback.suggestion_text,
                     "created_at": feedback.created_at,
+                    "status": feedback.status,
                 }
             )
+        
+        meetings_by_day = db.exec(
+            select(func.date(Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.date(Meeting.started_at))
+            .order_by(func.date(Meeting.started_at))
+            .limit(90)
+        ).all()
+
+        # --- New Interesting Stats ---
+        avg_summary_words = db.scalar(select(func.avg(Meeting.word_count)).where(Meeting.word_count.is_not(None))) or 0
+        
+        busiest_hour_query = db.exec(
+            select(func.strftime('%H', Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.strftime('%H', Meeting.started_at))
+            .order_by(func.count(Meeting.id).desc())
+            .limit(1)
+        ).first()
+        busiest_hour = f"{busiest_hour_query[0]}:00" if busiest_hour_query else "N/A"
+
+        active_day_query = db.exec(
+            select(func.strftime('%w', Meeting.started_at), func.count(Meeting.id))
+            .group_by(func.strftime('%w', Meeting.started_at))
+            .order_by(func.count(Meeting.id).desc())
+            .limit(1)
+        ).first()
+        day_map = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        most_active_day = day_map[int(active_day_query[0])] if active_day_query else "N/A"
+
 
     return {
         "all_time": {
             "total_summaries": total_summaries,
             "total_words": total_words,
-            "total_hours": round(total_duration_sec / 3600, 1),
+            "total_duration_seconds": total_duration_sec,
         },
         "today": {
             "total_summaries": summaries_today,
             "total_words": words_today,
-            "total_hours": round(duration_today_sec / 3600, 1),
+            "total_duration_seconds": duration_today_sec,
         },
         "device_distribution": dict(device_counts),
         "feedback_counts": feedback_counts,
@@ -531,6 +615,11 @@ def get_dashboard_stats():
         "usage_timeline": [
             {"date": str(date), "count": count} for date, count in meetings_by_day
         ],
+        "interesting_facts": {
+            "avg_summary_words": round(avg_summary_words),
+            "busiest_hour": busiest_hour,
+            "most_active_day": most_active_day
+        }
     }
 
 

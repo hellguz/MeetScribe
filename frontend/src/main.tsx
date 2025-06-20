@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ThemeProvider } from './contexts/ThemeContext' // Import ThemeProvider
 import { SummaryLengthProvider } from './contexts/SummaryLengthContext'
+import { SummaryLanguageProvider } from './contexts/SummaryLanguageContext'
 import './index.css' // Import global styles
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -15,7 +16,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 				{' '}
 				{/* Wrap App with ThemeProvider */}
 				<SummaryLengthProvider>
-					<App />
+					<SummaryLanguageProvider>
+						<App />
+					</SummaryLanguageProvider>
 				</SummaryLengthProvider>
 			</ThemeProvider>
 		</BrowserRouter>

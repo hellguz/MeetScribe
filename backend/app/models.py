@@ -28,7 +28,9 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
-    summary_length: str = Field(default="auto")  # auto, short, medium, long, or a word count as a string
+    summary_length: str = Field(default="auto")
+    summary_language_mode: str = Field(default="auto")
+    summary_custom_language: str | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -45,16 +47,16 @@ class MeetingChunk(SQLModel, table=True):
 
 class Feedback(SQLModel, table=True):
     """
-    Stores user feedback on summaries.
-    Uniqueness on (meeting_id, feedback_type) is enforced by a
-    migration script, not the ORM, to support older SQLite versions.
+    Stores user feedback on summaries. Uniqueness for standard feedback types
+    is enforced in the application layer, not by the database, to allow
+    multiple 'feature_suggestion' entries for the same meeting.
     """
-
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     feedback_type: str
     suggestion_text: Optional[str] = None
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    status: str = Field(default="new") # 'new', 'done', etc.
 
 
 class MeetingCreate(SQLModel):
@@ -65,6 +67,8 @@ class MeetingCreate(SQLModel):
     title: str
     expected_chunks: int | None = None
     summary_length: str | None = None
+    summary_language_mode: str | None = None
+    summary_custom_language: str | None = None
 
 
 class FeedbackCreate(SQLModel):
@@ -84,6 +88,13 @@ class FeedbackDelete(SQLModel):
     feedback_type: str
 
 
+class FeedbackStatusUpdate(SQLModel):
+    """
+    Payload for updating the status of a feedback item.
+    """
+    status: str
+
+
 class MeetingStatus(SQLModel):
     """
     What we send back to the frontend for status polling:
@@ -99,6 +110,8 @@ class MeetingStatus(SQLModel):
     expected_chunks: Optional[int]
     transcribed_chunks: int
     summary_length: str
+    summary_language_mode: str
+    summary_custom_language: str | None = None
     feedback: list[str] = [] # List of submitted feedback types
 
 
@@ -136,6 +149,8 @@ class RegeneratePayload(SQLModel):
     """
 
     summary_length: str | None = None
+    summary_language_mode: str | None = None
+    summary_custom_language: str | None = None
 
 
 class MeetingConfigUpdate(SQLModel):

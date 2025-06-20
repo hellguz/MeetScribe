@@ -129,7 +129,7 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 				})}
 			</div>
 
-			<form onSubmit={handleSuggestionSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <form onSubmit={handleSuggestionSubmit} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '16px' }}>
 				<input
 					type="text"
 					value={suggestion}
@@ -145,31 +145,32 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 						fontSize: '14px',
 					}}
 				/>
-				<div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-					{isSuggestionSubmitted ? (
-						<div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px' }}>
-							Thanks for your suggestion!
-						</div>
-					) : (
-						<button
-							type="submit"
-							style={{
-								padding: '8px 16px',
-								border: 'none',
-								borderRadius: '8px',
-								backgroundColor: currentThemeColors.button.primary,
-								color: currentThemeColors.button.primaryText,
-								fontSize: '14px',
-								fontWeight: '500',
-								cursor: isSubmittingSuggestion || !suggestion.trim() ? 'not-allowed' : 'pointer',
-								transition: 'background-color 0.2s, opacity 0.2s',
-								opacity: isSubmittingSuggestion || !suggestion.trim() ? 0.6 : 1,
-							}}
-							disabled={isSubmittingSuggestion || !suggestion.trim()}>
-							{isSubmittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
-						</button>
-					)}
-				</div>
+                {isSuggestionSubmitted ? (
+                    <div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px', flexShrink: 0 }}>
+                        Thanks for your suggestion!
+                    </div>
+                ) : (
+                    suggestion.trim() && (
+                        <button
+                            type="submit"
+                            style={{
+                                flexShrink: 0,
+                                padding: '8px 16px',
+                                border: 'none',
+                                borderRadius: '8px',
+                                backgroundColor: currentThemeColors.button.primary,
+                                color: currentThemeColors.button.primaryText,
+                                fontSize: '14px',
+                                fontWeight: '500',
+                                cursor: isSubmittingSuggestion ? 'not-allowed' : 'pointer',
+                                transition: 'background-color 0.2s, opacity 0.2s',
+                                opacity: isSubmittingSuggestion ? 0.6 : 1,
+                            }}
+                            disabled={isSubmittingSuggestion}>
+                            {isSubmittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
+                        </button>
+                    )
+                )}
 			</form>
 		</div>
 	)

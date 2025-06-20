@@ -35,9 +35,9 @@ celery_app.conf.update(
     task_acks_late=True,
     # === Resilience Change: Add a periodic task to clean up stuck meetings ===
     beat_schedule={
-        "cleanup-every-30-minutes": {
+        "cleanup-every-15-minutes": {
             "task": "app.worker.cleanup_stuck_meetings",
-            "schedule": 1800.0,  # 30 minutes in seconds
+            "schedule": 900.0,  # 15 minutes in seconds
         },
     },
 )
@@ -217,11 +217,38 @@ def detect_language_local(text_snippet: str) -> str:
     try:
         # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
         lang_code = detect(text_snippet)
-        # We need to map the code to a full language name for the prompt
+        
+        # Expanded map for common languages
         LANG_MAP = {
-            "en": "English", "es": "Spanish", "fr": "French",
-            "de": "German", "it": "Italian", "pt": "Portuguese",
-            "ru": "Russian", "ja": "Japanese", "zh-cn": "Chinese (Simplified)",
+            "ar": "Arabic",
+            "cs": "Czech",
+            "da": "Danish",
+            "de": "German",
+            "en": "English",
+            "es": "Spanish",
+            "fi": "Finnish",
+            "fr": "French",
+            "he": "Hebrew",
+            "hi": "Hindi",
+            "hu": "Hungarian",
+            "id": "Indonesian",
+            "it": "Italian",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "nl": "Dutch",
+            "no": "Norwegian",
+            "pl": "Polish",
+            "pt": "Portuguese",
+            "ro": "Romanian",
+            "ru": "Russian",
+            "sk": "Slovak",
+            "sv": "Swedish",
+            "sw": "Swahili",
+            "th": "Thai",
+            "tr": "Turkish",
+            "vi": "Vietnamese",
+            "zh-cn": "Chinese (Simplified)",
+            "zh-tw": "Chinese (Traditional)",
         }
         language = LANG_MAP.get(lang_code, "English")
         LOGGER.info(f"Detected language via langdetect: {language} ({lang_code})")
@@ -234,31 +261,34 @@ def detect_language_local(text_snippet: str) -> str:
 
 def summarise_transcript_in_worker(
     full_transcript: str,
-    meeting_title: str,
-    started_at_iso: str,
     summary_length: str,
+    summary_language_mode: str | None,
+    summary_custom_language: str | None,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
-
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
 
     try:
-        transcript_snippet = full_transcript[:500]
+        # Use a larger snippet for more reliable language detection
+        transcript_snippet = full_transcript[:2000]
         detected_language = detect_language_local(transcript_snippet)
 
-        started_at_dt = dt.datetime.fromisoformat(started_at_iso.replace("Z", "+00:00"))
-        date_str = started_at_dt.strftime("%Y-%m-%d")
-        end_time = dt.datetime.now(dt.timezone.utc).strftime("%H:%M")
-        time_range = f"{started_at_dt.strftime('%H:%M')} - {end_time}"
+        # Determine target language based on user's preference
+        if summary_language_mode == 'custom' and summary_custom_language:
+            target_language = summary_custom_language
+        elif summary_language_mode == 'english':
+            target_language = "English"
+        else:  # 'auto' or any other case
+            target_language = detected_language
 
-        # --- Stricter Length Instructions ---
+        # Stricter and clearer length instructions
         LENGTH_PROMPTS = {
-            "quar_page": "The final summary MUST be very concise, approximately 125 words. This is a strict word count requirement.",
-            "half_page": "The final summary MUST be concise, approximately 250 words. This is a strict word count requirement.",
-            "one_page": "The final summary MUST be detailed but well-balanced, approximately 500 words. This is a strict word count requirement.",
-            "two_pages": "The final summary MUST be comprehensive, approximately 1000 words. This is a strict word count requirement.",
+            "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
+            "half_page": "The final summary must be **exactly** around 250 words. This word count is a **strict, non-negotiable requirement**.",
+            "one_page": "The final summary must be **exactly** around 500 words. This word count is a **strict, non-negotiable requirement**.",
+            "two_pages": "The final summary must be **exactly** around 1000 words. This word count is a **strict, non-negotiable requirement**.",
             "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
         }
         length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
@@ -271,20 +301,16 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 
 <thinking_steps>
 **1. Internal Analysis (Do Not Output This Section)**
-- **Confirm Language:** The user has identified the language as **{detected_language}**. Your entire output MUST be in **{detected_language}**. This is the most important rule.
+- **Confirm Language:** The user wants the summary in **{target_language}**. Your entire output MUST be in **{target_language}**. This is the most important rule.
 - **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
 - **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
 </thinking_steps>
 
 <output_rules>
 **2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary.
+- Your response MUST BE ONLY the Markdown summary. DO NOT include a title, heading, or date at the top. Start directly with the 'Summary' section.
 - **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
-- Start directly with the `##` heading.
 ---
-## {meeting_title}
-_{date_str} — {time_range}_
-
 #### Summary
 Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
 ---
@@ -304,16 +330,13 @@ This is the core of the summary. For each **Key Theme** you identified, create a
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
-
+        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
         response = openai.chat.completions.create(
             model="gpt-4.1-mini",
-            temperature=0.5,
+            temperature=0.4, # Lower temperature for more deterministic output
             messages=[
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": f"Please summarize the following transcript, following all instructions including the language and length requirement:\n\n{full_transcript}",
-                },
+                {"role": "user", "content": user_prompt_content},
             ],
         )
         return response.choices[0].message.content.strip()
@@ -349,14 +372,15 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
 
         summary_md = summarise_transcript_in_worker(
             final_transcript,
-            mtg.title,
-            mtg.started_at.isoformat(),
             mtg.summary_length,
+            mtg.summary_language_mode,
+            mtg.summary_custom_language,
         )
         mtg.summary_markdown = summary_md
 
-        # New: Generate and update the title
-        if summary_md and "error" not in summary_md.lower():
+        # Only generate a title if the current one is still a default placeholder.
+        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith("Transcription of ")
+        if summary_md and "error" not in summary_md.lower() and is_default_title:
             new_title = generate_title_for_meeting(summary_md, final_transcript)
             if new_title:
                 mtg.title = new_title
@@ -382,11 +406,33 @@ def cleanup_stuck_meetings():
     """
     Finds meetings that are not done and have been inactive for a while,
     then re-queues transcription tasks for any chunks that are missing text.
+    Also finalizes meetings that were abandoned mid-recording.
     """
     engine = get_db_engine()
     STUCK_THRESHOLD_MINUTES = 15
+    INACTIVITY_TIMEOUT_MINUTES = 5
 
     with Session(engine) as db:
+        # 1. Finalize meetings that were abandoned mid-recording and never got a final chunk.
+        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+        inactive_meetings = db.exec(
+            select(Meeting).where(
+                Meeting.done == False,
+                Meeting.final_received == False,
+                Meeting.last_activity < inactivity_threshold,
+            )
+        ).all()
+
+        if inactive_meetings:
+            LOGGER.info(f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them.")
+            for mtg in inactive_meetings:
+                mtg.final_received = True
+                if mtg.expected_chunks is None:
+                    mtg.expected_chunks = mtg.received_chunks
+                db.add(mtg)
+            db.commit() # Commit finalization before potentially re-queueing
+
+        # 2. Re-queue tasks for finalized meetings that got stuck during transcription.
         stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
             minutes=STUCK_THRESHOLD_MINUTES
         )
@@ -403,7 +449,7 @@ def cleanup_stuck_meetings():
             return
 
         LOGGER.info(
-            f"Janitor task: Found {len(stuck_meetings)} potentially stuck meetings."
+            f"Janitor: Found {len(stuck_meetings)} potentially stuck finalized meetings."
         )
 
         for mtg in stuck_meetings:
@@ -415,8 +461,10 @@ def cleanup_stuck_meetings():
 
             if not unprocessed_chunks:
                 LOGGER.info(
-                    f"Janitor task: Meeting {mtg.id} has no unprocessed chunks, skipping."
+                    f"Janitor: Meeting {mtg.id} has no unprocessed chunks, but isn't 'done'. Re-triggering finalization."
                 )
+                # This can happen if the finalization task itself failed.
+                finalize_meeting_processing(db, mtg)
                 continue
 
             LOGGER.warning(
@@ -436,7 +484,7 @@ def cleanup_stuck_meetings():
                     )
                 else:
                     LOGGER.error(
-                        f"Janitor task: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
+                        f"Janitor: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
                     )
 
 
