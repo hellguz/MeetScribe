@@ -154,7 +154,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                 beam_size=5,
                 vad_filter=True,
                 vad_parameters=dict(
-                    threshold=0.1, min_silence_duration_ms=500, speech_pad_ms=300
+                    threshold=0.3, min_silence_duration_ms=500, speech_pad_ms=300
                 ),
             )
             return " ".join(s.text for s in segments).strip()

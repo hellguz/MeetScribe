@@ -66,4 +66,4 @@ with open('./.gpt/dump.txt', 'w', encoding='utf-8') as f:
                         content = o.read()[:20] + "\n................................"
                     f.write("<" + obj + '>\n' + content + '\n\n')
             except (IOError, UnicodeDecodeError) as e:
-                f.write(f"&&& FILE: {obj}\n&&& ERROR: Could not read file: {e}\n\n")
+                pass  # Skip files that cannot be read or decoded
