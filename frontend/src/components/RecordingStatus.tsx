@@ -1,7 +1,6 @@
 import React from 'react';
 import { AppTheme } from '../styles/theme';
 import { AudioSource } from '../types';
-
 interface RecordingStatusProps {
     theme: AppTheme;
     isRecording: boolean;
@@ -15,6 +14,7 @@ interface RecordingStatusProps {
     liveTranscript: string;
     canvasRef: React.RefObject<HTMLCanvasElement>;
     audioSource: AudioSource;
+    wakeLockStatus: 'inactive' | 'active' | 'error';
 }
 
 const formatTime = (seconds: number) => {
@@ -22,7 +22,6 @@ const formatTime = (seconds: number) => {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
-
 const RecordingStatus: React.FC<RecordingStatusProps> = ({
     theme,
     isRecording,
@@ -36,18 +35,35 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
     liveTranscript,
     canvasRef,
     audioSource,
+    wakeLockStatus,
 }) => {
     const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount;
     const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100));
     const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100));
     const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal;
     const isUiLocked = isRecording || isProcessing;
-
     return (
         <>
             {isRecording && (
                 <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '16px' }}>
                     ⏱️ {formatTime(recordingTime)}
+                </div>
+            )}
+
+            {isRecording && audioSource !== 'file' && wakeLockStatus !== 'inactive' && (
+                <div
+                    style={{
+                        textAlign: 'center',
+                        marginBottom: '16px',
+                        padding: '10px 12px',
+                        fontSize: '13px',
+                        borderRadius: '8px',
+                        backgroundColor: theme.backgroundSecondary,
+                        color: wakeLockStatus === 'error' ? theme.button.danger : theme.secondaryText,
+                        border: `1px solid ${wakeLockStatus === 'error' ? theme.button.danger : theme.border}`,
+                    }}>
+                    {wakeLockStatus === 'active' && '💡 The screen will remain on during this recording to ensure it isn\'t interrupted.'}
+                    {wakeLockStatus === 'error' && '⚠️ Could not prevent screen from sleeping. To avoid interruptions, please keep the screen on.'}
                 </div>
             )}
 
@@ -104,4 +120,5 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 };
 
 export default RecordingStatus;
+
 

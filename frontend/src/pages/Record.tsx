@@ -27,8 +27,8 @@ export default function Record() {
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
         animationFrameRef,
+        wakeLockStatus,
     } = useRecording(summaryLength, languageState);
-
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -53,11 +53,9 @@ export default function Record() {
         };
         fetchAndSyncHistory();
     }, [isProcessing]);
-
     useEffect(() => {
         setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent));
     }, []);
-
     const drawWaveform = useCallback(() => {
         if (!analyserRef.current || !canvasRef.current) return;
         const canvas = canvasRef.current;
@@ -90,7 +88,6 @@ export default function Record() {
 
         animationFrameRef.current = requestAnimationFrame(drawWaveform);
     }, [theme, analyserRef, animationFrameRef]);
-
     const handleStart = () => {
         if (audioSource === 'file') {
             startFileProcessing();
@@ -100,15 +97,12 @@ export default function Record() {
     };
 
     const handleStop = () => stopRecording(true);
-
     const handleLengthChange = (newLength: SummaryLength) => {
         setSummaryLength(newLength);
     };
-
     const handleLanguageChange = (update: Partial<SummaryLanguageState>) => {
         setLanguageState(update);
     };
-
     const handleTitleUpdate = async (id: string, newTitle: string) => {
         const originalTitle = history.find(m => m.id === id)?.title;
         if (!originalTitle || newTitle === originalTitle) return;
@@ -128,7 +122,6 @@ export default function Record() {
             setHistory(prev => prev.map(m => m.id === id ? { ...m, title: originalTitle } : m)); // Revert on error
         }
     };
-
     const handleMeetingDelete = async (id: string) => {
         // Optimistically remove from UI
         setHistory(prev => prev.filter(m => m.id !== id));
@@ -186,6 +179,7 @@ export default function Record() {
                 liveTranscript={liveTranscript}
                 canvasRef={canvasRef}
                 audioSource={audioSource}
+                wakeLockStatus={wakeLockStatus}
             />
             
             <div style={{ textAlign: 'center', marginBottom: '24px' }}>
