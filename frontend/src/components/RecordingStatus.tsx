@@ -45,8 +45,8 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 
     // --- NEW: Custom progress bar colors for dark mode ---
     const isDarkMode = theme.body === '#18181b';
-    const transcribedColor = isDarkMode ? '#f87171' : theme.text; // Light Red for top bar
-    const uploadedColor = isDarkMode ? '#ef4444' : theme.secondaryText; // Red for bottom bar
+    const transcribedColor = isDarkMode ? '#ef4444' : theme.text; // Light Red for top bar
+    const uploadedColor = isDarkMode ? '#f87171' : theme.secondaryText; // Red for bottom bar
 
     return (
         <>
