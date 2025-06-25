@@ -42,6 +42,12 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
     const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100));
     const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal;
     const isUiLocked = isRecording || isProcessing;
+
+    // --- NEW: Custom progress bar colors for dark mode ---
+    const isDarkMode = theme.body === '#18181b';
+    const transcribedColor = isDarkMode ? '#f87171' : theme.text; // Light Red for top bar
+    const uploadedColor = isDarkMode ? '#ef4444' : theme.secondaryText; // Red for bottom bar
+
     return (
         <>
             {isRecording && (
@@ -70,8 +76,8 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
             {(isUiLocked || localChunksCount > 0) && (
                 <div style={{ marginBottom: '24px' }}>
                     <div style={{ width: '100%', height: '20px', backgroundColor: theme.backgroundSecondary, borderRadius: '10px', overflow: 'hidden', position: 'relative', marginBottom: '8px' }}>
-                        <div style={{ height: '100%', width: `${getUploadProgressPercentage()}%`, backgroundColor: theme.secondaryText, position: 'absolute', top: 0, left: 0, zIndex: 1, transition: 'width 0.3s' }} />
-                        <div style={{ height: '100%', width: `${getTranscriptionProgressPercentage()}%`, backgroundColor: theme.text, position: 'absolute', top: 0, left: 0, zIndex: 2, transition: 'width 0.3s' }} />
+                        <div style={{ height: '100%', width: `${getUploadProgressPercentage()}%`, backgroundColor: uploadedColor, position: 'absolute', top: 0, left: 0, zIndex: 1, transition: 'width 0.3s' }} />
+                        <div style={{ height: '100%', width: `${getTranscriptionProgressPercentage()}%`, backgroundColor: transcribedColor, position: 'absolute', top: 0, left: 0, zIndex: 2, transition: 'width 0.3s' }} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: theme.secondaryText }}>
                         <span>Uploaded: {uploadedChunks} / {realTotal}</span>
@@ -120,5 +126,3 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 };
 
 export default RecordingStatus;
-
-
