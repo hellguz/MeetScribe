@@ -27,7 +27,7 @@ export default function Record() {
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
-        animationFrameRef, updateContext,
+        animationFrameRef, updateContext, updateMeetingConfig,
         wakeLockStatus,
     } = useRecording(summaryLength, languageState);
 
@@ -39,12 +39,29 @@ export default function Record() {
 
     const handleContextChange = (newContext: string) => {
         setContext(newContext);
+        if (!isRecording) return; // Only send updates while recording
+
         if (debounceTimeoutRef.current) {
             clearTimeout(debounceTimeoutRef.current);
         }
         debounceTimeoutRef.current = setTimeout(() => {
             updateContext(newContext);
         }, 500); // 500ms debounce delay
+    };
+    
+    const handleLengthChange = (newLength: SummaryLength) => {
+        setSummaryLength(newLength);
+        if (isRecording) {
+            updateMeetingConfig({ summaryLength: newLength });
+        }
+    };
+    
+    const handleLanguageChange = (update: Partial<SummaryLanguageState>) => {
+        const newState = { ...languageState, ...update };
+        setLanguageState(newState);
+        if (isRecording) {
+            updateMeetingConfig(newState);
+        }
     };
 
     useEffect(() => {
@@ -114,14 +131,6 @@ export default function Record() {
 
     const handleStop = () => stopRecording(true);
 
-    const handleLengthChange = (newLength: SummaryLength) => {
-        setSummaryLength(newLength);
-    };
-
-    const handleLanguageChange = (update: Partial<SummaryLanguageState>) => {
-        setLanguageState(update);
-    };
-
     const handleTitleUpdate = async (id: string, newTitle: string) => {
         const originalTitle = history.find(m => m.id === id)?.title;
         if (!originalTitle || newTitle === originalTitle) return;
@@ -170,12 +179,6 @@ export default function Record() {
 
             {!isUiLocked && (
                  <>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', width: '100%' }}>
-                            <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isUiLocked} />
-                            <LanguageSelector disabled={isUiLocked} onSelectionChange={handleLanguageChange} />
-                        </div>
-                    </div>
                     <AudioSourceSelector audioSource={audioSource} setAudioSource={(s) => { setAudioSource(s); setSelectedFile(null); }} includeMic={includeMic} setIncludeMic={setIncludeMic} isSystemAudioSupported={isSystemAudioSupported} disabled={isUiLocked} theme={currentThemeColors} />
                     {audioSource === 'file' && (
                         <div style={{ marginBottom: '24px' }}>
@@ -186,7 +189,9 @@ export default function Record() {
             )}
 
             {isRecording && (
-                <div style={{ marginBottom: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
+                    <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={false} />
+                    <LanguageSelector onSelectionChange={handleLanguageChange} disabled={false} />
                     <textarea
                         value={context}
                         onChange={(e) => handleContextChange(e.target.value)}
@@ -225,7 +230,7 @@ export default function Record() {
                 wakeLockStatus={wakeLockStatus}
             />
             
-            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <div style={{ textAlign: 'center', marginTop: isRecording ? '24px' : '0' }}>
                 {!isRecording ? (
                     <button onClick={handleStart} disabled={isUiLocked || (audioSource === 'file' && !selectedFile)} style={{ padding: '16px 32px', fontSize: '18px', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', backgroundColor: currentThemeColors.button.primary, color: currentThemeColors.button.primaryText, opacity: (isUiLocked || (audioSource === 'file' && !selectedFile)) ? 0.5 : 1 }}>
                         {audioSource === 'file' ? '📄 Start Transcription' : '🎙️ Start Recording'}

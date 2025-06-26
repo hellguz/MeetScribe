@@ -60,15 +60,15 @@ export default function Summary() {
                         if (e.key === 'Enter') handleTitleUpdateConfirm();
                         if (e.key === 'Escape') setIsEditingTitle(false);
                     }}
-                    style={{ fontSize: '1.3em', fontWeight: 'bold', width: '100%', padding: '8px', border: `1px solid ${currentThemeColors.input.border}`, borderRadius: '6px', backgroundColor: currentThemeColors.input.background, color: currentThemeColors.input.text }}
+                    style={{ fontSize: '1.5em', fontWeight: 'bold', width: '100%', padding: '8px', border: `1px solid ${currentThemeColors.input.border}`, borderRadius: '6px', backgroundColor: currentThemeColors.input.background, color: currentThemeColors.input.text }}
                     autoFocus
                 />
             );
         }
         return (
-            <h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true); }} style={{ cursor: 'pointer' }}>
+            <h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true); }} style={{ cursor: 'pointer', fontSize: '1.5em', margin: 0 }}>
                 {meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
-                <span style={{ fontSize: '12px', marginLeft: '8px' }}>✏️</span>
+                <span style={{ fontSize: '14px', marginLeft: '10px' }}>✏️</span>
             </h1>
         );
     };
@@ -80,6 +80,7 @@ export default function Summary() {
     };
 
     const contextHasChanged = editedContext !== context;
+    const showControls = summary && !isProcessing;
 
     return (
         <div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
@@ -87,70 +88,83 @@ export default function Summary() {
             <button onClick={() => navigate('/record')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, marginBottom: '24px' }}>
                 ← Back to Recordings
             </button>
-            <div style={{ marginBottom: '24px' }}>{renderTitle()}</div>
 
-            {isLoading && !loadedFromCache && <p>Loading summary...</p>}
-            {error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
-            {(isProcessing || isRegenerating) && !summary && <p>⏳ Processing summary, please wait...</p>}
+            <div style={{
+                backgroundColor: currentThemeColors.background,
+                padding: '24px',
+                borderRadius: '12px',
+                border: `1px solid ${currentThemeColors.border}`,
+                marginBottom: '32px'
+            }}>
+                {renderTitle()}
 
-            {(!isLoading || loadedFromCache) && !error && (
-                <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
-                        <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
-                        <LanguageSelector disabled={isProcessing || isRegenerating} onSelectionChange={onLanguageChange} />
-                    </div>
+                {showControls && (
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px'}}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
+                            <LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
+                        </div>
 
-                    <div style={{ marginBottom: '24px' }}>
-                        <label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
-                            Summary Context
-                        </label>
-                        <textarea
-                            id="context-editor"
-                            value={editedContext}
-                            onChange={(e) => setEditedContext(e.target.value)}
-                            placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
-                            disabled={isProcessing || isRegenerating}
-                            style={{
-                                width: '100%',
-                                minHeight: '60px',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: `1px solid ${currentThemeColors.input.border}`,
-                                backgroundColor: currentThemeColors.input.background,
-                                color: currentThemeColors.input.text,
-                                fontFamily: 'inherit',
-                                fontSize: '14px',
-                                resize: 'vertical',
-                                boxSizing: 'border-box',
-                                opacity: (isProcessing || isRegenerating) ? 0.7 : 1,
-                            }}
-                        />
-                        {contextHasChanged && (
-                             <button
-                                onClick={handleContextUpdateConfirm}
+                        <div>
+                            <label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
+                                Context
+                            </label>
+                            <textarea
+                                id="context-editor"
+                                value={editedContext}
+                                onChange={(e) => setEditedContext(e.target.value)}
+                                placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
                                 disabled={isRegenerating}
                                 style={{
-                                    marginTop: '12px',
-                                    padding: '8px 16px',
-                                    border: 'none',
+                                    width: '100%',
+                                    minHeight: '60px',
+                                    padding: '10px 12px',
                                     borderRadius: '8px',
-                                    backgroundColor: currentThemeColors.button.primary,
-                                    color: currentThemeColors.button.primaryText,
+                                    border: `1px solid ${currentThemeColors.input.border}`,
+                                    backgroundColor: currentThemeColors.input.background,
+                                    color: currentThemeColors.input.text,
+                                    fontFamily: 'inherit',
                                     fontSize: '14px',
-                                    fontWeight: '500',
-                                    cursor: isRegenerating ? 'not-allowed' : 'pointer',
-                                    opacity: isRegenerating ? 0.6 : 1,
-                                    transition: 'all 0.2s ease',
+                                    resize: 'vertical',
+                                    boxSizing: 'border-box',
+                                    opacity: isRegenerating ? 0.7 : 1,
                                 }}
-                            >
-                                Apply & Regenerate Summary
-                            </button>
-                        )}
+                            />
+                            {contextHasChanged && (
+                                <button
+                                    onClick={handleContextUpdateConfirm}
+                                    disabled={isRegenerating}
+                                    style={{
+                                        marginTop: '12px',
+                                        padding: '8px 16px',
+                                        border: 'none',
+                                        borderRadius: '8px',
+                                        backgroundColor: currentThemeColors.button.primary,
+                                        color: currentThemeColors.button.primaryText,
+                                        fontSize: '14px',
+                                        fontWeight: '500',
+                                        cursor: isRegenerating ? 'not-allowed' : 'pointer',
+                                        opacity: isRegenerating ? 0.6 : 1,
+                                        transition: 'all 0.2s ease',
+                                    }}
+                                >
+                                    Apply & Regenerate Summary
+                                </button>
+                            )}
+                        </div>
                     </div>
+                )}
+            </div>
+
+            {summary ? (
+                <ReactMarkdown children={summary} components={{ h1: ({...props}) => <h1 style={{color: currentThemeColors.text}} {...props}/>, h2: ({...props}) => <h2 style={{color: currentThemeColors.text}} {...props}/>, p: ({...props}) => <p style={{lineHeight: 1.6}} {...props}/> }} />
+            ) : (
+                <>
+                    {isLoading && !loadedFromCache && <p>Loading summary...</p>}
+                    {error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
+                    {(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
                 </>
             )}
-
-            {summary && <ReactMarkdown children={summary} components={{ h1: ({...props}) => <h1 style={{color: currentThemeColors.text}} {...props}/>, h2: ({...props}) => <h2 style={{color: currentThemeColors.text}} {...props}/>, p: ({...props}) => <p style={{lineHeight: 1.6}} {...props}/> }} />}
 
             {summary && !isLoading && (
                 <FeedbackComponent submittedTypes={submittedFeedback} onFeedbackToggle={handleFeedbackToggle} onSuggestionSubmit={handleSuggestionSubmit} theme={theme} />

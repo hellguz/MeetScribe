@@ -46,83 +46,68 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isDropdownOpen]);
 
-    const handleModeClick = (mode: LanguageMode) => {
+    const handleSelection = (mode: LanguageMode, customLang?: string) => {
         if (disabled) return;
         setIsDropdownOpen(false);
-        onSelectionChange({ mode });
-    };
-
-    const handleCustomButtonClick = () => {
-        if (disabled) return;
-        if (languageState.mode === 'custom') {
-            setIsDropdownOpen(!isDropdownOpen);
+        if (mode === 'custom') {
+            onSelectionChange({ mode: 'custom', lastCustomLanguage: customLang || languageState.lastCustomLanguage });
         } else {
-            onSelectionChange({ mode: 'custom' });
-        }
-    };
-    
-    const handleCustomLanguageSelect = (lang: string) => {
-        if (disabled) return;
-        setIsDropdownOpen(false);
-        onSelectionChange({ mode: 'custom', lastCustomLanguage: lang });
-    };
-
-    const handleMobileSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const value = e.target.value;
-        if (value === 'auto' || value === 'english') {
-            onSelectionChange({ mode: value });
-        } else {
-            onSelectionChange({ mode: 'custom', lastCustomLanguage: value });
+            onSelectionChange({ mode });
         }
     };
 
-    const getBaseStyle = (isActive: boolean): React.CSSProperties => ({
-        padding: '6px 14px',
-        border: 'none',
-        borderRadius: '6px',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'all 0.2s ease',
-        fontSize: '14px',
-        height: '32px', // Explicit height for consistency
-        boxSizing: 'border-box',
-        backgroundColor: isActive ? currentThemeColors.body : 'transparent',
-        color: isActive ? currentThemeColors.text : currentThemeColors.secondaryText,
-        fontWeight: isActive ? 'bold' : 'normal',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        whiteSpace: 'nowrap',
-    });
+    const getButtonLabel = () => {
+        if (languageState.mode === 'auto') return 'Auto-Detect';
+        if (languageState.mode === 'english') return 'English';
+        return languageState.lastCustomLanguage;
+    };
 
     if (isMobile) {
-        const selectedValue = languageState.mode === 'custom' ? languageState.lastCustomLanguage : languageState.mode;
         return (
-            <select
-                value={selectedValue}
-                onChange={handleMobileSelectChange}
-                disabled={disabled}
-                style={{
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: `1px solid ${currentThemeColors.input.border}`,
-                    fontSize: '14px',
-                    backgroundColor: currentThemeColors.input.background,
-                    color: currentThemeColors.input.text,
-                    opacity: disabled ? 0.6 : 1,
-                    width: '100%',
-                }}
-            >
-                <option value="auto">Auto-Detect Language</option>
-                <option value="english">English</option>
-                <optgroup label="Custom Language">
-                    {languages.map(lang => (
-                        <option key={lang} value={lang}>{lang}</option>
-                    ))}
-                </optgroup>
-            </select>
+            <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
+                <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    disabled={disabled}
+                    style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        border: `1px solid ${currentThemeColors.border}`,
+                        fontSize: '14px',
+                        backgroundColor: currentThemeColors.body,
+                        color: currentThemeColors.text,
+                        opacity: disabled ? 0.6 : 1,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        textAlign: 'left',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <span>{`Language: ${getButtonLabel()}`}</span>
+                    <span style={{ transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
+                </button>
+                {isDropdownOpen && (
+                    <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px',
+                        backgroundColor: currentThemeColors.body, border: `1px solid ${currentThemeColors.border}`,
+                        borderRadius: '8px', zIndex: 10, maxHeight: '200px', overflowY: 'auto',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                    }}>
+                        <div onClick={() => handleSelection('auto')} style={{ padding: '10px 12px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>Auto-Detect</div>
+                        <div onClick={() => handleSelection('english')} style={{ padding: '10px 12px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>English</div>
+                        <hr style={{ margin: '4px 0', border: 'none', borderTop: `1px solid ${currentThemeColors.border}` }} />
+                        {languages.map(lang => (
+                            <div key={lang} onClick={() => handleSelection('custom', lang)} style={{ padding: '10px 12px', cursor: 'pointer', fontWeight: languageState.mode === 'custom' && languageState.lastCustomLanguage === lang ? 'bold' : 'normal' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>{lang}</div>
+                        ))}
+                    </div>
+                )}
+            </div>
         );
     }
-
+    
+    // Desktop view remains the same
     return (
         <div
             ref={wrapperRef}
@@ -137,59 +122,22 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
                 cursor: disabled ? 'not-allowed' : 'default',
             }}
         >
-            <button
-                onClick={() => handleModeClick('auto')}
-                disabled={disabled}
-                style={getBaseStyle(languageState.mode === 'auto')}
-            >
-                Auto
-            </button>
-            <button
-                onClick={() => handleModeClick('english')}
-                disabled={disabled}
-                style={getBaseStyle(languageState.mode === 'english')}
-            >
-                English
-            </button>
+            <button onClick={() => handleSelection('auto')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'auto' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'auto' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'auto' ? 'bold' : 'normal' }}>Auto</button>
+            <button onClick={() => handleSelection('english')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'english' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'english' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'english' ? 'bold' : 'normal'}}>English</button>
             <div style={{position: 'relative'}}>
-                <button
-                    onClick={handleCustomButtonClick}
-                    disabled={disabled}
-                    style={getBaseStyle(languageState.mode === 'custom')}
-                >
+                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'custom' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'custom' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'custom' ? 'bold' : 'normal' }}>
                     {languageState.lastCustomLanguage}
                     <span style={{ marginLeft: '6px', fontSize: '10px', color: 'currentColor' }}>▼</span>
                 </button>
                 {isDropdownOpen && (
                     <div style={{
-                        position: 'absolute',
-                        top: '100%',
-                        right: 0,
-                        marginTop: '4px',
-                        backgroundColor: currentThemeColors.body,
-                        border: `1px solid ${currentThemeColors.border}`,
-                        borderRadius: '8px',
-                        zIndex: 10,
-                        maxHeight: '200px',
-                        overflowY: 'auto',
+                        position: 'absolute', top: '100%', right: 0, marginTop: '4px',
+                        backgroundColor: currentThemeColors.body, border: `1px solid ${currentThemeColors.border}`,
+                        borderRadius: '8px', zIndex: 10, maxHeight: '200px', overflowY: 'auto',
                         boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
                     }}>
                         {languages.map(lang => (
-                            <div
-                                key={lang}
-                                onClick={() => handleCustomLanguageSelect(lang)}
-                                style={{
-                                    padding: '8px 16px',
-                                    cursor: 'pointer',
-                                    whiteSpace: 'nowrap',
-                                    color: currentThemeColors.text,
-                                    backgroundColor: languageState.lastCustomLanguage === lang ? currentThemeColors.backgroundSecondary : 'transparent'
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary}
-                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = languageState.lastCustomLanguage === lang ? currentThemeColors.backgroundSecondary : 'transparent'}
-                            >
-                                {lang}
-                            </div>
+                            <div key={lang} onClick={() => handleSelection('custom', lang)} style={{ padding: '8px 16px', cursor: 'pointer', whiteSpace: 'nowrap', color: currentThemeColors.text, backgroundColor: languageState.lastCustomLanguage === lang ? currentThemeColors.backgroundSecondary : 'transparent' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = languageState.lastCustomLanguage === lang ? currentThemeColors.backgroundSecondary : 'transparent'}>{lang}</div>
                         ))}
                     </div>
                 )}
@@ -198,6 +146,19 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
     );
 };
 
+const desktopButtonStyle: React.CSSProperties = {
+    padding: '6px 14px',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    fontSize: '14px',
+    height: '32px',
+    boxSizing: 'border-box',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    whiteSpace: 'nowrap',
+};
+
 export default LanguageSelector;
-
-

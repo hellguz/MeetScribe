@@ -334,19 +334,27 @@ def update_meeting_context(mid: uuid.UUID, payload: MeetingContextUpdate):
 @app.put("/api/meetings/{mid}/config", response_model=Meeting)
 def update_meeting_config(mid: uuid.UUID, payload: MeetingConfigUpdate):
     """Updates the configuration of a meeting, like its summary length."""
-    if not is_valid_summary_length(payload.summary_length):
-        raise HTTPException(status_code=400, detail="Invalid summary_length value.")
-
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        updated = False
+        if payload.summary_length and is_valid_summary_length(payload.summary_length):
+            mtg.summary_length = payload.summary_length
+            updated = True
+        
+        if payload.summary_language_mode:
+            mtg.summary_language_mode = payload.summary_language_mode
+            mtg.summary_custom_language = payload.summary_custom_language
+            updated = True
 
-        mtg.summary_length = payload.summary_length
-        db.add(mtg)
-        db.commit()
-        db.refresh(mtg)
-        LOGGER.info("Updated summary length for meeting %s to '%s'", mid, payload.summary_length)
+        if updated:
+            db.add(mtg)
+            db.commit()
+            db.refresh(mtg)
+            LOGGER.info("Updated config for meeting %s", mid)
+        
         return mtg
 
 

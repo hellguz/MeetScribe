@@ -182,6 +182,26 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         }
     }, []);
 
+    const updateMeetingConfig = useCallback(async (config: Partial<SummaryLanguageState & { summaryLength: SummaryLength }>) => {
+        if (!meetingId.current) return;
+        
+        const payload = {
+            summary_length: config.summaryLength,
+            summary_language_mode: config.mode,
+            summary_custom_language: config.lastCustomLanguage,
+        };
+
+        try {
+            await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/config`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+        } catch (error) {
+            console.error('Failed to update meeting config:', error);
+        }
+    }, []);
+
     const stopRecording = useCallback(async (isFinal: boolean = true) => {
         if (mediaRef.current && mediaRef.current.state === 'recording') {
             mediaRef.current.stop();
@@ -408,7 +428,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef, animationFrameRef,
-        updateContext,
+        updateContext, updateMeetingConfig,
         resetState,
         wakeLockStatus,
     };

@@ -166,8 +166,9 @@ class MeetingConfigUpdate(SQLModel):
     """
     Payload for updating a meeting's configuration, like summary length.
     """
-
-    summary_length: str
+    summary_length: Optional[str] = None
+    summary_language_mode: Optional[str] = None
+    summary_custom_language: Optional[str] = None
 
 
 
