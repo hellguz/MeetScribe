@@ -9,6 +9,7 @@ export interface CachedSummary {
   title: string;
   summary: string;
   transcript?: string | null;
+  context?: string | null; // Add context
   updatedAt: string; // ISO timestamp
 }
 

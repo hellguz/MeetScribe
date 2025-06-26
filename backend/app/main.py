@@ -95,13 +95,15 @@ def create_meeting(body: MeetingCreate, request: Request):
             raise HTTPException(status_code=400, detail="Invalid summary_length value.")
 
         user_agent = request.headers.get("user-agent")
-        mtg_data = body.model_dump()
+        mtg_data = body.model_dump(exclude_unset=True) # Ensure context: None is not passed if client omits it
         
         # Set defaults if not provided by client
-        if body.summary_length is None:
+        if 'summary_length' not in mtg_data or mtg_data["summary_length"] is None:
             mtg_data["summary_length"] = "auto"
-        if body.summary_language_mode is None:
+        if 'summary_language_mode' not in mtg_data or mtg_data["summary_language_mode"] is None:
             mtg_data["summary_language_mode"] = "auto"
+
+        # context is optional, so it's fine if it's not in mtg_data
 
         mtg = Meeting(**mtg_data, user_agent=user_agent)
         db.add(mtg)
@@ -260,6 +262,7 @@ def get_meeting(mid: uuid.UUID):
         data = mtg.model_dump()
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
         data["transcribed_chunks"] = transcribed_count
+        data["context"] = mtg.context # Add context to the response
 
         # Get existing feedback
         feedback_results = db.exec(
@@ -330,6 +333,20 @@ def update_meeting_config(mid: uuid.UUID, payload: MeetingConfigUpdate):
         db.commit()
         db.refresh(mtg)
         LOGGER.info("Updated summary length for meeting %s to '%s'", mid, payload.summary_length)
+        return mtg
+
+
+@app.put("/api/meetings/{mid}/context", response_model=Meeting)
+async def update_meeting_context(mid: uuid.UUID, payload: MeetingContextUpdate):
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        mtg.context = payload.context
+        db.add(mtg)
+        db.commit()
+        db.refresh(mtg)
+        LOGGER.info(f"Updated context for meeting {mid}")
         return mtg
 
 
