@@ -190,8 +190,10 @@ export default function Record() {
 
             {isRecording && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
-                    <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={false} />
-                    <LanguageSelector onSelectionChange={handleLanguageChange} disabled={false} />
+                    <div style={{display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between'}}>
+                        <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={false} />
+                        <LanguageSelector onSelectionChange={handleLanguageChange} disabled={false} />
+                    </div>
                     <textarea
                         value={context}
                         onChange={(e) => handleContextChange(e.target.value)}
@@ -246,5 +248,3 @@ export default function Record() {
         </div>
     );
 }
-
-

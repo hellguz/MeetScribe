@@ -57,20 +57,20 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
     };
 
     const getButtonLabel = () => {
-        if (languageState.mode === 'auto') return 'Auto-Detect';
+        if (languageState.mode === 'auto') return 'Auto';
         if (languageState.mode === 'english') return 'English';
         return languageState.lastCustomLanguage;
     };
 
     if (isMobile) {
         return (
-            <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
+            <div ref={wrapperRef} style={{ position: 'relative', flex: 1 }}>
                 <button
                     onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                     disabled={disabled}
                     style={{
                         width: '100%',
-                        padding: '8px 12px',
+                        padding: '8px 10px',
                         borderRadius: '6px',
                         border: `1px solid ${currentThemeColors.border}`,
                         fontSize: '14px',
@@ -81,19 +81,19 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
                         justifyContent: 'space-between',
                         alignItems: 'center',
                         textAlign: 'left',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}
                 >
-                    <span>{`Language: ${getButtonLabel()}`}</span>
+                    <span>{getButtonLabel()}</span>
                     <span style={{ transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
                 </button>
                 {isDropdownOpen && (
                     <div style={{
-                        position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px',
+                        position: 'absolute', top: '100%', right: 0, marginTop: '4px',
                         backgroundColor: currentThemeColors.body, border: `1px solid ${currentThemeColors.border}`,
                         borderRadius: '8px', zIndex: 10, maxHeight: '200px', overflowY: 'auto',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '100%'
                     }}>
                         <div onClick={() => handleSelection('auto')} style={{ padding: '10px 12px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>Auto-Detect</div>
                         <div onClick={() => handleSelection('english')} style={{ padding: '10px 12px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>English</div>
@@ -107,14 +107,15 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
         );
     }
     
-    // Desktop view remains the same
+    // Desktop view
     return (
         <div
             ref={wrapperRef}
             style={{
                 display: 'flex',
                 position: 'relative',
-                backgroundColor: currentThemeColors.backgroundSecondary,
+                backgroundColor: currentThemeColors.body,
+                border: `1px solid ${currentThemeColors.border}`,
                 borderRadius: '8px',
                 padding: '4px',
                 width: 'fit-content',
@@ -122,10 +123,10 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
                 cursor: disabled ? 'not-allowed' : 'default',
             }}
         >
-            <button onClick={() => handleSelection('auto')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'auto' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'auto' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'auto' ? 'bold' : 'normal' }}>Auto</button>
-            <button onClick={() => handleSelection('english')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'english' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'english' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'english' ? 'bold' : 'normal'}}>English</button>
+            <button onClick={() => handleSelection('auto')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'auto' ? currentThemeColors.backgroundSecondary : 'transparent', color: currentThemeColors.text, fontWeight: languageState.mode === 'auto' ? 'bold' : 'normal' }}>Auto</button>
+            <button onClick={() => handleSelection('english')} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'english' ? currentThemeColors.backgroundSecondary : 'transparent', color: currentThemeColors.text, fontWeight: languageState.mode === 'english' ? 'bold' : 'normal'}}>English</button>
             <div style={{position: 'relative'}}>
-                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'custom' ? currentThemeColors.body : 'transparent', color: languageState.mode === 'custom' ? currentThemeColors.text : currentThemeColors.secondaryText, fontWeight: languageState.mode === 'custom' ? 'bold' : 'normal' }}>
+                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} disabled={disabled} style={{...desktopButtonStyle, backgroundColor: languageState.mode === 'custom' ? currentThemeColors.backgroundSecondary : 'transparent', color: currentThemeColors.text, fontWeight: languageState.mode === 'custom' ? 'bold' : 'normal' }}>
                     {languageState.lastCustomLanguage}
                     <span style={{ marginLeft: '6px', fontSize: '10px', color: 'currentColor' }}>▼</span>
                 </button>

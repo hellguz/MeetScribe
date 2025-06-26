@@ -100,7 +100,7 @@ export default function Summary() {
 
                 {showControls && (
                     <div style={{display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px'}}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
                             <SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
                             <LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
                         </div>
@@ -171,11 +171,27 @@ export default function Summary() {
             )}
 
             {transcript && (
-                <div style={{ marginTop: 32 }}>
-                    <h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                        <span style={{ display: 'inline-block', transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span> 🎤 Transcript
+                <div style={{
+                    marginTop: '32px',
+                    backgroundColor: currentThemeColors.background,
+                    padding: '16px 24px',
+                    borderRadius: '12px',
+                    border: `1px solid ${currentThemeColors.border}`
+                }}>
+                    <h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)} style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center' }}>
+                        <span style={{ display: 'inline-block', transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', marginRight: '8px' }}>▶</span> 🎤 Transcript
                     </h4>
-                    {isTranscriptVisible && <pre style={{ whiteSpace: 'pre-wrap', backgroundColor: currentThemeColors.backgroundSecondary, padding: 16, borderRadius: 4, border: `1px solid ${currentThemeColors.border}` }}>{transcript}</pre>}
+                    {isTranscriptVisible && (
+                        <pre style={{ 
+                            marginTop: '16px', 
+                            whiteSpace: 'pre-wrap', 
+                            color: currentThemeColors.text, 
+                            fontSize: '14px',
+                            lineHeight: '1.6'
+                        }}>
+                            {transcript}
+                        </pre>
+                    )}
                 </div>
             )}
         </div>

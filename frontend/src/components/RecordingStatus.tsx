@@ -49,6 +49,14 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
     const transcribedColor = isDarkMode ? '#ef4444' : theme.text; // Light Red for top bar
     const uploadedColor = isDarkMode ? '#f87171' : theme.secondaryText; // Red for bottom bar
 
+    const instructionStyle: React.CSSProperties = {
+        fontSize: '13px',
+        color: theme.secondaryText,
+        textAlign: 'center',
+        margin: '0 0 8px 0',
+        lineHeight: 1.5
+    };
+
     return (
         <>
             {isRecording && (
@@ -84,30 +92,26 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
                 </div>
             </div>
 
-            <div style={{ fontSize: '14px', color: theme.secondaryText, textAlign: 'center', lineHeight: '1.5', minHeight: '42px' }}>
+            <div style={{ minHeight: '42px' }}>
                  {!isUiLocked ? (
-                    audioSource === 'file' ? (
-                        <p>Select a file and click “Start Transcription” to begin.</p>
-                    ) : (
-                        <p>Choose your audio source and click “Start Recording” to begin.</p>
-                    )
+                    <p style={instructionStyle}>Choose your audio source and click “Start Recording” to begin.</p>
                 ) : isRecording ? (
                     <>
-                        <p style={{margin: '0 0 8px 0'}}>Live transcript will appear above as audio is processed.</p>
+                        <p style={instructionStyle}>Live transcript will appear above as audio is processed.</p>
                         {audioSource !== 'file' && wakeLockStatus === 'active' && (
-                            <p style={{ fontSize: '13px', opacity: 0.8, margin: 0 }}>💡 The screen will stay on during recording.</p>
+                            <p style={{...instructionStyle, opacity: 0.8, margin: 0}}>The screen will stay on during recording.</p>
                         )}
                         {audioSource !== 'file' && wakeLockStatus === 'error' && (
-                            <p style={{ fontSize: '13px', color: theme.button.danger, margin: 0 }}>⚠️ Could not keep screen on. Please keep it awake manually.</p>
+                            <p style={{...instructionStyle, color: theme.button.danger, margin: 0 }}>⚠️ Could not keep screen on. Please keep it awake manually.</p>
                         )}
                     </>
                 ) : allChunksUploaded ? (
-                    <p>
+                    <p style={instructionStyle}>
                         ✅ Upload complete. You can safely close this window. <br />
                         You will be redirected when the summary is ready.
                     </p>
                 ) : (
-                    <p>
+                    <p style={instructionStyle}>
                         Uploading... Once all chunks are sent, you can close this window. <br />
                         You will be redirected when it's ready.
                     </p>
@@ -118,5 +122,3 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 };
 
 export default RecordingStatus;
-
-

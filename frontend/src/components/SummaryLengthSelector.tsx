@@ -49,13 +49,13 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
     if (isMobile) {
         const currentLabel = options.find(opt => opt.value === value)?.label;
         return (
-            <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
+            <div ref={wrapperRef} style={{ position: 'relative', flex: 1 }}>
                 <button
                     onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                     disabled={disabled}
                     style={{
                         width: '100%',
-                        padding: '8px 12px',
+                        padding: '8px 10px',
                         borderRadius: '6px',
                         border: `1px solid ${currentThemeColors.border}`,
                         fontSize: '14px',
@@ -66,11 +66,11 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
                         justifyContent: 'space-between',
                         alignItems: 'center',
                         textAlign: 'left',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}
                 >
-                    <span>{`Length: ${currentLabel}`}</span>
+                    <span>{currentLabel}</span>
                     <span style={{ transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
                 </button>
                 {isDropdownOpen && (
@@ -105,7 +105,8 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 		<div
 			style={{
 				display: 'flex',
-				backgroundColor: currentThemeColors.backgroundSecondary,
+				backgroundColor: currentThemeColors.body,
+                border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
 				padding: '4px',
 				width: 'fit-content',
@@ -123,8 +124,8 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 							padding: '6px 14px',
 							border: 'none',
 							borderRadius: '6px',
-							backgroundColor: isActive ? currentThemeColors.body : 'transparent',
-							color: isActive ? currentThemeColors.text : currentThemeColors.secondaryText,
+							backgroundColor: isActive ? currentThemeColors.backgroundSecondary : 'transparent',
+							color: currentThemeColors.text,
 							cursor: disabled ? 'not-allowed' : 'pointer',
 							fontWeight: isActive ? 'bold' : 'normal',
 							transition: 'all 0.2s ease',
