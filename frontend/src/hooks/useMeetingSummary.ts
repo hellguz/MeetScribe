@@ -22,6 +22,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
     const [isRegenerating, setIsRegenerating] = useState(false);
+    const [meetingContext, setMeetingContext] = useState<string | null>(null);
 
     const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
         if (!mid) return;
@@ -68,14 +69,16 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             if (!meetingStartedAt) {
                 setMeetingStartedAt(data.started_at || new Date().toISOString());
             }
+            setMeetingContext(data.context || null); // Set meeting context
 
             if (data.done && data.summary_markdown) {
                 setSummary(data.summary_markdown);
                 setIsProcessing(false);
                 setIsLoading(false);
-                saveCached({ id: data.id, title: data.title, summary: data.summary_markdown, transcript: trn, updatedAt: new Date().toISOString() });
+                saveCached({ id: data.id, title: data.title, summary: data.summary_markdown, transcript: trn, context: data.context, updatedAt: new Date().toISOString() });
                 const historyList = getHistory();
                 const existingMeta = historyList.find((m) => m.id === data.id);
+                // Ensure context is part of MeetingMeta if saved to history, for now, history items are simpler.
                 saveMeeting({ id: data.id, title: data.title, started_at: existingMeta?.started_at || data.started_at, status: 'complete' });
             } else {
                 setIsProcessing(true);
@@ -166,6 +169,35 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         }
     }, [mid, meetingTitle, meetingStartedAt, summary, transcript]);
 
+    const handleContextUpdate = useCallback(async (newContext: string) => {
+        if (!mid) return;
+        // Optimistically update UI, but store old context to revert on error
+        const oldContext = meetingContext;
+        setMeetingContext(newContext);
+        try {
+            const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/context`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ context: newContext }),
+            });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({ detail: 'Failed to update context' }));
+                throw new Error(errorData.detail || `HTTP error! status: ${res.status}`);
+            }
+            const updatedMeeting = await res.json();
+            setMeetingContext(updatedMeeting.context); // Update with response from server
+            // Update cache
+            const cached = getCached(mid);
+            if (cached) {
+                saveCached({ ...cached, context: updatedMeeting.context, updatedAt: new Date().toISOString() });
+            }
+        } catch (err) {
+            setMeetingContext(oldContext); // Revert on error
+            console.error("Failed to update context:", err);
+            alert(err instanceof Error ? `Failed to update context: ${err.message}` : 'Failed to update context.');
+        }
+    }, [mid, meetingContext]);
+
     useEffect(() => {
         if (mid) {
             const cachedData = getCached(mid);
@@ -173,12 +205,13 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
                 setSummary(cachedData.summary);
                 setTranscript(cachedData.transcript || null);
                 setMeetingTitle(cachedData.title);
+                setMeetingContext(cachedData.context || null); // Load context from cache
                 setLoadedFromCache(true);
                 setIsLoading(false);
             }
             fetchMeetingData(true);
         }
-    }, [mid]); // Removed fetchMeetingData from dep array to avoid re-running on language change
+    }, [mid]); // Removed fetchMeetingData from dep array
 
     useEffect(() => {
         if (!isProcessing) return;
@@ -193,6 +226,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         isProcessing,
         error,
         meetingTitle,
+        meetingContext, // Expose meetingContext
         currentMeetingLength,
         submittedFeedback,
         isRegenerating,
@@ -200,6 +234,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         handleSuggestionSubmit,
         handleRegenerate,
         handleTitleUpdate,
+        handleContextUpdate, // Expose handleContextUpdate
         loadedFromCache,
     };
 };

@@ -31,6 +31,7 @@ export default function Record() {
     } = useRecording(summaryLength, languageState);
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
+    const [meetingContext, setMeetingContext] = useState(''); // Added state for meeting context
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const isUiLocked = isRecording || isProcessing;
 
@@ -90,9 +91,9 @@ export default function Record() {
     }, [theme, analyserRef, animationFrameRef]);
     const handleStart = () => {
         if (audioSource === 'file') {
-            startFileProcessing();
+            startFileProcessing(meetingContext);
         } else {
-            startLiveRecording(audioSource, drawWaveform);
+            startLiveRecording(audioSource, drawWaveform, meetingContext);
         }
     };
 
@@ -154,12 +155,30 @@ export default function Record() {
                     <LanguageSelector disabled={isProcessing} onSelectionChange={handleLanguageChange} />
                 </div>
             )}
-            
+
             {!isUiLocked && (
-                <>
+                <div style={{ marginBottom: '24px' }}>
+                    <textarea
+                        value={meetingContext}
+                        onChange={(e) => setMeetingContext(e.target.value)}
+                        placeholder="Enter meeting context (optional: topic, participants, project...)"
+                        disabled={isUiLocked}
+                        style={{
+                            width: '100%',
+                            minHeight: '60px',
+                            padding: '10px',
+                            borderRadius: '6px',
+                            border: `1px solid ${currentThemeColors.border}`,
+                            backgroundColor: currentThemeColors.input.background,
+                            color: currentThemeColors.input.text,
+                            fontSize: '15px',
+                            marginBottom: '16px',
+                            boxSizing: 'border-box'
+                        }}
+                    />
                     <AudioSourceSelector audioSource={audioSource} setAudioSource={(s) => { setAudioSource(s); setSelectedFile(null); }} includeMic={includeMic} setIncludeMic={setIncludeMic} isSystemAudioSupported={isSystemAudioSupported} disabled={isUiLocked} theme={currentThemeColors} />
                     {audioSource === 'file' && (
-                        <div style={{ marginBottom: '24px' }}>
+                        <div style={{ marginTop: '16px', marginBottom: '24px' }}>
                             <FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
                         </div>
                     )}

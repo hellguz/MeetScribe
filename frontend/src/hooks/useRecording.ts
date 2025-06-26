@@ -39,6 +39,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
     const navigate = useNavigate();
     const [isRecording, setRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    // Add meetingContext to the parameters of useRecording if it's passed down from RecordPage
+    // For now, we assume RecordPage will manage context state and pass it to createMeetingOnBackend directly.
     const [localChunksCount, setLocalChunksCount] = useState(0);
     const [uploadedChunks, setUploadedChunks] = useState(0);
     const [expectedTotalChunks, setExpectedTotalChunks] = useState<number | null>(null);
@@ -131,16 +133,20 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         }
     }, [navigate, firstChunkProcessedTime, transcriptionStartTime]);
 
-    const createMeetingOnBackend = useCallback(async (title: string) => {
+    const createMeetingOnBackend = useCallback(async (title: string, context?: string) => {
+        const payload: any = {
+            title,
+            summary_length: summaryLength,
+            summary_language_mode: languageState.mode,
+            summary_custom_language: languageState.lastCustomLanguage,
+        };
+        if (context && context.trim() !== '') {
+            payload.context = context;
+        }
         const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                title, 
-                summary_length: summaryLength,
-                summary_language_mode: languageState.mode,
-                summary_custom_language: languageState.lastCustomLanguage,
-            }),
+            body: JSON.stringify(payload),
         });
         if (!res.ok) throw new Error('Failed to create meeting');
         const data = await res.json();
@@ -197,7 +203,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             await uploadChunk(finalBlob, chunkIndexRef.current, true);
         }
     }, [uploadChunk]);
-    const startLiveRecording = useCallback(async (source: 'mic' | 'system', drawWaveform: () => void) => {
+    const startLiveRecording = useCallback(async (source: 'mic' | 'system', drawWaveform: () => void, context?: string) => {
         resetState();
         let finalStream: MediaStream;
         try {
@@ -253,7 +259,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
             setRecording(true);
             startTimeRef.current = Date.now();
-            await createMeetingOnBackend(`Recording ${new Date().toLocaleString()}`);
+            await createMeetingOnBackend(`Recording ${new Date().toLocaleString()}`, context);
 
             pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
             timerRef.current = setInterval(() => setRecordingTime(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000);
@@ -285,12 +291,12 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             resetState();
         }
     }, [createMeetingOnBackend, includeMic, pollMeetingStatus, stopRecording, uploadChunk]);
-    const startFileProcessing = useCallback(async () => {
+    const startFileProcessing = useCallback(async (context?: string) => {
         if (!selectedFile) return;
         resetState();
         setIsProcessing(true);
         try {
-            await createMeetingOnBackend(`Transcription of ${selectedFile.name}`);
+            await createMeetingOnBackend(`Transcription of ${selectedFile.name}`, context);
             pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
 
             const audioCtx = new AudioContext();

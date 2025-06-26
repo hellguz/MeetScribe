@@ -264,6 +264,7 @@ def summarise_transcript_in_worker(
     summary_length: str,
     summary_language_mode: str | None,
     summary_custom_language: str | None,
+    meeting_context: str | None,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
@@ -293,8 +294,18 @@ def summarise_transcript_in_worker(
         }
         length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
 
+        context_injection = ""
+        if meeting_context and meeting_context.strip():
+            context_injection = f"""
+**User-Provided Context (Prioritize for names, topics, spelling):**
+---
+{meeting_context}
+---
+"""
+
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+{context_injection}
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
@@ -332,8 +343,8 @@ This is the core of the summary. For each **Key Theme** you identified, create a
 """
         user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
         response = openai.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.4, # Lower temperature for more deterministic output
+            model="gpt-4o-mini", # Updated model
+            temperature=0.4,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt_content},
@@ -375,6 +386,7 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             mtg.summary_length,
             mtg.summary_language_mode,
             mtg.summary_custom_language,
+            mtg.context, # Pass the context
         )
         mtg.summary_markdown = summary_md
 

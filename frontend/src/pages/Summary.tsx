@@ -18,14 +18,16 @@ export default function Summary() {
     const { languageState, setLanguageState } = useSummaryLanguage();
 
     const {
-        summary, transcript, isLoading, isProcessing, error, meetingTitle,
+        summary, transcript, isLoading, isProcessing, error, meetingTitle, meetingContext, // Get meetingContext
         currentMeetingLength, submittedFeedback, isRegenerating,
-        handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
+        handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate, handleContextUpdate, // Get handleContextUpdate
         loadedFromCache
     } = useMeetingSummary({ mid, languageState, setLanguageState });
 
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
+    const [isEditingContext, setIsEditingContext] = useState(false); // State for editing context
+    const [editableContext, setEditableContext] = useState(''); // State for context textarea
     const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
 
     const handleTitleUpdateConfirm = useCallback(async () => {
@@ -60,6 +62,66 @@ export default function Summary() {
         );
     };
 
+    const handleContextUpdateConfirm = useCallback(async () => {
+        if (editableContext.trim() !== (meetingContext || '')) { // Only update if changed
+            await handleContextUpdate(editableContext.trim());
+        }
+        setIsEditingContext(false);
+    }, [editableContext, meetingContext, handleContextUpdate]);
+
+    const renderContext = () => {
+        if (isEditingContext) {
+            return (
+                <textarea
+                    value={editableContext}
+                    onChange={(e) => setEditableContext(e.target.value)}
+                    onBlur={handleContextUpdateConfirm}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleContextUpdateConfirm();
+                        }
+                        if (e.key === 'Escape') setIsEditingContext(false);
+                    }}
+                    style={{
+                        width: '100%',
+                        minHeight: '80px',
+                        padding: '10px',
+                        border: `1px solid ${currentThemeColors.input.border}`,
+                        borderRadius: '6px',
+                        backgroundColor: currentThemeColors.input.background,
+                        color: currentThemeColors.input.text,
+                        fontSize: '0.9em',
+                        boxSizing: 'border-box',
+                        marginTop: '8px',
+                    }}
+                    autoFocus
+                />
+            );
+        }
+        return (
+            <div
+                onClick={() => { setEditableContext(meetingContext || ''); setIsEditingContext(true); }}
+                style={{
+                    cursor: 'pointer',
+                    padding: '10px',
+                    marginTop: '8px',
+                    backgroundColor: currentThemeColors.backgroundSecondary,
+                    borderRadius: '6px',
+                    border: `1px dashed ${currentThemeColors.border}`,
+                    color: currentThemeColors.secondaryText,
+                    whiteSpace: 'pre-wrap', // Preserve line breaks
+                    wordBreak: 'break-word',
+                    fontSize: '0.9em',
+                    minHeight: '40px', // Ensure it's clickable even when empty
+                }}
+            >
+                {meetingContext || "No context provided. Click to add."}
+                <span style={{ fontSize: '10px', marginLeft: '8px', verticalAlign: 'super' }}>✏️</span>
+            </div>
+        );
+    };
+
     const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
         // Create the full new state from the partial update
         const newState = { ...languageState, ...update };
@@ -75,7 +137,8 @@ export default function Summary() {
             <button onClick={() => navigate('/record')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, marginBottom: '24px' }}>
                 ← Back to Recordings
             </button>
-            <div style={{ marginBottom: '24px' }}>{renderTitle()}</div>
+             <div style={{ marginBottom: '8px' }}>{renderTitle()}</div>
+             <div style={{ marginBottom: '24px' }}>{renderContext()}</div>
 
             {isLoading && !loadedFromCache && <p>Loading summary...</p>}
             {error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
