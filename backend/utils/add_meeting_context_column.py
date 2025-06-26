@@ -1,6 +1,11 @@
 import logging
+import sys
+import os
 from sqlalchemy import text
 from sqlmodel import create_engine
+
+# Add backend directory to sys.path to allow importing app.config
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Configure logger for the migration script
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")

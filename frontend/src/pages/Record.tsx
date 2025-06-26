@@ -28,10 +28,11 @@ export default function Record() {
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
         animationFrameRef,
         wakeLockStatus,
+        getMeetingId, // Get the new function
     } = useRecording(summaryLength, languageState);
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
-    const [meetingContext, setMeetingContext] = useState(''); // Added state for meeting context
+    const [meetingContext, setMeetingContext] = useState('');
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const isUiLocked = isRecording || isProcessing;
 
@@ -156,26 +157,10 @@ export default function Record() {
                 </div>
             )}
 
+            {/* Context Textarea is now part of the RecordingStatus block or shown when UI is locked */}
             {!isUiLocked && (
-                <div style={{ marginBottom: '24px' }}>
-                    <textarea
-                        value={meetingContext}
-                        onChange={(e) => setMeetingContext(e.target.value)}
-                        placeholder="Enter meeting context (optional: topic, participants, project...)"
-                        disabled={isUiLocked}
-                        style={{
-                            width: '100%',
-                            minHeight: '60px',
-                            padding: '10px',
-                            borderRadius: '6px',
-                            border: `1px solid ${currentThemeColors.border}`,
-                            backgroundColor: currentThemeColors.input.background,
-                            color: currentThemeColors.input.text,
-                            fontSize: '15px',
-                            marginBottom: '16px',
-                            boxSizing: 'border-box'
-                        }}
-                    />
+                 <div style={{ marginBottom: '24px' }}>
+                    {/* AudioSourceSelector and FileUpload are shown when UI is NOT locked */}
                     <AudioSourceSelector audioSource={audioSource} setAudioSource={(s) => { setAudioSource(s); setSelectedFile(null); }} includeMic={includeMic} setIncludeMic={setIncludeMic} isSystemAudioSupported={isSystemAudioSupported} disabled={isUiLocked} theme={currentThemeColors} />
                     {audioSource === 'file' && (
                         <div style={{ marginTop: '16px', marginBottom: '24px' }}>
@@ -183,6 +168,27 @@ export default function Record() {
                         </div>
                     )}
                 </div>
+            )}
+
+            {isUiLocked && ( /* Show context input when recording or processing */
+              <div style={{ marginBottom: '16px' }}>
+                <textarea
+                    value={meetingContext}
+                    onChange={(e) => setMeetingContext(e.target.value)}
+                    placeholder="Add meeting context (topic, participants, project...)"
+                    style={{
+                        width: '100%',
+                        minHeight: '60px',
+                        padding: '10px',
+                        borderRadius: '6px',
+                        border: `1px solid ${currentThemeColors.border}`,
+                        backgroundColor: currentThemeColors.input.background,
+                        color: currentThemeColors.input.text,
+                        fontSize: '15px',
+                        boxSizing: 'border-box'
+                    }}
+                />
+              </div>
             )}
 
             <RecordingStatus
