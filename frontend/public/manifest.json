@@ -1,0 +1,24 @@
+{
+  "short_name": "MeetScribe",
+  "name": "MeetScribe: AI Meeting Summaries",
+  "description": "Your AI-powered assistant for perfect meeting notes. Record, transcribe, and get smart summaries.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#ffffff"
+}
