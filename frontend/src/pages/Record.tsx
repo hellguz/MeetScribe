@@ -182,7 +182,7 @@ export default function Record() {
                             <FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
                         </div>
                     )}
-                </>
+                </div>
             )}
 
             <RecordingStatus
