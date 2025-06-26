@@ -137,6 +137,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
     }, [navigate, firstChunkProcessedTime, transcriptionStartTime]);
 
     const createMeetingOnBackend = useCallback(async (title: string, context: string) => {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -146,6 +147,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
                 summary_language_mode: languageState.mode,
                 summary_custom_language: languageState.lastCustomLanguage,
                 context: context,
+                timezone: timezone,
             }),
         });
         if (!res.ok) throw new Error('Failed to create meeting');
@@ -433,7 +435,6 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         wakeLockStatus,
     };
 };
-
 
 
 

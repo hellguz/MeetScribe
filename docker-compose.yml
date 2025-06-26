@@ -19,6 +19,7 @@ services:
              python /app/utils/add_feedback_status_column.py &&
              python /app/utils/add_summary_language_columns.py &&
              python /app/utils/add_context_column.py &&
+             python /app/utils/add_timezone_column.py &&
              echo 'Migrations complete.'"
     volumes:
       - ./data:/app/data

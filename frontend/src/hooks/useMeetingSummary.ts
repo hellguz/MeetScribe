@@ -18,6 +18,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [error, setError] = useState<string | null>(null);
     const [meetingTitle, setMeetingTitle] = useState<string | null>(null);
     const [meetingStartedAt, setMeetingStartedAt] = useState<string>('');
+    const [meetingTimezone, setMeetingTimezone] = useState<string | null>(null);
     const [context, setContext] = useState<string | null>(null);
     const [loadedFromCache, setLoadedFromCache] = useState(false);
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
@@ -55,6 +56,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             const trn = data.transcript_text || null;
             setTranscript(trn);
             setSubmittedFeedback(data.feedback || []);
+            setMeetingTimezone(data.timezone || null);
 
             const lengthValue = data.summary_length || 'auto';
             if (['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(lengthValue)) {
@@ -206,6 +208,8 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         isProcessing,
         error,
         meetingTitle,
+        meetingStartedAt,
+        meetingTimezone,
         context,
         currentMeetingLength,
         submittedFeedback,

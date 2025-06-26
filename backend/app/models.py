@@ -32,6 +32,7 @@ class Meeting(SQLModel, table=True):
     summary_language_mode: str = Field(default="auto")
     summary_custom_language: str | None = None
     context: str | None = None
+    timezone: str | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -71,6 +72,7 @@ class MeetingCreate(SQLModel):
     summary_language_mode: str | None = None
     summary_custom_language: str | None = None
     context: str | None = None
+    timezone: str | None = None
 
 
 class FeedbackCreate(SQLModel):
@@ -115,6 +117,7 @@ class MeetingStatus(SQLModel):
     summary_language_mode: str
     summary_custom_language: str | None = None
     context: str | None = None
+    timezone: str | None = None
     feedback: list[str] = [] # List of submitted feedback types
 
 

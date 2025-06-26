@@ -1,199 +1,292 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import ThemeToggle from '../components/ThemeToggle';
-import { useTheme } from '../contexts/ThemeContext';
-import { lightTheme, darkTheme, AppTheme } from '../styles/theme';
-import FeedbackComponent from '../components/FeedbackComponent';
-import SummaryLengthSelector from '../components/SummaryLengthSelector';
-import LanguageSelector from '../components/LanguageSelector';
-import { useMeetingSummary } from '../hooks/useMeetingSummary';
-import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext';
+import React, { useState, useCallback, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import ThemeToggle from '../components/ThemeToggle'
+import { useTheme } from '../contexts/ThemeContext'
+import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
+import FeedbackComponent from '../components/FeedbackComponent'
+import SummaryLengthSelector from '../components/SummaryLengthSelector'
+import LanguageSelector from '../components/LanguageSelector'
+import { useMeetingSummary } from '../hooks/useMeetingSummary'
+import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+
+const formatMeetingDate = (isoString?: string, timeZone?: string | null) => {
+	if (!isoString) return null
+
+	try {
+		const date = new Date(isoString)
+
+		// Round minutes
+		const minutes = date.getMinutes()
+		const roundedMinutes = Math.round(minutes)
+		date.setMinutes(roundedMinutes, 0, 0) // Also reset seconds and milliseconds
+
+		const options: Intl.DateTimeFormatOptions = {
+			day: 'numeric',
+			month: 'long',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: false,
+			timeZone: timeZone || undefined, // Use system default if null/undefined
+		}
+
+		return new Intl.DateTimeFormat('en-GB', options).format(date)
+	} catch (error) {
+		console.error('Error formatting date:', error)
+		return 'Invalid Date'
+	}
+}
 
 export default function Summary() {
-    const { mid } = useParams<{ mid: string }>();
-    const navigate = useNavigate();
-    const { theme } = useTheme();
-    const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
-    const { languageState, setLanguageState } = useSummaryLanguage();
+	const { mid } = useParams<{ mid: string }>()
+	const navigate = useNavigate()
+	const { theme } = useTheme()
+	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
+	const { languageState, setLanguageState } = useSummaryLanguage()
 
-    const {
-        summary, transcript, isLoading, isProcessing, error, meetingTitle,
-        context, currentMeetingLength, submittedFeedback, isRegenerating,
-        handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
-        loadedFromCache
-    } = useMeetingSummary({ mid, languageState, setLanguageState });
+	const {
+		summary,
+		transcript,
+		isLoading,
+		isProcessing,
+		error,
+		meetingTitle,
+		meetingStartedAt,
+		meetingTimezone,
+		context,
+		currentMeetingLength,
+		submittedFeedback,
+		isRegenerating,
+		handleFeedbackToggle,
+		handleSuggestionSubmit,
+		handleRegenerate,
+		handleTitleUpdate,
+		loadedFromCache,
+	} = useMeetingSummary({ mid, languageState, setLanguageState })
 
-    const [isEditingTitle, setIsEditingTitle] = useState(false);
-    const [editedTitle, setEditedTitle] = useState('');
-    const [editedContext, setEditedContext] = useState('');
-    const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
+	const [isEditingTitle, setIsEditingTitle] = useState(false)
+	const [editedTitle, setEditedTitle] = useState('')
+	const [editedContext, setEditedContext] = useState('')
+	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 
-    useEffect(() => {
-        if (context !== null) {
-            setEditedContext(context);
-        }
-    }, [context]);
+	useEffect(() => {
+		if (context !== null) {
+			setEditedContext(context)
+		}
+	}, [context])
 
-    const handleTitleUpdateConfirm = useCallback(async () => {
-        if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
-            await handleTitleUpdate(editedTitle.trim());
-        }
-        setIsEditingTitle(false);
-    }, [editedTitle, meetingTitle, handleTitleUpdate]);
+	const handleTitleUpdateConfirm = useCallback(async () => {
+		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
+			await handleTitleUpdate(editedTitle.trim())
+		}
+		setIsEditingTitle(false)
+	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
-    const handleContextUpdateConfirm = () => {
-        if (editedContext !== context) {
-            handleRegenerate({ newContext: editedContext });
-        }
-    };
+	const handleContextUpdateConfirm = () => {
+		if (editedContext !== context) {
+			handleRegenerate({ newContext: editedContext })
+		}
+	}
 
-    const renderTitle = () => {
-        if (isEditingTitle) {
-            return (
-                <input
-                    type="text"
-                    value={editedTitle}
-                    onChange={(e) => setEditedTitle(e.target.value)}
-                    onBlur={handleTitleUpdateConfirm}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleTitleUpdateConfirm();
-                        if (e.key === 'Escape') setIsEditingTitle(false);
-                    }}
-                    style={{ fontSize: '1.5em', fontWeight: 'bold', width: '100%', padding: '8px', border: `1px solid ${currentThemeColors.input.border}`, borderRadius: '6px', backgroundColor: currentThemeColors.input.background, color: currentThemeColors.input.text }}
-                    autoFocus
-                />
-            );
-        }
-        return (
-            <h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true); }} style={{ cursor: 'pointer', fontSize: '1.5em', margin: 0 }}>
-                {meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
-                <span style={{ fontSize: '14px', marginLeft: '10px' }}>✏️</span>
-            </h1>
-        );
-    };
+	const renderTitle = () => {
+		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 
-    const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
-        const newState = { ...languageState, ...update };
-        setLanguageState(newState);
-        handleRegenerate({ newLanguageState: newState });
-    };
+		return (
+			<div>
+				<h1
+					onClick={() => {
+						setEditedTitle(meetingTitle || '')
+						setIsEditingTitle(true)
+					}}
+					style={{
+						cursor: 'pointer',
+						fontSize: '1.7em',
+						margin: 0,
+						fontFamily: "'Orelega One', serif",
+						fontWeight: 400,
+						lineHeight: 1.2,
+					}}>
+					{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
+				</h1>
+				{formattedDate && <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText }}>{formattedDate}</p>}
+			</div>
+		)
+	}
 
-    const contextHasChanged = editedContext !== context;
-    const showControls = summary && !isProcessing;
+	const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
+		const newState = { ...languageState, ...update }
+		setLanguageState(newState)
+		handleRegenerate({ newLanguageState: newState })
+	}
 
-    return (
-        <div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
-            <ThemeToggle />
-            <button onClick={() => navigate('/record')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, marginBottom: '24px' }}>
-                ← Back to Recordings
-            </button>
+	const contextHasChanged = editedContext !== context
+	const showControls = summary && !isProcessing
 
-            <div style={{
-                backgroundColor: currentThemeColors.background,
-                padding: '24px',
-                borderRadius: '12px',
-                border: `1px solid ${currentThemeColors.border}`,
-                marginBottom: '32px'
-            }}>
-                {renderTitle()}
+	return (
+		<div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
+			<ThemeToggle />
+			<button
+				onClick={() => navigate('/record')}
+				style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, marginBottom: '24px' }}>
+				← Back to Recordings
+			</button>
 
-                {showControls && (
-                    <div style={{display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px'}}>
-                        <div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
-                            <LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
-                        </div>
+			<div
+				style={{
+					backgroundColor: currentThemeColors.background,
+					padding: '16px',
+					borderRadius: '12px',
+					border: `1px solid ${currentThemeColors.border}`,
+					marginBottom: '24px',
+				}}>
+				{isEditingTitle ? (
+					<input
+						type="text"
+						value={editedTitle}
+						onChange={(e) => setEditedTitle(e.target.value)}
+						onBlur={handleTitleUpdateConfirm}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter') handleTitleUpdateConfirm()
+							if (e.key === 'Escape') setIsEditingTitle(false)
+						}}
+						style={{
+							fontSize: '1.7em',
+							fontWeight: '400',
+							width: '100%',
+							// padding: '8px',
+							border: `1px solid ${currentThemeColors.input.border}`,
+							borderRadius: '6px',
+							backgroundColor: currentThemeColors.input.background,
+							color: currentThemeColors.input.text,
+							fontFamily: "'Orelega One', serif",
+						}}
+						autoFocus
+					/>
+				) : (
+					renderTitle()
+				)}
 
-                        <div>
-                            <label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
-                                Context
-                            </label>
-                            <textarea
-                                id="context-editor"
-                                value={editedContext}
-                                onChange={(e) => setEditedContext(e.target.value)}
-                                placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
-                                disabled={isRegenerating}
-                                style={{
-                                    width: '100%',
-                                    minHeight: '60px',
-                                    padding: '10px 12px',
-                                    borderRadius: '8px',
-                                    border: `1px solid ${currentThemeColors.input.border}`,
-                                    backgroundColor: currentThemeColors.input.background,
-                                    color: currentThemeColors.input.text,
-                                    fontFamily: 'inherit',
-                                    fontSize: '14px',
-                                    resize: 'vertical',
-                                    boxSizing: 'border-box',
-                                    opacity: isRegenerating ? 0.7 : 1,
-                                }}
-                            />
-                            {contextHasChanged && (
-                                <button
-                                    onClick={handleContextUpdateConfirm}
-                                    disabled={isRegenerating}
-                                    style={{
-                                        marginTop: '12px',
-                                        padding: '8px 16px',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        backgroundColor: currentThemeColors.button.primary,
-                                        color: currentThemeColors.button.primaryText,
-                                        fontSize: '14px',
-                                        fontWeight: '500',
-                                        cursor: isRegenerating ? 'not-allowed' : 'pointer',
-                                        opacity: isRegenerating ? 0.6 : 1,
-                                        transition: 'all 0.2s ease',
-                                    }}
-                                >
-                                    Apply & Regenerate Summary
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
+				{showControls && (
+					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
+							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
+							<LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
+						</div>
 
-            {summary ? (
-                <ReactMarkdown children={summary} components={{ h1: ({...props}) => <h1 style={{color: currentThemeColors.text}} {...props}/>, h2: ({...props}) => <h2 style={{color: currentThemeColors.text}} {...props}/>, p: ({...props}) => <p style={{lineHeight: 1.6}} {...props}/> }} />
-            ) : (
-                <>
-                    {isLoading && !loadedFromCache && <p>Loading summary...</p>}
-                    {error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
-                    {(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
-                </>
-            )}
+						<div>
+							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
+								Context
+							</label>
+							<textarea
+								id="context-editor"
+								value={editedContext}
+								onChange={(e) => setEditedContext(e.target.value)}
+								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
+								disabled={isRegenerating}
+								style={{
+									width: '100%',
+									minHeight: '60px',
+									padding: '10px 12px',
+									borderRadius: '8px',
+									border: `1px solid ${currentThemeColors.input.border}`,
+									backgroundColor: currentThemeColors.input.background,
+									color: currentThemeColors.input.text,
+									fontFamily: 'inherit',
+									fontSize: '14px',
+									resize: 'vertical',
+									boxSizing: 'border-box',
+									opacity: isRegenerating ? 0.7 : 1,
+								}}
+							/>
+							{contextHasChanged && (
+								<button
+									onClick={handleContextUpdateConfirm}
+									disabled={isRegenerating}
+									style={{
+										marginTop: '12px',
+										padding: '8px 16px',
+										border: 'none',
+										borderRadius: '8px',
+										backgroundColor: currentThemeColors.button.primary,
+										color: currentThemeColors.button.primaryText,
+										fontSize: '14px',
+										fontWeight: '500',
+										cursor: isRegenerating ? 'not-allowed' : 'pointer',
+										opacity: isRegenerating ? 0.6 : 1,
+										transition: 'all 0.2s ease',
+									}}>
+									Apply & Regenerate Summary
+								</button>
+							)}
+						</div>
+					</div>
+				)}
+			</div>
 
-            {summary && !isLoading && (
-                <FeedbackComponent submittedTypes={submittedFeedback} onFeedbackToggle={handleFeedbackToggle} onSuggestionSubmit={handleSuggestionSubmit} theme={theme} />
-            )}
+			{summary ? (
+				<ReactMarkdown
+					children={summary}
+					components={{
+						h1: ({ ...props }) => <h1 style={{ color: currentThemeColors.text }} {...props} />,
+						h2: ({ ...props }) => <h2 style={{ color: currentThemeColors.text }} {...props} />,
+						p: ({ ...props }) => <p style={{ lineHeight: 1.6 }} {...props} />,
+					}}
+				/>
+			) : (
+				<>
+					{isLoading && !loadedFromCache && <p>Loading summary...</p>}
+					{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
+					{(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
+				</>
+			)}
 
-            {transcript && (
-                <div style={{
-                    marginTop: '32px',
-                    backgroundColor: currentThemeColors.background,
-                    padding: '16px 24px',
-                    borderRadius: '12px',
-                    border: `1px solid ${currentThemeColors.border}`
-                }}>
-                    <h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)} style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center' }}>
-                        <span style={{ display: 'inline-block', transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', marginRight: '8px' }}>▶</span> 🎤 Transcript
-                    </h4>
-                    {isTranscriptVisible && (
-                        <pre style={{ 
-                            marginTop: '16px', 
-                            whiteSpace: 'pre-wrap', 
-                            color: currentThemeColors.text, 
-                            fontSize: '14px',
-                            lineHeight: '1.6'
-                        }}>
-                            {transcript}
-                        </pre>
-                    )}
-                </div>
-            )}
-        </div>
-    );
+			{summary && !isLoading && (
+				<FeedbackComponent
+					submittedTypes={submittedFeedback}
+					onFeedbackToggle={handleFeedbackToggle}
+					onSuggestionSubmit={handleSuggestionSubmit}
+					theme={theme}
+				/>
+			)}
+
+			{transcript && (
+				<div
+					style={{
+						marginTop: '32px',
+						backgroundColor: currentThemeColors.background,
+						padding: '16px 24px',
+						borderRadius: '12px',
+						border: `1px solid ${currentThemeColors.border}`,
+					}}>
+					<h4
+						onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
+						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center' }}>
+						<span
+							style={{
+								display: 'inline-block',
+								transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
+								transition: 'transform 0.2s',
+								marginRight: '8px',
+							}}>
+							▶
+						</span>{' '}
+						🎤 Transcript
+					</h4>
+					{isTranscriptVisible && (
+						<pre
+							style={{
+								marginTop: '16px',
+								whiteSpace: 'pre-wrap',
+								color: currentThemeColors.text,
+								fontSize: '14px',
+								lineHeight: '1.6',
+							}}>
+							{transcript}
+						</pre>
+					)}
+				</div>
+			)}
+		</div>
+	)
 }
