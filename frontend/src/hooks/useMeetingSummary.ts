@@ -18,6 +18,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [error, setError] = useState<string | null>(null);
     const [meetingTitle, setMeetingTitle] = useState<string | null>(null);
     const [meetingStartedAt, setMeetingStartedAt] = useState<string>('');
+    const [context, setContext] = useState<string | null>(null);
     const [loadedFromCache, setLoadedFromCache] = useState(false);
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
@@ -50,6 +51,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
                 });
             }
 
+            setContext(data.context || '');
             const trn = data.transcript_text || null;
             setTranscript(trn);
             setSubmittedFeedback(data.feedback || []);
@@ -119,16 +121,27 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         }
     };
 
-    const handleRegenerate = useCallback(async (newLength: SummaryLength, newLanguageState: SummaryLanguageState) => {
+    const handleRegenerate = useCallback(async (
+        settings: {
+            newLength?: SummaryLength;
+            newLanguageState?: SummaryLanguageState;
+            newContext?: string | null;
+        }
+    ) => {
         if (!mid) return;
-        setCurrentMeetingLength(newLength);
+
+        // Optimistically update UI state
+        if(settings.newLength) setCurrentMeetingLength(settings.newLength);
+        if(settings.newContext !== undefined) setContext(settings.newContext);
+
         setIsRegenerating(true);
         setError(null);
         try {
-            const payload = { 
-                summary_length: newLength,
-                summary_language_mode: newLanguageState.mode,
-                summary_custom_language: newLanguageState.lastCustomLanguage,
+            const payload = {
+                summary_length: settings.newLength ?? currentMeetingLength,
+                summary_language_mode: settings.newLanguageState?.mode ?? languageState.mode,
+                summary_custom_language: settings.newLanguageState?.lastCustomLanguage ?? languageState.lastCustomLanguage,
+                context: settings.newContext ?? context,
             };
             const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
                 method: 'POST',
@@ -143,7 +156,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         } finally {
             setIsRegenerating(false);
         }
-    }, [mid]);
+    }, [mid, context, currentMeetingLength, languageState]);
 
     const handleTitleUpdate = useCallback(async (newTitle: string) => {
         if (!mid || !newTitle || newTitle === meetingTitle) return;
@@ -178,7 +191,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             }
             fetchMeetingData(true);
         }
-    }, [mid]); // Removed fetchMeetingData from dep array to avoid re-running on language change
+    }, [mid]);
 
     useEffect(() => {
         if (!isProcessing) return;
@@ -193,6 +206,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         isProcessing,
         error,
         meetingTitle,
+        context,
         currentMeetingLength,
         submittedFeedback,
         isRegenerating,
@@ -203,3 +217,5 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         loadedFromCache,
     };
 };
+
+

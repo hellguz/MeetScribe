@@ -6,6 +6,7 @@ import { AudioSource } from '../types';
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
 
 const CHUNK_DURATION_MS = 30_000;
+
 const encodeAudioChunk = (chunkBuffer: AudioBuffer): Promise<Blob> => {
 	return new Promise((resolve, reject) => {
 		const audioCtx = new AudioContext({ sampleRate: chunkBuffer.sampleRate });
@@ -72,6 +73,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
     const isRecordingRef = useRef(false);
     useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
     useEffect(() => { localStorage.setItem('meetscribe_include_mic', JSON.stringify(includeMic)); }, [includeMic]);
+
     const transcriptionSpeed = useMemo(() => {
         if (!transcriptionStartTime || transcribedChunks < 2) return null;
         const elapsedSec = (Date.now() - transcriptionStartTime) / 1000;
@@ -79,10 +81,12 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         const audioDurationProcessed = (transcribedChunks - 1) * (CHUNK_DURATION_MS / 1000);
         return audioDurationProcessed / elapsedSec;
     }, [transcriptionStartTime, transcribedChunks]);
+
     const transcriptionSpeedLabel = useMemo(() => {
         if (!transcriptionSpeed) return null;
         return `${transcriptionSpeed.toFixed(1)}x`;
     }, [transcriptionSpeed]);
+
     const resetState = () => {
         setRecording(false);
         setIsProcessing(false);
@@ -98,6 +102,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         meetingId.current = null;
         setWakeLockStatus('inactive');
     };
+
     const pollMeetingStatus = useCallback(async () => {
         if (!meetingId.current) return;
         try {
@@ -131,7 +136,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         }
     }, [navigate, firstChunkProcessedTime, transcriptionStartTime]);
 
-    const createMeetingOnBackend = useCallback(async (title: string) => {
+    const createMeetingOnBackend = useCallback(async (title: string, context: string) => {
         const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -140,6 +145,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
                 summary_length: summaryLength,
                 summary_language_mode: languageState.mode,
                 summary_custom_language: languageState.lastCustomLanguage,
+                context: context,
             }),
         });
         if (!res.ok) throw new Error('Failed to create meeting');
@@ -148,6 +154,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
         saveMeeting({ id: data.id, title, started_at: new Date().toISOString(), status: 'pending' });
         return data.id;
     }, [summaryLength, languageState]);
+
     const uploadChunk = useCallback(async (blob: Blob, index: number, isFinal = false) => {
         if (!meetingId.current) return;
         const fd = new FormData();
@@ -161,6 +168,20 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             console.error(`Failed to upload chunk ${index}:`, error);
         }
     }, []);
+
+    const updateContext = useCallback(async (newContext: string) => {
+        if (!meetingId.current) return;
+        try {
+            await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/context`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ context: newContext }),
+            });
+        } catch (error) {
+            console.error('Failed to update context:', error);
+        }
+    }, []);
+
     const stopRecording = useCallback(async (isFinal: boolean = true) => {
         if (mediaRef.current && mediaRef.current.state === 'recording') {
             mediaRef.current.stop();
@@ -197,7 +218,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             await uploadChunk(finalBlob, chunkIndexRef.current, true);
         }
     }, [uploadChunk]);
-    const startLiveRecording = useCallback(async (source: 'mic' | 'system', drawWaveform: () => void) => {
+
+    const startLiveRecording = useCallback(async (source: 'mic' | 'system', drawWaveform: () => void, initialContext: string) => {
         resetState();
         let finalStream: MediaStream;
         try {
@@ -253,10 +275,11 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
             setRecording(true);
             startTimeRef.current = Date.now();
-            await createMeetingOnBackend(`Recording ${new Date().toLocaleString()}`);
+            await createMeetingOnBackend(`Recording ${new Date().toLocaleString()}`, initialContext);
 
             pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
             timerRef.current = setInterval(() => setRecordingTime(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000);
+
             const createAndStartRecorder = () => {
                 if (!streamRef.current) return;
                 const recorder = new MediaRecorder(streamRef.current, { mimeType: 'audio/webm; codecs=opus' });
@@ -285,12 +308,13 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             resetState();
         }
     }, [createMeetingOnBackend, includeMic, pollMeetingStatus, stopRecording, uploadChunk]);
-    const startFileProcessing = useCallback(async () => {
+
+    const startFileProcessing = useCallback(async (initialContext: string) => {
         if (!selectedFile) return;
         resetState();
         setIsProcessing(true);
         try {
-            await createMeetingOnBackend(`Transcription of ${selectedFile.name}`);
+            await createMeetingOnBackend(`Transcription of ${selectedFile.name}`, initialContext);
             pollIntervalRef.current = setInterval(pollMeetingStatus, 3000);
 
             const audioCtx = new AudioContext();
@@ -329,12 +353,13 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             resetState();
         }
     }, [selectedFile, createMeetingOnBackend, pollMeetingStatus, uploadChunk]);
+
     useEffect(() => {
         if (includeMic && isRecording && audioSource === 'system' && micStreamRef.current) {
             micStreamRef.current.getAudioTracks()[0].enabled = includeMic;
         }
     }, [includeMic, isRecording, audioSource]);
-    
+
     // --- NEW: Handle visibility change to re-acquire wake lock ---
     useEffect(() => {
         const handleVisibilityChange = async () => {
@@ -377,14 +402,18 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
             }
         };
     }, []);
+
     return {
         isRecording, isProcessing, localChunksCount, uploadedChunks, expectedTotalChunks,
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef, animationFrameRef,
+        updateContext,
         resetState,
         wakeLockStatus,
     };
 };
+
+
 
 

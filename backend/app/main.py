@@ -28,6 +28,7 @@ from .models import (
     RegeneratePayload,
     MeetingConfigUpdate,
     FeedbackStatusUpdate,
+    MeetingContextUpdate,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -314,6 +315,22 @@ async def update_meeting_title(mid: uuid.UUID, payload: MeetingTitleUpdate):
         return mtg
 
 
+@app.put("/api/meetings/{mid}/context", status_code=200)
+def update_meeting_context(mid: uuid.UUID, payload: MeetingContextUpdate):
+    """Updates the context for an in-progress or existing meeting."""
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        mtg.context = payload.context
+        mtg.last_activity = dt.datetime.utcnow()  # Update activity timestamp
+        db.add(mtg)
+        db.commit()
+        LOGGER.info("Updated context for meeting %s", mid)
+        return {"ok": True, "message": "Context updated"}
+
+
 @app.put("/api/meetings/{mid}/config", response_model=Meeting)
 def update_meeting_config(mid: uuid.UUID, payload: MeetingConfigUpdate):
     """Updates the configuration of a meeting, like its summary length."""
@@ -355,6 +372,10 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         if payload.summary_language_mode:
             mtg.summary_language_mode = payload.summary_language_mode
             mtg.summary_custom_language = payload.summary_custom_language
+
+        # Update context if provided (allows setting to "" or null)
+        if payload.context is not None:
+            mtg.context = payload.context
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False
@@ -626,3 +647,6 @@ def get_dashboard_stats():
 @app.get("/healthz")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+

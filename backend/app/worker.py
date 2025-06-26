@@ -83,12 +83,16 @@ def get_whisper_model():
 @worker_ready.connect
 def on_worker_startup(**kwargs):
     """
-    On worker startup, pre-load the AI model and trigger an immediate
-    cleanup task to recover any jobs interrupted by a restart.
+    On worker startup, pre-load the AI model (if not in cloud mode) and
+    trigger a cleanup task to recover any jobs interrupted by a restart.
     """
-    LOGGER.info("Celery worker ready. Pre-loading models and running startup tasks.")
-    # Pre-load the model to have it ready for the first task
-    get_whisper_model()
+    LOGGER.info("Celery worker ready. Running startup tasks.")
+    if not settings.recognition_in_cloud:
+        # Pre-load the model to have it ready for the first task
+        LOGGER.info("Pre-loading local Whisper model...")
+        get_whisper_model()
+    else:
+        LOGGER.info("Cloud recognition is enabled, skipping local model pre-load.")
     # === Resilience Change: Queue a janitor task to run immediately on startup ===
     LOGGER.info("Queueing initial cleanup task for any jobs interrupted by a restart.")
     cleanup_stuck_meetings.delay()
@@ -99,7 +103,6 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
     Transcribes an audio chunk using either a cloud API (Groq) or a local model.
     """
     chunk_path = Path(chunk_path_str)
-    whisper = get_whisper_model()
     try:
         if settings.recognition_in_cloud:
             path_to_transcribe = chunk_path
@@ -149,6 +152,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                 if output_flac_path and output_flac_path.exists():
                     output_flac_path.unlink()
         else:
+            whisper = get_whisper_model()
             segments, _info = whisper.transcribe(
                 str(chunk_path),
                 beam_size=5,
@@ -179,6 +183,7 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 2.  **Length:** The title must be between 6 and 15 words.
 3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
+
 **Meeting Summary:**
 ---
 {summary}
@@ -264,6 +269,7 @@ def summarise_transcript_in_worker(
     summary_length: str,
     summary_language_mode: str | None,
     summary_custom_language: str | None,
+    context: str | None,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
@@ -293,8 +299,20 @@ def summarise_transcript_in_worker(
         }
         length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
 
+        context_section = ""
+        if context and context.strip():
+            context_section = f"""
+<user_provided_context>
+This is critical context provided by the user. You MUST use it as a source of truth for the spelling of names, projects, and specific technical terms. Refer to this context to ensure accuracy. Do not contradict it.
+---
+{context}
+---
+</user_provided_context>
+"""
+
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+{context_section}
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
 - **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
@@ -375,6 +393,7 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             mtg.summary_length,
             mtg.summary_language_mode,
             mtg.summary_custom_language,
+            mtg.context,
         )
         mtg.summary_markdown = summary_md
 
@@ -580,3 +599,6 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+
+
+

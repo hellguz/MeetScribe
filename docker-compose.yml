@@ -18,6 +18,7 @@ services:
              python /app/utils/add_summary_length_column.py &&
              python /app/utils/add_feedback_status_column.py &&
              python /app/utils/add_summary_language_columns.py &&
+             python /app/utils/add_context_column.py &&
              echo 'Migrations complete.'"
     volumes:
       - ./data:/app/data
@@ -68,4 +69,6 @@ volumes:
   whisper-cache: {}               # named volume persists model weights
   # Define the named volume for Redis data
   redis-data: {}
+
+
 

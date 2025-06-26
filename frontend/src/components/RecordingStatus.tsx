@@ -1,6 +1,7 @@
 import React from 'react';
 import { AppTheme } from '../styles/theme';
 import { AudioSource } from '../types';
+
 interface RecordingStatusProps {
     theme: AppTheme;
     isRecording: boolean;
@@ -22,6 +23,7 @@ const formatTime = (seconds: number) => {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
+
 const RecordingStatus: React.FC<RecordingStatusProps> = ({
     theme,
     isRecording,
@@ -42,7 +44,6 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
     const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100));
     const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal;
     const isUiLocked = isRecording || isProcessing;
-
     // --- NEW: Custom progress bar colors for dark mode ---
     const isDarkMode = theme.body === '#18181b';
     const transcribedColor = isDarkMode ? '#ef4444' : theme.text; // Light Red for top bar
@@ -53,23 +54,6 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
             {isRecording && (
                 <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '16px' }}>
                     ⏱️ {formatTime(recordingTime)}
-                </div>
-            )}
-
-            {isRecording && audioSource !== 'file' && wakeLockStatus !== 'inactive' && (
-                <div
-                    style={{
-                        textAlign: 'center',
-                        marginBottom: '16px',
-                        padding: '10px 12px',
-                        fontSize: '13px',
-                        borderRadius: '8px',
-                        backgroundColor: theme.backgroundSecondary,
-                        color: wakeLockStatus === 'error' ? theme.button.danger : theme.secondaryText,
-                        border: `1px solid ${wakeLockStatus === 'error' ? theme.button.danger : theme.border}`,
-                    }}>
-                    {wakeLockStatus === 'active' && '💡 The screen will remain on during this recording to ensure it isn\'t interrupted.'}
-                    {wakeLockStatus === 'error' && '⚠️ Could not prevent screen from sleeping. To avoid interruptions, please keep the screen on.'}
                 </div>
             )}
 
@@ -108,16 +92,24 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
                         <p>Choose your audio source and click “Start Recording” to begin.</p>
                     )
                 ) : isRecording ? (
-                    <p>Recording in progress… a live transcript will appear above as the AI processes your audio.</p>
+                    <>
+                        <p style={{margin: '0 0 8px 0'}}>Live transcript will appear above as audio is processed.</p>
+                        {audioSource !== 'file' && wakeLockStatus === 'active' && (
+                            <p style={{ fontSize: '13px', opacity: 0.8, margin: 0 }}>💡 The screen will stay on during recording.</p>
+                        )}
+                        {audioSource !== 'file' && wakeLockStatus === 'error' && (
+                            <p style={{ fontSize: '13px', color: theme.button.danger, margin: 0 }}>⚠️ Could not keep screen on. Please keep it awake manually.</p>
+                        )}
+                    </>
                 ) : allChunksUploaded ? (
                     <p>
-                        ✅ All audio has been uploaded! It is now safe to close this window. <br />
-                        The server is finishing the transcription and summary. You will be redirected automatically.
+                        ✅ Upload complete. You can safely close this window. <br />
+                        You will be redirected when the summary is ready.
                     </p>
                 ) : (
                     <p>
-                        Uploading and processing... Once all chunks are sent, you can safely close the window. <br />
-                        You will be redirected to the summary page when it's ready.
+                        Uploading... Once all chunks are sent, you can close this window. <br />
+                        You will be redirected when it's ready.
                     </p>
                 )}
             </div>
@@ -126,3 +118,5 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 };
 
 export default RecordingStatus;
+
+

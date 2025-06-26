@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
@@ -20,11 +20,44 @@ const options: { label: string; value: SummaryLength }[] = [
 const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, disabled = false, onSelect }) => {
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
 	const handleSelect = (length: SummaryLength) => {
 		if (disabled) return
 		onSelect(length)
 	}
+
+    if (isMobile) {
+        return (
+            <select
+                value={value}
+                onChange={(e) => handleSelect(e.target.value as SummaryLength)}
+                disabled={disabled}
+                style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: `1px solid ${currentThemeColors.input.border}`,
+                    fontSize: '14px',
+                    backgroundColor: currentThemeColors.input.background,
+                    color: currentThemeColors.input.text,
+                    opacity: disabled ? 0.6 : 1,
+                    width: '100%',
+                }}
+            >
+                {options.map(option => (
+                    <option key={option.value} value={option.value}>
+                        {option.label}
+                    </option>
+                ))}
+            </select>
+        );
+    }
 
 	return (
 		<div
@@ -70,3 +103,6 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 }
 
 export default SummaryLengthSelector
+
+
+

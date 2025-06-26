@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import ThemeToggle from '../components/ThemeToggle';
@@ -19,14 +19,21 @@ export default function Summary() {
 
     const {
         summary, transcript, isLoading, isProcessing, error, meetingTitle,
-        currentMeetingLength, submittedFeedback, isRegenerating,
+        context, currentMeetingLength, submittedFeedback, isRegenerating,
         handleFeedbackToggle, handleSuggestionSubmit, handleRegenerate, handleTitleUpdate,
         loadedFromCache
     } = useMeetingSummary({ mid, languageState, setLanguageState });
 
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editedTitle, setEditedTitle] = useState('');
+    const [editedContext, setEditedContext] = useState('');
     const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
+
+    useEffect(() => {
+        if (context !== null) {
+            setEditedContext(context);
+        }
+    }, [context]);
 
     const handleTitleUpdateConfirm = useCallback(async () => {
         if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -34,6 +41,12 @@ export default function Summary() {
         }
         setIsEditingTitle(false);
     }, [editedTitle, meetingTitle, handleTitleUpdate]);
+
+    const handleContextUpdateConfirm = () => {
+        if (editedContext !== context) {
+            handleRegenerate({ newContext: editedContext });
+        }
+    };
 
     const renderTitle = () => {
         if (isEditingTitle) {
@@ -61,13 +74,12 @@ export default function Summary() {
     };
 
     const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
-        // Create the full new state from the partial update
         const newState = { ...languageState, ...update };
-        // Persist the change via the context
         setLanguageState(newState);
-        // Trigger regeneration with the complete new state
-        handleRegenerate(currentMeetingLength, newState);
+        handleRegenerate({ newLanguageState: newState });
     };
+
+    const contextHasChanged = editedContext !== context;
 
     return (
         <div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
@@ -82,10 +94,60 @@ export default function Summary() {
             {(isProcessing || isRegenerating) && !summary && <p>⏳ Processing summary, please wait...</p>}
 
             {(!isLoading || loadedFromCache) && !error && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
-                    <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate(len, languageState)} />
-                    <LanguageSelector onSelectionChange={onLanguageChange} />
-                </div>
+                <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+                        <SummaryLengthSelector value={currentMeetingLength} disabled={isProcessing || isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
+                        <LanguageSelector disabled={isProcessing || isRegenerating} onSelectionChange={onLanguageChange} />
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                        <label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
+                            Summary Context
+                        </label>
+                        <textarea
+                            id="context-editor"
+                            value={editedContext}
+                            onChange={(e) => setEditedContext(e.target.value)}
+                            placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
+                            disabled={isProcessing || isRegenerating}
+                            style={{
+                                width: '100%',
+                                minHeight: '60px',
+                                padding: '10px 12px',
+                                borderRadius: '8px',
+                                border: `1px solid ${currentThemeColors.input.border}`,
+                                backgroundColor: currentThemeColors.input.background,
+                                color: currentThemeColors.input.text,
+                                fontFamily: 'inherit',
+                                fontSize: '14px',
+                                resize: 'vertical',
+                                boxSizing: 'border-box',
+                                opacity: (isProcessing || isRegenerating) ? 0.7 : 1,
+                            }}
+                        />
+                        {contextHasChanged && (
+                             <button
+                                onClick={handleContextUpdateConfirm}
+                                disabled={isRegenerating}
+                                style={{
+                                    marginTop: '12px',
+                                    padding: '8px 16px',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    backgroundColor: currentThemeColors.button.primary,
+                                    color: currentThemeColors.button.primaryText,
+                                    fontSize: '14px',
+                                    fontWeight: '500',
+                                    cursor: isRegenerating ? 'not-allowed' : 'pointer',
+                                    opacity: isRegenerating ? 0.6 : 1,
+                                    transition: 'all 0.2s ease',
+                                }}
+                            >
+                                Apply & Regenerate Summary
+                            </button>
+                        )}
+                    </div>
+                </>
             )}
 
             {summary && <ReactMarkdown children={summary} components={{ h1: ({...props}) => <h1 style={{color: currentThemeColors.text}} {...props}/>, h2: ({...props}) => <h2 style={{color: currentThemeColors.text}} {...props}/>, p: ({...props}) => <p style={{lineHeight: 1.6}} {...props}/> }} />}

@@ -22,8 +22,14 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-    // --- Close dropdown on outside click ---
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
@@ -37,9 +43,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
             document.removeEventListener('mousedown', handleClickOutside);
         }
 
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isDropdownOpen]);
 
     const handleModeClick = (mode: LanguageMode) => {
@@ -63,6 +67,15 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
         onSelectionChange({ mode: 'custom', lastCustomLanguage: lang });
     };
 
+    const handleMobileSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const value = e.target.value;
+        if (value === 'auto' || value === 'english') {
+            onSelectionChange({ mode: value });
+        } else {
+            onSelectionChange({ mode: 'custom', lastCustomLanguage: value });
+        }
+    };
+
     const getBaseStyle = (isActive: boolean): React.CSSProperties => ({
         padding: '6px 14px',
         border: 'none',
@@ -80,7 +93,36 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
         justifyContent: 'center',
         whiteSpace: 'nowrap',
     });
-    
+
+    if (isMobile) {
+        const selectedValue = languageState.mode === 'custom' ? languageState.lastCustomLanguage : languageState.mode;
+        return (
+            <select
+                value={selectedValue}
+                onChange={handleMobileSelectChange}
+                disabled={disabled}
+                style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: `1px solid ${currentThemeColors.input.border}`,
+                    fontSize: '14px',
+                    backgroundColor: currentThemeColors.input.background,
+                    color: currentThemeColors.input.text,
+                    opacity: disabled ? 0.6 : 1,
+                    width: '100%',
+                }}
+            >
+                <option value="auto">Auto-Detect Language</option>
+                <option value="english">English</option>
+                <optgroup label="Custom Language">
+                    {languages.map(lang => (
+                        <option key={lang} value={lang}>{lang}</option>
+                    ))}
+                </optgroup>
+            </select>
+        );
+    }
+
     return (
         <div
             ref={wrapperRef}
@@ -157,3 +199,5 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 };
 
 export default LanguageSelector;
+
+

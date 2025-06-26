@@ -20,19 +20,32 @@ export default function Record() {
     const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme;
     const { summaryLength, setSummaryLength } = useSummaryLength();
     const { languageState, setLanguageState } = useSummaryLanguage();
+    const [context, setContext] = useState('');
 
     const {
         isRecording, isProcessing, localChunksCount, uploadedChunks, expectedTotalChunks,
         recordingTime, liveTranscript, transcribedChunks, audioSource, setAudioSource,
         includeMic, setIncludeMic, selectedFile, setSelectedFile, startLiveRecording,
         stopRecording, startFileProcessing, transcriptionSpeedLabel, analyserRef,
-        animationFrameRef,
+        animationFrameRef, updateContext,
         wakeLockStatus,
     } = useRecording(summaryLength, languageState);
+
     const [history, setHistory] = useState<MeetingMeta[]>([]);
     const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const isUiLocked = isRecording || isProcessing;
+    const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const handleContextChange = (newContext: string) => {
+        setContext(newContext);
+        if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+        }
+        debounceTimeoutRef.current = setTimeout(() => {
+            updateContext(newContext);
+        }, 500); // 500ms debounce delay
+    };
 
     useEffect(() => {
         const fetchAndSyncHistory = async () => {
@@ -53,9 +66,11 @@ export default function Record() {
         };
         fetchAndSyncHistory();
     }, [isProcessing]);
+
     useEffect(() => {
         setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent));
     }, []);
+
     const drawWaveform = useCallback(() => {
         if (!analyserRef.current || !canvasRef.current) return;
         const canvas = canvasRef.current;
@@ -88,21 +103,25 @@ export default function Record() {
 
         animationFrameRef.current = requestAnimationFrame(drawWaveform);
     }, [theme, analyserRef, animationFrameRef]);
+
     const handleStart = () => {
         if (audioSource === 'file') {
-            startFileProcessing();
+            startFileProcessing(context);
         } else {
-            startLiveRecording(audioSource, drawWaveform);
+            startLiveRecording(audioSource, drawWaveform, context);
         }
     };
 
     const handleStop = () => stopRecording(true);
+
     const handleLengthChange = (newLength: SummaryLength) => {
         setSummaryLength(newLength);
     };
+
     const handleLanguageChange = (update: Partial<SummaryLanguageState>) => {
         setLanguageState(update);
     };
+
     const handleTitleUpdate = async (id: string, newTitle: string) => {
         const originalTitle = history.find(m => m.id === id)?.title;
         if (!originalTitle || newTitle === originalTitle) return;
@@ -122,6 +141,7 @@ export default function Record() {
             setHistory(prev => prev.map(m => m.id === id ? { ...m, title: originalTitle } : m)); // Revert on error
         }
     };
+
     const handleMeetingDelete = async (id: string) => {
         // Optimistically remove from UI
         setHistory(prev => prev.filter(m => m.id !== id));
@@ -148,15 +168,14 @@ export default function Record() {
             <ThemeToggle />
             <h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text }}>🎙️ MeetScribe</h1>
 
-            {isUiLocked && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
-                    <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isProcessing} />
-                    <LanguageSelector disabled={isProcessing} onSelectionChange={handleLanguageChange} />
-                </div>
-            )}
-            
             {!isUiLocked && (
-                <>
+                 <>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', width: '100%' }}>
+                            <SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={isUiLocked} />
+                            <LanguageSelector disabled={isUiLocked} onSelectionChange={handleLanguageChange} />
+                        </div>
+                    </div>
                     <AudioSourceSelector audioSource={audioSource} setAudioSource={(s) => { setAudioSource(s); setSelectedFile(null); }} includeMic={includeMic} setIncludeMic={setIncludeMic} isSystemAudioSupported={isSystemAudioSupported} disabled={isUiLocked} theme={currentThemeColors} />
                     {audioSource === 'file' && (
                         <div style={{ marginBottom: '24px' }}>
@@ -166,6 +185,30 @@ export default function Record() {
                 </>
             )}
 
+            {isRecording && (
+                <div style={{ marginBottom: '16px' }}>
+                    <textarea
+                        value={context}
+                        onChange={(e) => handleContextChange(e.target.value)}
+                        placeholder="Live context: Add names, projects, or terms for the AI..."
+                        style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: `1px solid ${currentThemeColors.input.border}`,
+                            backgroundColor: currentThemeColors.input.background,
+                            color: currentThemeColors.input.text,
+                            fontFamily: 'inherit',
+                            fontSize: '14px',
+                            resize: 'vertical',
+                            minHeight: '40px',
+                            boxSizing: 'border-box',
+                        }}
+                        rows={2}
+                    />
+                </div>
+            )}
+            
             <RecordingStatus
                 theme={currentThemeColors}
                 isRecording={isRecording}
@@ -198,3 +241,5 @@ export default function Record() {
         </div>
     );
 }
+
+
