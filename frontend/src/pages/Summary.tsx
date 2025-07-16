@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import ThemeToggle from '../components/ThemeToggle'
@@ -10,7 +10,13 @@ import LanguageSelector from '../components/LanguageSelector'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 
-const formatMeetingDate = (isoString?: string, timeZone?: string | null) => {
+/**
+ * Formats an ISO date string into a readable format, optionally for a specific timezone.
+ * @param {string} isoString - The ISO date string to format.
+ * @param {string | null} timeZone - The IANA timezone string.
+ * @returns {string | null} The formatted date string or null on error.
+ */
+const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
 	if (!isoString) return null
 
 	try {
@@ -69,12 +75,23 @@ export default function Summary() {
 	const [editedTitle, setEditedTitle] = useState('')
 	const [editedContext, setEditedContext] = useState('')
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
+	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
+	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
 	useEffect(() => {
 		if (context !== null) {
 			setEditedContext(context)
 		}
 	}, [context])
+
+	useEffect(() => {
+		// Clear timeout on component unmount
+		return () => {
+			if (copyTimeoutRef.current) {
+				clearTimeout(copyTimeoutRef.current)
+			}
+		}
+	}, [])
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -89,29 +106,40 @@ export default function Summary() {
 		}
 	}
 
-	const renderTitle = () => {
-		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
+	/**
+	 * Copies the meeting summary to the clipboard in the specified format.
+	 * @param {'text' | 'markdown'} format - The desired format for the clipboard content.
+	 */
+	const handleCopy = async (format: 'text' | 'markdown') => {
+		if (!meetingTitle || !summary) return
 
-		return (
-			<div>
-				<h1
-					onClick={() => {
-						setEditedTitle(meetingTitle || '')
-						setIsEditingTitle(true)
-					}}
-					style={{
-						cursor: 'pointer',
-						fontSize: '1.7em',
-						margin: 0,
-						fontFamily: "'Orelega One', serif",
-						fontWeight: 400,
-						lineHeight: 1.2,
-					}}>
-					{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
-				</h1>
-				{formattedDate && <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText }}>{formattedDate}</p>}
-			</div>
-		)
+		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
+		let textToCopy = ''
+
+		if (format === 'markdown') {
+			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summary}`
+		} else {
+			const plainSummary = summary
+				.replace(/^---\s*$/gm, '') // Remove horizontal rules
+				.replace(/####\s/g, '')
+				.replace(/###\s/g, '')
+				.replace(/\*\*(.*?)\*\*/g, '$1')
+				.replace(/_(.*?)_/g, '$1')
+				.replace(/-\s/g, '• ')
+				.replace(/\[(.*?)\]\(.*?\)/g, '$1')
+			textToCopy = `${meetingTitle}\n${formattedDate}\n\n${plainSummary}`
+		}
+
+		try {
+			await navigator.clipboard.writeText(textToCopy)
+			setCopyStatus(format === 'markdown' ? 'copied_md' : 'copied')
+
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
+			copyTimeoutRef.current = setTimeout(() => setCopyStatus('idle'), 5000)
+		} catch (err) {
+			console.error('Failed to copy text: ', err)
+			alert('Could not copy to clipboard.')
+		}
 	}
 
 	const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
@@ -120,17 +148,73 @@ export default function Summary() {
 		handleRegenerate({ newLanguageState: newState })
 	}
 
+	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== context
 	const showControls = summary && !isProcessing
+
+	const copyButtonStyle: React.CSSProperties = {
+		padding: '8px 16px',
+		border: 'none',
+		backgroundColor: 'transparent',
+		color: currentThemeColors.text,
+		cursor: 'pointer',
+		fontSize: '14px',
+		fontWeight: 500,
+		transition: 'background-color 0.2s ease',
+	}
 
 	return (
 		<div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
 			<ThemeToggle />
-			<button
-				onClick={() => navigate('/record')}
-				style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, marginBottom: '24px' }}>
-				← Back to Recordings
-			</button>
+
+			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+				<button
+					onClick={() => navigate('/record')}
+					style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '15px' }}>
+					← Back to Recordings
+				</button>
+
+				{summary && !isProcessing && (
+					<div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+						{copyStatus !== 'idle' && (
+							<span
+								style={{
+									marginRight: '12px',
+									color: currentThemeColors.secondaryText,
+									fontSize: '14px',
+									transition: 'opacity 0.5s ease-in-out',
+									opacity: 1,
+								}}>
+								Copied! ✨
+							</span>
+						)}
+						<div
+							style={{
+								display: 'flex',
+								borderRadius: '6px',
+								overflow: 'hidden',
+								border: `1px solid ${currentThemeColors.border}`,
+								backgroundColor: currentThemeColors.backgroundSecondary,
+							}}>
+							<button
+								onClick={() => handleCopy('text')}
+								style={copyButtonStyle}
+								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+								Copy Text
+							</button>
+							<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+							<button
+								onClick={() => handleCopy('markdown')}
+								style={copyButtonStyle}
+								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+								Copy Markdown
+							</button>
+						</div>
+					</div>
+				)}
+			</div>
 
 			<div
 				style={{
@@ -154,7 +238,6 @@ export default function Summary() {
 							fontSize: '1.7em',
 							fontWeight: '400',
 							width: '100%',
-							// padding: '8px',
 							border: `1px solid ${currentThemeColors.input.border}`,
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
@@ -164,8 +247,24 @@ export default function Summary() {
 						autoFocus
 					/>
 				) : (
-					renderTitle()
+					<h1
+						onClick={() => {
+							setEditedTitle(meetingTitle || '')
+							setIsEditingTitle(true)
+						}}
+						style={{
+							cursor: 'pointer',
+							fontSize: '1.7em',
+							margin: 0,
+							fontFamily: "'Orelega One', serif",
+							fontWeight: 400,
+							lineHeight: 1.2,
+						}}>
+						{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
+					</h1>
 				)}
+
+				{formattedDate && <p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText }}>{formattedDate}</p>}
 
 				{showControls && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
