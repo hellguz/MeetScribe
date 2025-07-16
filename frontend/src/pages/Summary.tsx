@@ -314,6 +314,7 @@ export default function Summary() {
 									resize: 'vertical',
 									boxSizing: 'border-box',
 									opacity: isRegenerating ? 0.7 : 1,
+									fontFamily: "'Jost', serif",
 								}}
 							/>
 							{contextHasChanged && (
