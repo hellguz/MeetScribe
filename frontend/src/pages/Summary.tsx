@@ -286,14 +286,13 @@ export default function Summary() {
 								gap: '10px',
 								justifyContent: 'space-between',
 								alignItems: 'center',
-								fontFamily: "'Jost', serif",
 							}}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
 							<LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
 						</div>
 
 						<div>
-							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px', fontFamily: "'Jost', serif" }}>
+							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
 								Context
 							</label>
 							<textarea
@@ -314,7 +313,6 @@ export default function Summary() {
 									resize: 'vertical',
 									boxSizing: 'border-box',
 									opacity: isRegenerating ? 0.7 : 1,
-									fontFamily: "'Jost', serif",
 								}}
 							/>
 							{contextHasChanged && (
@@ -333,7 +331,6 @@ export default function Summary() {
 										cursor: isRegenerating ? 'not-allowed' : 'pointer',
 										opacity: isRegenerating ? 0.6 : 1,
 										transition: 'all 0.2s ease',
-										fontFamily: "'Jost', serif",
 									}}>
 									Apply & Regenerate Summary
 								</button>
