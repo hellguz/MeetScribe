@@ -127,6 +127,7 @@ export default function Summary() {
 				.replace(/_(.*?)_/g, '$1')
 				.replace(/-\s/g, '• ')
 				.replace(/\[(.*?)\]\(.*?\)/g, '$1')
+				.trim()
 			textToCopy = `${meetingTitle}\n${formattedDate}\n\n${plainSummary}`
 		}
 
@@ -149,7 +150,7 @@ export default function Summary() {
 	}
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
-	const contextHasChanged = editedContext !== context
+	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
 	const showControls = summary && !isProcessing
 
 	const copyButtonStyle: React.CSSProperties = {
@@ -161,6 +162,7 @@ export default function Summary() {
 		fontSize: '14px',
 		fontWeight: 500,
 		transition: 'background-color 0.2s ease',
+		fontFamily: 'Jost, serif',
 	}
 
 	return (
@@ -170,7 +172,14 @@ export default function Summary() {
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
 				<button
 					onClick={() => navigate('/record')}
-					style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '15px' }}>
+					style={{
+						background: 'none',
+						border: 'none',
+						cursor: 'pointer',
+						color: currentThemeColors.secondaryText,
+						fontSize: '15px',
+						fontFamily: 'Jost, serif',
+					}}>
 					← Back to Recordings
 				</button>
 
@@ -236,13 +245,13 @@ export default function Summary() {
 						}}
 						style={{
 							fontSize: '1.7em',
-							fontWeight: '400',
+							fontWeight: '600',
 							width: '100%',
 							border: `1px solid ${currentThemeColors.input.border}`,
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
-							fontFamily: "'Orelega One', serif",
+							fontFamily: "'Jost', serif",
 						}}
 						autoFocus
 					/>
@@ -256,25 +265,35 @@ export default function Summary() {
 							cursor: 'pointer',
 							fontSize: '1.7em',
 							margin: 0,
-							fontFamily: "'Orelega One', serif",
-							fontWeight: 400,
+							fontFamily: "'Jost', serif",
+							fontWeight: 600,
 							lineHeight: 1.2,
 						}}>
 						{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
 					</h1>
 				)}
 
-				{formattedDate && <p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText }}>{formattedDate}</p>}
+				{formattedDate && (
+					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: "'Jost', serif" }}>{formattedDate}</p>
+				)}
 
 				{showControls && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
+						<div
+							style={{
+								display: 'flex',
+								flexDirection: 'row',
+								gap: '10px',
+								justifyContent: 'space-between',
+								alignItems: 'center',
+								fontFamily: "'Jost', serif",
+							}}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
 							<LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
 						</div>
 
 						<div>
-							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
+							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px', fontFamily: "'Jost', serif" }}>
 								Context
 							</label>
 							<textarea
@@ -291,11 +310,11 @@ export default function Summary() {
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
 									color: currentThemeColors.input.text,
-									fontFamily: 'inherit',
 									fontSize: '14px',
 									resize: 'vertical',
 									boxSizing: 'border-box',
 									opacity: isRegenerating ? 0.7 : 1,
+									fontFamily: "'Jost', serif",
 								}}
 							/>
 							{contextHasChanged && (
@@ -314,6 +333,7 @@ export default function Summary() {
 										cursor: isRegenerating ? 'not-allowed' : 'pointer',
 										opacity: isRegenerating ? 0.6 : 1,
 										transition: 'all 0.2s ease',
+										fontFamily: "'Jost', serif",
 									}}>
 									Apply & Regenerate Summary
 								</button>
