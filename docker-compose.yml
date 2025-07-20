@@ -8,50 +8,32 @@ services:
     volumes:
       - redis-data:/data
 
-  migration:
-    build: ./backend
-    command: >
-      sh -c "echo 'Running DB migrations...' &&
-             python /app/utils/remove_feedback_uniqueness.py &&
-             python /app/utils/add_meeting_metadata_columns.py &&
-             python /app/utils/add_suggestion_column.py &&
-             python /app/utils/add_summary_length_column.py &&
-             python /app/utils/add_feedback_status_column.py &&
-             python /app/utils/add_summary_language_columns.py &&
-             python /app/utils/add_context_column.py &&
-             python /app/utils/add_timezone_column.py &&
-             echo 'Migrations complete.'"
-    volumes:
-      - ./data:/app/data
-      - ./backend:/app
-    env_file: [.env]
-    depends_on:
-      - redis
-
   backend:
     build: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    # The command is now in the Dockerfile's CMD and is executed by the
+    # ENTRYPOINT script after migrations run.
     ports:
       - "4131:8000"
     volumes:
       - ./data:/app/data
       - ./backend:/app
     env_file: [.env]
+    # The backend now only needs to wait for Redis. Migrations run on start.
     depends_on:
-      migration:
-        condition: service_completed_successfully
+      - redis
 
   celeryworker:
     build: ./backend
+    # The entrypoint.sh from the build will run migrations first, then this command.
     command: celery -A app.worker.celery_app worker -B -l info -c 1
     volumes:
       - whisper-cache:/root/.cache
       - ./data:/app/data
       - ./backend:/app
     env_file: [.env]
+    # The worker now only needs to wait for Redis. Migrations run on start.
     depends_on:
-      migration:
-        condition: service_completed_successfully
+      - redis
     # Add grace period: allows worker to finish its current task
     stop_grace_period: 1m
 
@@ -70,6 +52,3 @@ volumes:
   whisper-cache: {}               # named volume persists model weights
   # Define the named volume for Redis data
   redis-data: {}
-
-
-
