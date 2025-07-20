@@ -6,8 +6,11 @@ import uuid
 from pathlib import Path
 import shutil
 import subprocess
+import os
+import sqlite3
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_ready
 from faster_whisper import WhisperModel
 from groq import BadRequestError, Groq
@@ -38,6 +41,11 @@ celery_app.conf.update(
         "cleanup-every-15-minutes": {
             "task": "app.worker.cleanup_stuck_meetings",
             "schedule": 900.0,  # 15 minutes in seconds
+        },
+        # --- NEW: Nightly database backup task ---
+        "backup-db-midnight": {
+            "task": "app.worker.backup_database",
+            "schedule": crontab(minute=0, hour=0), # Runs every day at midnight
         },
     },
 )
@@ -181,9 +189,9 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 **Instructions:**
 1.  **Language:** The title MUST be in the same language as the summary and transcript.
 2.  **Length:** The title must be between 6 and 15 words.
-3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
+3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting.
+Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
-
 **Meeting Summary:**
 ---
 {summary}
@@ -420,6 +428,63 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
     db.commit()
 
 
+@celery_app.task(name="app.worker.backup_database")
+def backup_database():
+    """
+    Performs a nightly backup of the SQLite database and enforces a
+    retention policy, keeping the last 30 backups.
+    """
+    db_path = settings.db_path
+    # Backups will be stored in a 'backups' subdirectory next to the database.
+    backup_dir = db_path.parent / "backups"
+    retention_count = 30
+
+    backup_dir.mkdir(exist_ok=True)
+
+    if not db_path.exists():
+        LOGGER.error(f"Database file not found at {db_path}. Skipping backup.")
+        return
+
+    LOGGER.info("Starting nightly database backup...")
+
+    try:
+        timestamp = dt.datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_filename = f"backup_{timestamp}.sqlite3"
+        backup_filepath = backup_dir / backup_filename
+
+        # Use SQLite's online backup API for a safe, non-blocking copy.
+        # Connecting with mode=ro ensures we don't lock the main DB.
+        source_conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        backup_conn = sqlite3.connect(backup_filepath)
+        with backup_conn:
+            source_conn.backup(backup_conn)
+        backup_conn.close()
+        source_conn.close()
+
+        LOGGER.info(f"Backup successful: {backup_filename}")
+
+        # --- Retention Policy ---
+        LOGGER.info(f"Applying retention policy (keeping last {retention_count})...")
+        # Get a list of all backup files, sorted by creation time (newest first).
+        all_backups = sorted(
+            [f for f in backup_dir.iterdir() if f.is_file() and f.name.startswith("backup_")],
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+
+        if len(all_backups) > retention_count:
+            # Identify the files that are older than the 30 newest ones.
+            backups_to_delete = all_backups[retention_count:]
+            LOGGER.info(f"Found {len(backups_to_delete)} old backups to delete.")
+            for f in backups_to_delete:
+                f.unlink()
+                LOGGER.info(f"Deleted old backup: {f.name}")
+
+        LOGGER.info("Backup and retention policy complete.")
+    except Exception as e:
+        LOGGER.error(f"Database backup failed: {e}", exc_info=True)
+
+
 @celery_app.task(name="app.worker.cleanup_stuck_meetings")
 def cleanup_stuck_meetings():
     """
@@ -503,7 +568,7 @@ def cleanup_stuck_meetings():
                     )
                 else:
                     LOGGER.error(
-                        f"Janitor: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.chunk_index} does not exist. Cannot re-queue."
+                        f"Janitor: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.index} does not exist. Cannot re-queue."
                     )
 
 
@@ -599,6 +664,3 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
-
-
-
