@@ -664,3 +664,131 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+
+
+@celery_app.task(
+    name="app.worker.generate_section_content",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=60,
+)
+def generate_section_content(self, section_id_str: str):
+    """Generate AI content for a custom section."""
+    engine = get_db_engine()
+    section_id = int(section_id_str)
+    
+    with Session(engine) as db:
+        # Import here to avoid circular imports
+        from .models import MeetingSection
+        
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            LOGGER.error("Section %s not found for content generation.", section_id_str)
+            return
+        
+        meeting = db.get(Meeting, section.meeting_id)
+        if not meeting:
+            LOGGER.error("Meeting %s not found for section %s.", section.meeting_id, section_id_str)
+            return
+        
+        # Get the full transcript
+        final_transcript = rebuild_full_transcript(db, section.meeting_id)[0]
+        if not final_transcript:
+            LOGGER.error("No transcript available for meeting %s, section %s.", section.meeting_id, section_id_str)
+            return
+        
+        # Get the appropriate prompt based on template type
+        section_prompt = get_section_prompt(section.template_type, section.title)
+        
+        try:
+            content = generate_section_content_with_ai(final_transcript, section_prompt, meeting.context)
+            
+            # Update the section with generated content
+            section.content = content
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+            db.commit()
+            
+            LOGGER.info("✅ Section %s content generated successfully.", section_id_str)
+        except Exception as e:
+            LOGGER.error("Failed to generate content for section %s: %s", section_id_str, e)
+            section.content = "Error: Failed to generate section content."
+            db.add(section)
+            db.commit()
+            raise
+
+
+def get_section_prompt(template_type: str | None, title: str) -> str:
+    """Get the AI prompt for a specific section type."""
+    prompts = {
+        'timeline': """Create a chronological timeline of the key moments and topics discussed in this meeting. 
+        Focus on when different topics were introduced, major decisions made, and transitions between discussion points. 
+        Format as a clear timeline with sequence indicators. Use markdown formatting.""",
+        
+        'bullet_points': """Extract the most important topics, insights, and takeaways from this meeting into a clear bullet point format. 
+        Focus on actionable insights, key information shared, and important points that attendees should remember. 
+        Use markdown bullet points.""",
+        
+        'feedback': """Analyze this meeting to provide constructive feedback on how it could have been run more effectively. 
+        Include suggestions for better preparation, facilitation, follow-up, and overall meeting structure. 
+        Focus on actionable improvements. Use markdown formatting.""",
+        
+        'metrics': """Provide quantitative insights and metrics about this meeting, such as: participation levels, 
+        time spent on different topics, frequency of interruptions, decision velocity, and overall meeting effectiveness. 
+        Include any measurable observations. Use markdown formatting.""",
+        
+        'custom': f"""Generate relevant content for a section titled '{title}' based on the meeting transcript. 
+        Analyze the meeting content and provide insights, summaries, or information that would be valuable under this heading. 
+        Use markdown formatting."""
+    }
+    
+    return prompts.get(template_type or 'custom', prompts['custom'])
+
+
+def generate_section_content_with_ai(transcript: str, section_prompt: str, context: str | None) -> str:
+    """Generate content for a custom section using AI."""
+    if not transcript:
+        return "Error: No transcript available."
+    
+    if not openai.api_key:
+        openai.api_key = settings.openai_api_key
+    
+    context_section = ""
+    if context and context.strip():
+        context_section = f"""
+<user_provided_context>
+{context}
+</user_provided_context>
+"""
+    
+    system_prompt = f"""
+You are 'Scribe', an expert AI analyst. Your task is to generate content for a specific section of a meeting summary.
+
+{context_section}
+
+Instructions:
+- Focus specifically on the requested section type
+- Keep the content concise but informative
+- Use markdown formatting for better readability
+- Make the content valuable for someone who didn't attend the meeting
+- Ensure the content is relevant to the section's purpose
+
+Section Task: {section_prompt}
+"""
+    
+    user_prompt = f"Generate content for this section based on the following meeting transcript:\n\nTRANSCRIPT:\n---\n{transcript}"
+    
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.4,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        LOGGER.error(f"Section content generation failed: {e}", exc_info=True)
+        return "Error: Section content generation failed."

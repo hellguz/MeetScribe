@@ -7,8 +7,11 @@ import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
+import CustomizableSummary from '../components/CustomizableSummary'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
+import { useMeetingSections } from '../hooks/useMeetingSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { SectionTemplate } from '../config/sectionTemplates'
 
 /**
  * Formats an ISO date string into a readable format, optionally for a specific timezone.
@@ -70,6 +73,17 @@ export default function Summary() {
 		handleTitleUpdate,
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
+
+	const {
+		sections,
+		isLoading: sectionsLoading,
+		error: sectionsError,
+		createSection,
+		updateSection,
+		deleteSection,
+		reorderSections,
+		initializeDefaultSections,
+	} = useMeetingSections(mid)
 
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
@@ -148,6 +162,33 @@ export default function Summary() {
 		setLanguageState(newState)
 		handleRegenerate({ newLanguageState: newState })
 	}
+
+	// Initialize default sections when summary is available
+	useEffect(() => {
+		if (summary && sections.length === 0) {
+			initializeDefaultSections(summary)
+		}
+	}, [summary, sections.length, initializeDefaultSections])
+
+	// Section management handlers
+	const handleSectionAdd = useCallback(async (template: SectionTemplate | null, customTitle?: string) => {
+		if (!mid) return
+		
+		const nextPosition = Math.max(...sections.map(s => s.position), 0) + 1
+		await createSection(template, customTitle, nextPosition)
+	}, [createSection, sections, mid])
+
+	const handleSectionRemove = useCallback(async (sectionId: number) => {
+		await deleteSection(sectionId)
+	}, [deleteSection])
+
+	const handleSectionReorder = useCallback(async (sectionIds: number[]) => {
+		await reorderSections(sectionIds)
+	}, [reorderSections])
+
+	const handleSectionUpdate = useCallback(async (sectionId: number, updates: { title?: string; content?: string; is_enabled?: boolean }) => {
+		await updateSection(sectionId, updates)
+	}, [updateSection])
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
@@ -279,6 +320,28 @@ export default function Summary() {
 
 				{showControls && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+						{/* Warning about regeneration */}
+						{sections.some(s => s.section_type === 'custom') && (
+							<div
+								style={{ 
+									padding: '12px 16px',
+									borderRadius: '8px',
+									backgroundColor: '#fff3cd',
+									border: '1px solid #ffeaa7',
+									color: '#856404',
+									fontSize: '14px',
+									display: 'flex',
+									alignItems: 'center',
+									gap: '8px',
+								}}
+							>
+								<span>⚠️</span>
+								<span>
+									Changing summary settings will regenerate the entire summary. Your custom sections will be preserved, but their content will be regenerated based on the new settings.
+								</span>
+							</div>
+						)}
+						
 						<div
 							style={{
 								display: 'flex',
@@ -340,7 +403,27 @@ export default function Summary() {
 				)}
 			</div>
 
-			{summary ? (
+			{summary && sections.length > 0 ? (
+				<CustomizableSummary
+					meetingId={mid!}
+					sections={sections.map(section => ({
+						id: section.id,
+						section_key: section.section_key,
+						title: section.title,
+						content: section.content,
+						position: section.position,
+						is_enabled: section.is_enabled,
+						section_type: section.section_type,
+						template_type: section.template_type,
+					}))}
+					onSectionAdd={handleSectionAdd}
+					onSectionRemove={handleSectionRemove}
+					onSectionReorder={handleSectionReorder}
+					onSectionUpdate={handleSectionUpdate}
+					isEditable={!isProcessing && !isRegenerating}
+				/>
+			) : summary ? (
+				// Fallback to regular markdown if sections haven't loaded yet
 				<ReactMarkdown
 					children={summary}
 					components={{
@@ -353,6 +436,7 @@ export default function Summary() {
 				<>
 					{isLoading && !loadedFromCache && <p>Loading summary...</p>}
 					{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
+					{sectionsError && <p style={{ color: currentThemeColors.button.danger }}>Error loading sections: {sectionsError}</p>}
 					{(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
 				</>
 			)}
