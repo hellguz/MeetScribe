@@ -21,7 +21,7 @@ from langdetect.lang_detect_exception import LangDetectException
 
 
 from .config import settings
-from .models import Meeting, MeetingChunk
+from .models import Meeting, MeetingChunk, MeetingSection
 
 # Configure Celery
 celery_app = Celery(
@@ -664,3 +664,180 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+
+
+def generate_section_content_for_type(
+    section_type: str, 
+    transcript: str, 
+    context: str | None,
+    meeting_title: str
+) -> str:
+    """Generate AI content for different section types."""
+    if not openai.api_key:
+        openai.api_key = settings.openai_api_key
+    
+    SECTION_PROMPTS = {
+        "timeline": {
+            "system": "You are an expert meeting analyst specializing in chronological breakdowns.",
+            "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}". 
+
+Focus on:
+- Important transitions between topics
+- Key decisions or announcements
+- Notable interactions or exchanges
+- Major milestones in the discussion
+
+Format as a bulleted timeline with approximate timestamps or sequence markers. Be concise but informative.
+
+Context: {context or 'None provided'}
+
+Transcript: {transcript[:3000]}"""
+        },
+        "key_points": {
+            "system": "You are an expert at distilling meetings into actionable key points.",
+            "prompt": f"""Extract the most important key points from this meeting titled "{meeting_title}".
+
+Focus on:
+- Main topics discussed
+- Important insights or learnings
+- Critical information shared
+- Key themes or patterns
+
+Format as clear, concise bullet points. Prioritize actionability and clarity.
+
+Context: {context or 'None provided'}
+
+Transcript: {transcript[:3000]}"""
+        },
+        "feedback_suggestions": {
+            "system": "You are an expert meeting facilitator focused on improvement recommendations.",
+            "prompt": f"""Analyze this meeting titled "{meeting_title}" and provide constructive feedback and suggestions for improvement.
+
+Consider:
+- Meeting structure and flow
+- Participation and engagement
+- Communication effectiveness
+- Time management
+- Action item clarity
+
+Provide specific, actionable recommendations.
+
+Context: {context or 'None provided'}
+
+Transcript: {transcript[:3000]}"""
+        },
+        "metrics": {
+            "system": "You are a meeting analytics expert who extracts quantitative insights.",
+            "prompt": f"""Analyze the metrics and measurable aspects of this meeting titled "{meeting_title}".
+
+Look for:
+- Speaking time distribution
+- Number of decisions made
+- Action items identified
+- Topics covered
+- Participation levels
+- Meeting duration insights
+
+Present as organized data points and statistics.
+
+Context: {context or 'None provided'}
+
+Transcript: {transcript[:3000]}"""
+        }
+    }
+    
+    if section_type not in SECTION_PROMPTS:
+        return "Error: Unknown section type"
+    
+    try:
+        prompt_config = SECTION_PROMPTS[section_type]
+        
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": prompt_config["system"]},
+                {"role": "user", "content": prompt_config["prompt"]}
+            ]
+        )
+        
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        LOGGER.error(f"Section content generation failed for {section_type}: {e}", exc_info=True)
+        return f"Error generating content for {section_type}: {str(e)}"
+
+
+@celery_app.task(
+    name="app.worker.generate_section_content",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=60,
+)
+def generate_section_content(self, section_id_str: str, meeting_id_str: str):
+    """Generate AI content for a specific section."""
+    engine = get_db_engine()
+    section_id = int(section_id_str)
+    meeting_id = uuid.UUID(meeting_id_str)
+    
+    try:
+        with Session(engine) as db:
+            section = db.get(MeetingSection, section_id)
+            if not section:
+                LOGGER.error(f"Section {section_id} not found")
+                return
+            
+            meeting = db.get(Meeting, meeting_id)
+            if not meeting:
+                LOGGER.error(f"Meeting {meeting_id} not found")
+                return
+            
+            # Get transcript text
+            transcript = meeting.transcript_text
+            if not transcript:
+                # Try to build from chunks
+                transcript, _ = rebuild_full_transcript(db, meeting_id)
+            
+            if not transcript:
+                section.content = "Error: No transcript available for content generation"
+                section.is_generating = False
+                db.add(section)
+                db.commit()
+                return
+            
+            LOGGER.info(f"Generating content for section {section_id} ({section.section_type})")
+            
+            # Generate content
+            content = generate_section_content_for_type(
+                section.section_type,
+                transcript,
+                meeting.context,
+                meeting.title
+            )
+            
+            # Update section
+            section.content = content
+            section.is_generating = False
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+            db.commit()
+            
+            LOGGER.info(f"✅ Generated content for section {section_id}")
+            
+    except Exception as exc:
+        LOGGER.error(f"Error generating section content {section_id}: {exc}", exc_info=True)
+        
+        # Mark as failed
+        try:
+            with Session(engine) as db:
+                section = db.get(MeetingSection, section_id)
+                if section:
+                    section.content = f"Error generating content: {str(exc)}"
+                    section.is_generating = False
+                    section.updated_at = dt.datetime.utcnow()
+                    db.add(section)
+                    db.commit()
+        except:
+            pass
+        
+        self.retry(exc=exc)

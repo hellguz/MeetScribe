@@ -14,20 +14,15 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
-from app.config import settings
-from sqlalchemy import create_engine, text
+from migration_helper import ensure_database_exists
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("migration")
 
 
 def run_migration():
-    db_path = Path(settings.db_path).resolve()
-    if not db_path.exists():
-        log.error("Database file not found.")
-        sys.exit(1)
-
-    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    db_path, engine = ensure_database_exists()
 
     with engine.connect() as connection:
         with connection.begin():  # Start a transaction

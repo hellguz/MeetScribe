@@ -53,12 +53,13 @@ class Feedback(SQLModel, table=True):
     is enforced in the application layer, not by the database, to allow
     multiple 'feature_suggestion' entries for the same meeting.
     """
+
     id: int | None = Field(default=None, primary_key=True)
     meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
     feedback_type: str
     suggestion_text: Optional[str] = None
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
-    status: str = Field(default="new") # 'new', 'done', etc.
+    status: str = Field(default="new")  # 'new', 'done', etc.
 
 
 class MeetingCreate(SQLModel):
@@ -79,6 +80,7 @@ class FeedbackCreate(SQLModel):
     """
     Payload for submitting feedback. Can be a type or a suggestion.
     """
+
     meeting_id: uuid.UUID
     feedback_type: str
     suggestion_text: Optional[str] = None
@@ -88,6 +90,7 @@ class FeedbackDelete(SQLModel):
     """
     Payload for deleting a feedback item.
     """
+
     meeting_id: uuid.UUID
     feedback_type: str
 
@@ -96,6 +99,7 @@ class FeedbackStatusUpdate(SQLModel):
     """
     Payload for updating the status of a feedback item.
     """
+
     status: str
 
 
@@ -118,7 +122,7 @@ class MeetingStatus(SQLModel):
     summary_custom_language: str | None = None
     context: str | None = None
     timezone: str | None = None
-    feedback: list[str] = [] # List of submitted feedback types
+    feedback: list[str] = []  # List of submitted feedback types
 
 
 class MeetingTitleUpdate(SQLModel):
@@ -131,6 +135,7 @@ class MeetingTitleUpdate(SQLModel):
 
 class MeetingContextUpdate(SQLModel):
     """Payload for updating a meeting's context."""
+
     context: str
 
 
@@ -150,6 +155,7 @@ class MeetingSyncRequest(SQLModel):
     Payload for the sync endpoint, containing the list of
     meeting IDs the client is aware of.
     """
+
     ids: list[uuid.UUID]
 
 
@@ -169,9 +175,52 @@ class MeetingConfigUpdate(SQLModel):
     """
     Payload for updating a meeting's configuration, like summary length.
     """
+
     summary_length: Optional[str] = None
     summary_language_mode: Optional[str] = None
     summary_custom_language: Optional[str] = None
 
 
+class MeetingSection(SQLModel, table=True):
+    """
+    Individual sections within a meeting summary that can be customized.
+    """
 
+    id: Optional[int] = Field(default=None, primary_key=True)
+    meeting_id: uuid.UUID = Field(foreign_key="meeting.id")
+    section_type: str  # "default_summary", "timeline", "key_points", "feedback_suggestions", "metrics", "custom"
+    title: str
+    content: Optional[str] = None
+    position: int
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    is_generating: bool = Field(default=False)
+
+
+class SectionCreate(SQLModel):
+    """
+    Payload for creating a new section.
+    """
+
+    meeting_id: uuid.UUID
+    section_type: str
+    title: str
+    position: int
+
+
+class SectionUpdate(SQLModel):
+    """
+    Payload for updating a section.
+    """
+
+    title: Optional[str] = None
+    content: Optional[str] = None
+    position: Optional[int] = None
+
+
+class SectionReorder(SQLModel):
+    """
+    Payload for reordering sections.
+    """
+
+    sections: List[dict]  # List of {id: int, position: int}

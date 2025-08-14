@@ -29,6 +29,10 @@ from .models import (
     MeetingConfigUpdate,
     FeedbackStatusUpdate,
     MeetingContextUpdate,
+    MeetingSection,
+    SectionCreate,
+    SectionUpdate,
+    SectionReorder,
 )
 from .worker import process_transcription_and_summary, generate_summary_only
 
@@ -39,6 +43,10 @@ logging.basicConfig(
 )
 
 openai.api_key = settings.openai_api_key
+
+# Ensure database directory exists before creating engine
+db_path = Path(settings.db_path)
+db_path.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
 SQLModel.metadata.create_all(engine)
@@ -655,6 +663,211 @@ def get_dashboard_stats():
 @app.get("/healthz")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Section Management API
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/meetings/{mid}/sections", response_model=list[MeetingSection])
+def get_meeting_sections(mid: uuid.UUID):
+    """Get all sections for a meeting, ordered by position."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == mid)
+            .order_by(MeetingSection.position)
+        ).all()
+        
+        # If no sections exist and meeting has a summary, create default section
+        if not sections and meeting.summary_markdown:
+            default_section = MeetingSection(
+                meeting_id=mid,
+                section_type="default_summary",
+                title="Meeting Summary",
+                content=meeting.summary_markdown,
+                position=0
+            )
+            db.add(default_section)
+            db.commit()
+            db.refresh(default_section)
+            sections = [default_section]
+        
+        return sections
+
+
+@app.post("/api/meetings/{mid}/sections", response_model=MeetingSection, status_code=201)
+def create_section(mid: uuid.UUID, body: SectionCreate):
+    """Create a new section for a meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Adjust positions of existing sections
+        existing_sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == mid)
+            .where(MeetingSection.position >= body.position)
+        ).all()
+        
+        for section in existing_sections:
+            section.position += 1
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+        
+        new_section = MeetingSection(
+            meeting_id=mid,
+            section_type=body.section_type,
+            title=body.title,
+            position=body.position,
+            is_generating=True if body.section_type != "custom" else False
+        )
+        db.add(new_section)
+        db.commit()
+        db.refresh(new_section)
+        
+        # Queue AI generation for template sections
+        if body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"]:
+            from .worker import generate_section_content
+            generate_section_content.delay(str(new_section.id), str(mid))
+        
+        return new_section
+
+
+@app.put("/api/sections/{section_id}", response_model=MeetingSection)
+def update_section(section_id: int, body: SectionUpdate):
+    """Update a section's content, title, or position."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            raise HTTPException(status_code=404, detail="Section not found")
+        
+        if body.title is not None:
+            section.title = body.title
+        if body.content is not None:
+            section.content = body.content
+        if body.position is not None:
+            # Handle position changes
+            old_position = section.position
+            new_position = body.position
+            
+            if old_position != new_position:
+                # Update positions of other sections
+                if new_position > old_position:
+                    # Moving down
+                    sections_to_update = db.exec(
+                        select(MeetingSection)
+                        .where(MeetingSection.meeting_id == section.meeting_id)
+                        .where(MeetingSection.position > old_position)
+                        .where(MeetingSection.position <= new_position)
+                        .where(MeetingSection.id != section_id)
+                    ).all()
+                    for s in sections_to_update:
+                        s.position -= 1
+                        s.updated_at = dt.datetime.utcnow()
+                        db.add(s)
+                else:
+                    # Moving up
+                    sections_to_update = db.exec(
+                        select(MeetingSection)
+                        .where(MeetingSection.meeting_id == section.meeting_id)
+                        .where(MeetingSection.position >= new_position)
+                        .where(MeetingSection.position < old_position)
+                        .where(MeetingSection.id != section_id)
+                    ).all()
+                    for s in sections_to_update:
+                        s.position += 1
+                        s.updated_at = dt.datetime.utcnow()
+                        db.add(s)
+                
+                section.position = new_position
+        
+        section.updated_at = dt.datetime.utcnow()
+        db.add(section)
+        db.commit()
+        db.refresh(section)
+        return section
+
+
+@app.delete("/api/sections/{section_id}", status_code=204)
+def delete_section(section_id: int):
+    """Delete a section."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            return Response(status_code=204)  # Already gone
+        
+        meeting_id = section.meeting_id
+        deleted_position = section.position
+        
+        # Delete the section
+        db.delete(section)
+        
+        # Adjust positions of remaining sections
+        remaining_sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == meeting_id)
+            .where(MeetingSection.position > deleted_position)
+        ).all()
+        
+        for s in remaining_sections:
+            s.position -= 1
+            s.updated_at = dt.datetime.utcnow()
+            db.add(s)
+        
+        db.commit()
+        LOGGER.info(f"Deleted section {section_id}")
+    return Response(status_code=204)
+
+
+@app.post("/api/meetings/{mid}/sections/reorder", status_code=200)
+def reorder_sections(mid: uuid.UUID, body: SectionReorder):
+    """Reorder sections for a meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Update all section positions
+        for section_data in body.sections:
+            section = db.get(MeetingSection, section_data["id"])
+            if section and section.meeting_id == mid:
+                section.position = section_data["position"]
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+        
+        db.commit()
+        LOGGER.info(f"Reordered sections for meeting {mid}")
+    return {"ok": True, "message": "Sections reordered successfully"}
+
+
+@app.post("/api/sections/{section_id}/regenerate", status_code=200)
+def regenerate_section_content(section_id: int):
+    """Regenerate AI content for a section."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            raise HTTPException(status_code=404, detail="Section not found")
+        
+        if section.section_type == "custom":
+            raise HTTPException(status_code=400, detail="Cannot regenerate custom sections")
+        
+        section.is_generating = True
+        section.content = None
+        section.updated_at = dt.datetime.utcnow()
+        db.add(section)
+        db.commit()
+        
+        # Queue AI generation
+        from .worker import generate_section_content
+        generate_section_content.delay(str(section_id), str(section.meeting_id))
+        
+    return {"ok": True, "message": "Section regeneration queued"}
 
 
 

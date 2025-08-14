@@ -44,3 +44,22 @@ export interface DashboardStats {
     meetings_with_feedback: MeetingWithFeedback[];
     interesting_facts: InterestingFacts;
 }
+
+export interface MeetingSection {
+    id: number;
+    meeting_id: string;
+    section_type: string;
+    title: string;
+    content: string | null;
+    position: number;
+    created_at: string;
+    updated_at: string;
+    is_generating: boolean;
+}
+
+export interface SectionTemplate {
+    type: string;
+    title: string;
+    icon: string;
+    description: string;
+}

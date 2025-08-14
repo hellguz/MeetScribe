@@ -7,8 +7,12 @@ import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
+import SectionTemplatePicker from '../components/SectionTemplatePicker'
+import DraggableSectionList from '../components/DraggableSectionList'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
+import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { SectionTemplate } from '../types'
 
 /**
  * Formats an ISO date string into a readable format, optionally for a specific timezone.
@@ -77,6 +81,20 @@ export default function Summary() {
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
+	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
+	const [showSectionsWarning, setShowSectionsWarning] = useState(false)
+
+	const {
+		sections,
+		isLoading: sectionsLoading,
+		error: sectionsError,
+		createSection,
+		updateSection,
+		deleteSection,
+		reorderSections,
+		regenerateSection
+	} = useSections({ meetingId: mid })
 
 	useEffect(() => {
 		if (context !== null) {
@@ -100,11 +118,80 @@ export default function Summary() {
 		setIsEditingTitle(false)
 	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
+	// Check if we have custom sections when regenerating
+	useEffect(() => {
+		const hasCustomSections = sections.some(s => s.section_type !== 'default_summary')
+		setShowSectionsWarning(hasCustomSections)
+	}, [sections])
+
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) {
 			handleRegenerate({ newContext: editedContext })
 		}
 	}
+
+	const handleAddSection = useCallback((position: number) => {
+		setAddSectionPosition(position)
+		setIsTemplatePickerOpen(true)
+	}, [])
+
+	const handleAddSectionAbove = useCallback((position: number) => {
+		handleAddSection(position)
+	}, [handleAddSection])
+
+	const handleAddSectionBelow = useCallback((position: number) => {
+		handleAddSection(position + 1)
+	}, [handleAddSection])
+
+	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
+		try {
+			let title = template.title.replace(/^[📝📊💡📈➕]\s/, '')
+			
+			if (template.type === 'custom') {
+				const customTitle = prompt('Enter section title:', title)
+				if (!customTitle) return
+				title = customTitle.trim()
+			}
+
+			await createSection(template, addSectionPosition)
+		} catch (error) {
+			console.error('Error adding section:', error)
+		}
+	}, [createSection, addSectionPosition])
+
+	const handleUpdateTitle = useCallback(async (sectionId: number, title: string) => {
+		try {
+			await updateSection(sectionId, { title })
+		} catch (error) {
+			console.error('Error updating title:', error)
+		}
+	}, [updateSection])
+
+	const handleUpdateContent = useCallback(async (sectionId: number, content: string) => {
+		try {
+			await updateSection(sectionId, { content })
+		} catch (error) {
+			console.error('Error updating content:', error)
+		}
+	}, [updateSection])
+
+	const handleDeleteSection = useCallback(async (sectionId: number) => {
+		if (!confirm('Are you sure you want to delete this section?')) return
+		
+		try {
+			await deleteSection(sectionId)
+		} catch (error) {
+			console.error('Error deleting section:', error)
+		}
+	}, [deleteSection])
+
+	const handleRegenerateSection = useCallback(async (sectionId: number) => {
+		try {
+			await regenerateSection(sectionId)
+		} catch (error) {
+			console.error('Error regenerating section:', error)
+		}
+	}, [regenerateSection])
 
 	/**
 	 * Copies the meeting summary to the clipboard in the specified format.
@@ -152,6 +239,8 @@ export default function Summary() {
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
 	const showControls = summary && !isProcessing
+	const useSectionsView = sections.length > 0
+	const hasSections = !sectionsLoading && sections.length > 0
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -336,23 +425,96 @@ export default function Summary() {
 								</button>
 							)}
 						</div>
+						
+						{showSectionsWarning && hasSections && (
+							<div style={{
+								marginTop: '16px',
+								padding: '12px',
+								backgroundColor: 'rgba(255, 165, 0, 0.1)',
+								border: '1px solid rgba(255, 165, 0, 0.3)',
+								borderRadius: '8px',
+								fontSize: '14px',
+								color: currentThemeColors.text,
+							}}>
+								⚠️ You have custom sections. Regenerating the summary will preserve your custom sections but may affect the default summary content.
+							</div>
+						)}
 					</div>
 				)}
 			</div>
 
-			{summary ? (
-				<ReactMarkdown
-					children={summary}
-					components={{
-						h1: ({ ...props }) => <h1 style={{ color: currentThemeColors.text }} {...props} />,
-						h2: ({ ...props }) => <h2 style={{ color: currentThemeColors.text }} {...props} />,
-						p: ({ ...props }) => <p style={{ lineHeight: 1.6 }} {...props} />,
-					}}
+			{/* Sections View or Traditional Summary */}
+			{hasSections ? (
+				<DraggableSectionList
+					sections={sections}
+					onReorder={reorderSections}
+					onUpdateTitle={handleUpdateTitle}
+					onUpdateContent={handleUpdateContent}
+					onDeleteSection={handleDeleteSection}
+					onRegenerateSection={handleRegenerateSection}
+					onAddSectionAbove={handleAddSectionAbove}
+					onAddSectionBelow={handleAddSectionBelow}
+					showControls={showControls}
+					enableDragAndDrop={true}
 				/>
+			) : summary ? (
+				<div style={{ position: 'relative' }}>
+					{/* Add section button for traditional summary */}
+					{showControls && (
+						<div style={{
+							position: 'absolute',
+							left: '-40px',
+							top: '0',
+							opacity: 0.7,
+							transition: 'opacity 0.2s ease'
+						}}
+						onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+						onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}>
+							<button
+								onClick={() => handleAddSection(0)}
+								style={{
+									width: '32px',
+									height: '32px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '4px',
+									backgroundColor: currentThemeColors.background,
+									color: currentThemeColors.secondaryText,
+									fontSize: '14px',
+									cursor: 'pointer',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									transition: 'all 0.2s ease',
+									boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+								}}
+								onMouseEnter={(e) => {
+									e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
+									e.currentTarget.style.borderColor = currentThemeColors.button.primary
+								}}
+								onMouseLeave={(e) => {
+									e.currentTarget.style.backgroundColor = currentThemeColors.background
+									e.currentTarget.style.borderColor = currentThemeColors.border
+								}}
+								title="Add section"
+							>
+								+
+							</button>
+						</div>
+					)}
+					<ReactMarkdown
+						children={summary}
+						components={{
+							h1: ({ ...props }) => <h1 style={{ color: currentThemeColors.text }} {...props} />,
+							h2: ({ ...props }) => <h2 style={{ color: currentThemeColors.text }} {...props} />,
+							p: ({ ...props }) => <p style={{ lineHeight: 1.6 }} {...props} />,
+						}}
+					/>
+				</div>
 			) : (
 				<>
 					{isLoading && !loadedFromCache && <p>Loading summary...</p>}
 					{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
+					{sectionsError && <p style={{ color: currentThemeColors.button.danger }}>Sections Error: {sectionsError}</p>}
 					{(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
 				</>
 			)}
@@ -403,6 +565,13 @@ export default function Summary() {
 					)}
 				</div>
 			)}
+
+			{/* Section Template Picker Modal */}
+			<SectionTemplatePicker
+				isOpen={isTemplatePickerOpen}
+				onClose={() => setIsTemplatePickerOpen(false)}
+				onSelectTemplate={handleTemplateSelect}
+			/>
 		</div>
 	)
 }
