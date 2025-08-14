@@ -72,7 +72,6 @@ export default function DraggableSectionList({
             showControls={showControls}
             onAddSectionAbove={onAddSectionAbove}
             onAddSectionBelow={onAddSectionBelow}
-            isCustomSection={section.section_type === 'custom'}
           />
         ))}
       </div>
@@ -119,7 +118,6 @@ export default function DraggableSectionList({
                       onAddSectionBelow={onAddSectionBelow}
                       dragHandleProps={provided.dragHandleProps}
                       isDragging={snapshot.isDragging}
-                      isCustomSection={section.section_type === 'custom'}
                     />
                   </div>
                 )}

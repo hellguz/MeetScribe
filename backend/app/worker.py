@@ -767,6 +767,97 @@ Transcript: {transcript[:3000]}"""
         return f"Error generating content for {section_type}: {str(e)}"
 
 
+def suggest_section_types(
+    transcript: str,
+    context: str | None,
+    meeting_title: str
+) -> list[dict]:
+    """Suggest section types based on meeting content."""
+    if not openai.api_key:
+        openai.api_key = settings.openai_api_key
+
+    # Provide the model with the available templates so it knows what to choose from
+    AVAILABLE_TEMPLATES = [
+        {"type": "timeline", "title": "📝 Meeting Timeline", "icon": "📝", "description": "Chronological breakdown of key moments"},
+        {"type": "key_points", "title": "📊 Key Points", "icon": "📊", "description": "Important topics as bullet points"},
+        {"type": "feedback_suggestions", "title": "💡 Feedback & Suggestions", "icon": "💡", "description": "Meeting improvement recommendations"},
+        {"type": "metrics", "title": "📈 Meeting Metrics", "icon": "📈", "description": "Data and statistics about the meeting"},
+        {"type": "decisions_actions", "title": "✅ Decisions & Actions", "icon": "✅", "description": "Summary of decisions and action items"},
+    ]
+
+    system_prompt = f"""You are an expert meeting analyst. Your task is to analyze a meeting transcript and suggest 2-4 relevant sections to help the user structure their summary.
+
+You must choose from the following available section templates:
+{AVAILABLE_TEMPLATES}
+
+You can also suggest a 'custom' section if you identify a key topic that doesn't fit the predefined templates. For custom sections, create a fitting title, a relevant emoji icon, and a short description.
+
+Analyze the transcript and return a JSON array of 2 to 4 suggested section templates. Your output MUST be a valid JSON array of objects, where each object has "type", "title", "icon", and "description" keys.
+
+Example of a valid response:
+[
+  {{
+    "type": "key_points",
+    "title": "📊 Key Points",
+    "icon": "📊",
+    "description": "Important topics as bullet points"
+  }},
+  {{
+    "type": "custom",
+    "title": "🚀 Project Alpha Launch Plan",
+    "icon": "🚀",
+    "description": "Discussion about the launch strategy for Project Alpha"
+  }}
+]
+"""
+
+    user_prompt = f"""Analyze the following meeting transcript for "{meeting_title}" and suggest 2-4 relevant sections.
+
+Context: {context or 'None provided'}
+
+Transcript:
+---
+{transcript[:4000]}
+---
+
+Return your suggestions as a valid JSON array.
+"""
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            temperature=0.5,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+
+        # The response should be a JSON string, which we need to parse.
+        # The 'json_object' response format returns a JSON object with a single key,
+        # so we need to handle that. Let's assume it might return a root object
+        # with a key like "suggestions".
+        import json
+        suggestions_data = json.loads(response.choices[0].message.content)
+
+        # Check if the data is in a wrapper object
+        if isinstance(suggestions_data, dict) and len(suggestions_data.keys()) == 1:
+            suggestions_list = list(suggestions_data.values())[0]
+        else:
+            suggestions_list = suggestions_data
+
+        if isinstance(suggestions_list, list):
+            return suggestions_list
+        else:
+            LOGGER.error(f"AI suggestion response was not a list: {suggestions_list}")
+            return []
+
+    except Exception as e:
+        LOGGER.error(f"Section suggestion generation failed: {e}", exc_info=True)
+        return []
+
+
 @celery_app.task(
     name="app.worker.generate_section_content",
     bind=True,

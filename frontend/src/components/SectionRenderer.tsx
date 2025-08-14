@@ -15,7 +15,6 @@ interface SectionRendererProps {
   onAddSectionBelow: (position: number) => void
   dragHandleProps?: any
   isDragging?: boolean
-  isCustomSection?: boolean
 }
 
 export default function SectionRenderer({
@@ -29,7 +28,6 @@ export default function SectionRenderer({
   onAddSectionBelow,
   dragHandleProps,
   isDragging,
-  isCustomSection = section.section_type === 'custom'
 }: SectionRendererProps) {
   const { theme } = useTheme()
   const currentTheme = theme === 'light' ? lightTheme : darkTheme
@@ -55,10 +53,8 @@ export default function SectionRenderer({
   }
 
   const canDelete = section.section_type !== 'default_summary'
-  const canRegenerate = section.section_type !== 'default_summary' && 
-                        section.section_type !== 'custom' && 
-                        section.section_type !== 'decisions_actions' &&
-                        ['timeline', 'key_points', 'feedback_suggestions', 'metrics'].includes(section.section_type)
+  const isCustomSection = section.section_type === 'custom'
+  const canRegenerate = ['timeline', 'key_points', 'feedback_suggestions', 'metrics'].includes(section.section_type)
 
   const sectionStyle: React.CSSProperties = {
     position: 'relative',

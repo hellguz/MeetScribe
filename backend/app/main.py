@@ -34,8 +34,9 @@ from .models import (
     SectionCreate,
     SectionUpdate,
     SectionReorder,
+    SectionTemplate,
 )
-from .worker import process_transcription_and_summary, generate_summary_only
+from .worker import process_transcription_and_summary, generate_summary_only, suggest_section_types
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -783,6 +784,33 @@ def health() -> dict[str, str]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Section Management API
 # ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/meetings/{mid}/suggest-sections", response_model=list[SectionTemplate])
+def get_section_suggestions(mid: uuid.UUID):
+    """Analyze a meeting's transcript and suggest relevant section types."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        transcript = meeting.transcript_text
+        if not transcript:
+            # Attempt to build it if it's missing
+            transcript = _build_live_transcript(db, mid)
+
+        if not transcript or len(transcript.split()) < 20:
+            return [] # Not enough content to make good suggestions
+
+        suggestions = suggest_section_types(
+            transcript=transcript,
+            context=meeting.context,
+            meeting_title=meeting.title
+        )
+
+        # Validate and convert to SectionTemplate objects
+        validated_suggestions = [SectionTemplate(**s) for s in suggestions]
+        return validated_suggestions
+
 
 @app.get("/api/meetings/{mid}/sections", response_model=list[MeetingSection])
 def get_meeting_sections(mid: uuid.UUID):

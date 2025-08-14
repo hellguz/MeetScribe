@@ -145,14 +145,7 @@ export default function Summary() {
 
 	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
 		try {
-			let title = template.title.replace(/^[📝📊💡📈➕]\s/, '')
-			
-			if (template.type === 'custom') {
-				const customTitle = prompt('Enter section title:', title)
-				if (!customTitle) return
-				title = customTitle.trim()
-			}
-
+			// The title for custom sections is now set in the picker.
 			await createSection(template, addSectionPosition)
 		} catch (error) {
 			console.error('Error adding section:', error)
@@ -571,6 +564,7 @@ export default function Summary() {
 				isOpen={isTemplatePickerOpen}
 				onClose={() => setIsTemplatePickerOpen(false)}
 				onSelectTemplate={handleTemplateSelect}
+				meetingId={mid}
 			/>
 		</div>
 	)

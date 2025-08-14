@@ -224,3 +224,13 @@ class SectionReorder(SQLModel):
     """
 
     sections: List[dict]  # List of {id: int, position: int}
+
+
+class SectionTemplate(SQLModel):
+    """
+    Represents a predefined or suggested section template.
+    """
+    type: str
+    title: str
+    icon: str
+    description: str
