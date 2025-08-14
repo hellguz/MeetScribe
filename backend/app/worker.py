@@ -747,7 +747,7 @@ Transcript: {transcript[:3000]}"""
     }
     
     if section_type not in SECTION_PROMPTS:
-        return "Error: Unknown section type"
+        return f"Cannot regenerate content for section type '{section_type}'. This section type does not support AI generation."
     
     try:
         prompt_config = SECTION_PROMPTS[section_type]

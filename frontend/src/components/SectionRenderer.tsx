@@ -55,7 +55,10 @@ export default function SectionRenderer({
   }
 
   const canDelete = section.section_type !== 'default_summary'
-  const canRegenerate = section.section_type !== 'default_summary' && section.section_type !== 'custom'
+  const canRegenerate = section.section_type !== 'default_summary' && 
+                        section.section_type !== 'custom' && 
+                        section.section_type !== 'decisions_actions' &&
+                        ['timeline', 'key_points', 'feedback_suggestions', 'metrics'].includes(section.section_type)
 
   const sectionStyle: React.CSSProperties = {
     position: 'relative',

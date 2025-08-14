@@ -4,6 +4,7 @@ import logging
 import shutil
 import uuid
 import datetime as dt
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -65,6 +66,120 @@ app.add_middleware(
 )
 
 INACTIVITY_TIMEOUT_SECONDS = 120
+
+
+def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -> list[MeetingSection]:
+    """
+    Parse a markdown summary and convert it into section objects.
+    Splits on major headers (###, ####) and creates appropriate sections.
+    """
+    if not summary_markdown:
+        return []
+    
+    sections = []
+    
+    # Split the content by lines and identify headers
+    lines = summary_markdown.split('\n')
+    current_section_lines = []
+    current_title = ""
+    current_header_level = ""
+    position = 0
+    
+    def create_section_from_current():
+        nonlocal current_section_lines, current_title, position
+        if current_title or current_section_lines:
+            content = '\n'.join(current_section_lines).strip()
+            title = current_title if current_title else "Meeting Summary"
+            
+            # Determine section type based on title keywords
+            title_lower = title.lower()
+            if 'summary' in title_lower and position == 0:
+                section_type = "default_summary"
+            elif any(keyword in title_lower for keyword in ['timeline', 'chronolog', 'sequence']):
+                section_type = "timeline"
+            elif any(keyword in title_lower for keyword in ['key points', 'main points', 'important']):
+                section_type = "key_points"
+            elif any(keyword in title_lower for keyword in ['feedback', 'suggestions', 'recommendations']):
+                section_type = "feedback_suggestions"
+            elif any(keyword in title_lower for keyword in ['metrics', 'data', 'statistics', 'numbers']):
+                section_type = "metrics"
+            elif any(keyword in title_lower for keyword in ['decisions', 'action', 'next steps']):
+                section_type = "decisions_actions"
+            else:
+                section_type = "custom"
+            
+            sections.append(MeetingSection(
+                meeting_id=meeting_id,
+                section_type=section_type,
+                title=title,
+                content=content,
+                position=position
+            ))
+            
+            current_section_lines = []
+            current_title = ""
+            position += 1
+    
+    for line in lines:
+        # Check if this line is a header (### or ####)
+        header_match = re.match(r'^(#{3,4})\s+(.+)$', line.strip())
+        if header_match:
+            # Save previous section if it exists
+            create_section_from_current()
+            # Start new section
+            current_header_level = header_match.group(1)
+            current_title = header_match.group(2).strip()
+        else:
+            # Add to current section content
+            current_section_lines.append(line)
+    
+    # Don't forget the last section
+    create_section_from_current()
+    
+    # If no sections were created (no headers found), create a single default section
+    if not sections:
+        sections.append(MeetingSection(
+            meeting_id=meeting_id,
+            section_type="default_summary",
+            title="Meeting Summary",
+            content=summary_markdown.strip(),
+            position=0
+        ))
+    
+    return sections
+
+
+def convert_existing_summary_to_sections(db: Session, meeting: Meeting) -> list[MeetingSection]:
+    """
+    Convert an existing meeting's markdown summary into sections.
+    Only converts if no sections exist yet.
+    """
+    if not meeting.summary_markdown:
+        return []
+    
+    # Check if sections already exist
+    existing_sections = db.exec(
+        select(MeetingSection).where(MeetingSection.meeting_id == meeting.id)
+    ).all()
+    
+    if existing_sections:
+        return existing_sections
+    
+    # Parse and create sections
+    new_sections = parse_markdown_into_sections(meeting.summary_markdown, meeting.id)
+    
+    # Save to database
+    for section in new_sections:
+        db.add(section)
+    
+    db.commit()
+    
+    # Refresh all sections
+    for section in new_sections:
+        db.refresh(section)
+    
+    LOGGER.info(f"Converted meeting {meeting.id} summary into {len(new_sections)} sections")
+    return new_sections
 
 
 def is_valid_summary_length(length_str: str | None) -> bool:
@@ -671,31 +786,22 @@ def health() -> dict[str, str]:
 
 @app.get("/api/meetings/{mid}/sections", response_model=list[MeetingSection])
 def get_meeting_sections(mid: uuid.UUID):
-    """Get all sections for a meeting, ordered by position."""
+    """Get all sections for a meeting, ordered by position. Auto-converts existing summaries to sections."""
     with Session(engine) as db:
         meeting = db.get(Meeting, mid)
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
         
+        # Check if sections already exist
         sections = db.exec(
             select(MeetingSection)
             .where(MeetingSection.meeting_id == mid)
             .order_by(MeetingSection.position)
         ).all()
         
-        # If no sections exist and meeting has a summary, create default section
+        # If no sections exist but meeting has a summary, convert it to sections
         if not sections and meeting.summary_markdown:
-            default_section = MeetingSection(
-                meeting_id=mid,
-                section_type="default_summary",
-                title="Meeting Summary",
-                content=meeting.summary_markdown,
-                position=0
-            )
-            db.add(default_section)
-            db.commit()
-            db.refresh(default_section)
-            sections = [default_section]
+            sections = convert_existing_summary_to_sections(db, meeting)
         
         return sections
 
@@ -854,8 +960,13 @@ def regenerate_section_content(section_id: int):
         if not section:
             raise HTTPException(status_code=404, detail="Section not found")
         
-        if section.section_type == "custom":
-            raise HTTPException(status_code=400, detail="Cannot regenerate custom sections")
+        # Check if section type supports regeneration
+        regenerable_types = ["timeline", "key_points", "feedback_suggestions", "metrics"]
+        if section.section_type not in regenerable_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Cannot regenerate section type '{section.section_type}'. Only {', '.join(regenerable_types)} sections can be regenerated."
+            )
         
         section.is_generating = True
         section.content = None
