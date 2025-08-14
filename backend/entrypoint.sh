@@ -3,6 +3,12 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Create data directory if it doesn't exist
+mkdir -p /app/data
+
+# Create the database file if it doesn't exist
+touch /app/data/db.sqlite3
+
 # Run all database migrations. These scripts are idempotent and safe to run
 # on every application start, for both the web server and the worker.
 echo "Running database migrations..."

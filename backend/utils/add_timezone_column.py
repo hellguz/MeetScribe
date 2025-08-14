@@ -14,7 +14,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from app.config import settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("migration")
@@ -29,6 +29,13 @@ def run_migration():
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
 
     with engine.connect() as connection:
+        inspector = inspect(engine)
+        
+        # Check if the meeting table exists
+        if 'meeting' not in inspector.get_table_names():
+            log.info("Meeting table does not exist. No migration needed.")
+            return
+            
         with connection.begin():  # Start a transaction
             try:
                 result = connection.execute(text("PRAGMA table_info(meeting);"))

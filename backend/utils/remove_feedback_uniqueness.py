@@ -38,6 +38,12 @@ def run_migration():
 
     with engine.connect() as connection:
         inspector = inspect(engine)
+        
+        # Check if the feedback table exists
+        if 'feedback' not in inspector.get_table_names():
+            log.info("Feedback table does not exist. No migration needed.")
+            return
+            
         indexes = inspector.get_indexes('feedback')
         
         # Check if the specific unique index exists

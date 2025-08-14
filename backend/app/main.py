@@ -41,12 +41,14 @@ logging.basicConfig(
 openai.api_key = settings.openai_api_key
 
 engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
-SQLModel.metadata.create_all(engine)
+
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
 
 AUDIO_DIR = Path("data/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="MeetScribe MVP")
+app = FastAPI(title="MeetScribe MVP", on_startup=[create_db_and_tables])
 
 app.add_middleware(
     CORSMiddleware,
