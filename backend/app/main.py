@@ -827,7 +827,7 @@ def create_section(mid: uuid.UUID, body: SectionCreate):
             db.add(section)
         
         # Determine if this section needs AI generation
-        needs_ai_generation = body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"] or body.section_type.startswith("ai_")
+        needs_ai_generation = body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"] or body.section_type.startswith("ai_") or body.section_type == "custom"
         
         new_section = MeetingSection(
             meeting_id=mid,
@@ -1056,10 +1056,10 @@ Transcript preview: {transcript[:500]}""",
             # Return fallback templates
             return {
                 "templates": [
-                    {"type": "ai_0", "title": "Content Breakdown", "icon": "🧩", "description": "Reorganize content by themes instead of chronology", "is_ai_suggested": True},
-                    {"type": "ai_1", "title": "Participant Views", "icon": "👥", "description": "Different perspectives and viewpoints shared", "is_ai_suggested": True},
-                    {"type": "ai_2", "title": "Context Analysis", "icon": "🔍", "description": "Background information and underlying factors", "is_ai_suggested": True},
-                    {"type": "ai_3", "title": "Impact Summary", "icon": "⚡", "description": "Potential outcomes and implications discussed", "is_ai_suggested": True}
+                    {"type": "ai_0", "title": "Action Items", "icon": "✅", "description": "Tasks, assignments, and next steps from this meeting", "is_ai_suggested": True},
+                    {"type": "ai_1", "title": "Decisions Made", "icon": "🎯", "description": "Key decisions reached and their rationale", "is_ai_suggested": True},
+                    {"type": "ai_2", "title": "Follow-ups", "icon": "📋", "description": "What happens next and who's responsible", "is_ai_suggested": True},
+                    {"type": "ai_3", "title": "Participants", "icon": "👥", "description": "Who attended and their key contributions", "is_ai_suggested": True}
                 ]
             }
 

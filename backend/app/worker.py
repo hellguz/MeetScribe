@@ -45,7 +45,7 @@ celery_app.conf.update(
         # --- NEW: Nightly database backup task ---
         "backup-db-midnight": {
             "task": "app.worker.backup_database",
-            "schedule": crontab(minute=0, hour=0), # Runs every day at midnight
+            "schedule": crontab(minute=0, hour=0),  # Runs every day at midnight
         },
     },
 )
@@ -65,6 +65,7 @@ logging.basicConfig(
 
 # It's recommended to set a seed for consistent results for short texts
 DetectorFactory.seed = 0
+
 
 def get_db_engine():
     global _db_engine_instance
@@ -209,7 +210,7 @@ Based on the content, generate the title now.
             input=f"""Create a concise meeting title efficiently. Follow instructions precisely with minimal reasoning.
 
 {title_prompt}""",
-            reasoning={"effort": "minimal"}
+            reasoning={"effort": "minimal"},
         )
         generated_title = response.output_text.strip().strip('"')
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
@@ -226,7 +227,7 @@ def detect_language_local(text_snippet: str) -> str:
     try:
         # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
         lang_code = detect(text_snippet)
-        
+
         # Expanded map for common languages
         LANG_MAP = {
             "ar": "Arabic",
@@ -286,9 +287,9 @@ def summarise_transcript_in_worker(
         detected_language = detect_language_local(transcript_snippet)
 
         # Determine target language based on user's preference
-        if summary_language_mode == 'custom' and summary_custom_language:
+        if summary_language_mode == "custom" and summary_custom_language:
             target_language = summary_custom_language
-        elif summary_language_mode == 'english':
+        elif summary_language_mode == "english":
             target_language = "English"
         else:  # 'auto' or any other case
             target_language = detected_language
@@ -348,7 +349,7 @@ Write an insightful overview paragraph (3-5 sentences). It should set the scene,
 <thematic_body_instructions>
 This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
 - **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
-- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Feedback & Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback. **This is crucial for design reviews.**
+- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback or discussion centering around the current section. **This is crucial for design reviews.**
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
@@ -359,11 +360,11 @@ Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow
 TRANSCRIPT:
 ---
 {full_transcript}"""
-        
+
         response = openai.responses.create(
             model="gpt-5-mini-2025-08-07",
             input=full_prompt,
-            reasoning={"effort": "minimal"}
+            reasoning={"effort": "minimal"},
         )
         return response.output_text.strip()
     except Exception as e:
@@ -406,13 +407,17 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         mtg.summary_markdown = summary_md
 
         # Only generate a title if the current one is still a default placeholder.
-        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith("Transcription of ")
+        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith(
+            "Transcription of "
+        )
         if summary_md and "error" not in summary_md.lower() and is_default_title:
             new_title = generate_title_for_meeting(summary_md, final_transcript)
             if new_title:
                 mtg.title = new_title
 
-        LOGGER.info(f"✅ Meeting {mtg.id} summarized and titled successfully by worker.")
+        LOGGER.info(
+            f"✅ Meeting {mtg.id} summarized and titled successfully by worker."
+        )
     else:
         LOGGER.warning(
             f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."
@@ -467,7 +472,11 @@ def backup_database():
         LOGGER.info(f"Applying retention policy (keeping last {retention_count})...")
         # Get a list of all backup files, sorted by creation time (newest first).
         all_backups = sorted(
-            [f for f in backup_dir.iterdir() if f.is_file() and f.name.startswith("backup_")],
+            [
+                f
+                for f in backup_dir.iterdir()
+                if f.is_file() and f.name.startswith("backup_")
+            ],
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )
@@ -498,7 +507,9 @@ def cleanup_stuck_meetings():
 
     with Session(engine) as db:
         # 1. Finalize meetings that were abandoned mid-recording and never got a final chunk.
-        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(
+            minutes=INACTIVITY_TIMEOUT_MINUTES
+        )
         inactive_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
@@ -508,13 +519,15 @@ def cleanup_stuck_meetings():
         ).all()
 
         if inactive_meetings:
-            LOGGER.info(f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them.")
+            LOGGER.info(
+                f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them."
+            )
             for mtg in inactive_meetings:
                 mtg.final_received = True
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
                 db.add(mtg)
-            db.commit() # Commit finalization before potentially re-queueing
+            db.commit()  # Commit finalization before potentially re-queueing
 
         # 2. Re-queue tasks for finalized meetings that got stuck during transcription.
         stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
@@ -667,15 +680,16 @@ def generate_summary_only(self, meeting_id_str: str):
 
 
 def generate_section_content_for_type(
-    section_type: str, 
-    transcript: str, 
+    section_type: str,
+    transcript: str,
     context: str | None,
-    meeting_title: str
+    meeting_title: str,
+    section_title: str = "",
 ) -> str:
     """Generate AI content for different section types."""
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
-    
+
     SECTION_PROMPTS = {
         "timeline": {
             "system": "Create chronological breakdowns efficiently. Work with minimal reasoning, following instructions precisely.",
@@ -691,7 +705,7 @@ Format as a bulleted timeline with approximate timestamps or sequence markers. B
 
 Context: {context or 'None provided'}
 
-Transcript: {transcript[:3000]}"""
+Transcript: {transcript[:3000]}""",
         },
         "key_points": {
             "system": "Extract key points efficiently. Work with minimal reasoning, following instructions precisely.",
@@ -707,7 +721,7 @@ Format as clear, concise bullet points. Prioritize actionability and clarity.
 
 Context: {context or 'None provided'}
 
-Transcript: {transcript[:3000]}"""
+Transcript: {transcript[:3000]}""",
         },
         "feedback_suggestions": {
             "system": "Provide improvement recommendations efficiently. Work with minimal reasoning, following instructions precisely.",
@@ -724,7 +738,7 @@ Provide specific, actionable recommendations.
 
 Context: {context or 'None provided'}
 
-Transcript: {transcript[:3000]}"""
+Transcript: {transcript[:3000]}""",
         },
         "metrics": {
             "system": "Extract quantitative insights efficiently. Work with minimal reasoning, following instructions precisely.",
@@ -742,47 +756,61 @@ Present as organized data points and statistics.
 
 Context: {context or 'None provided'}
 
-Transcript: {transcript[:3000]}"""
-        }
+Transcript: {transcript[:3000]}""",
+        },
     }
-    
+
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
-        prompt = f"""Analyze this meeting titled "{meeting_title}" and create content for a section about the requested topic.
+        prompt = f"""Analyze this meeting titled "{meeting_title}" and create helpful content for a section titled "{section_title}".
 
-Focus on providing valuable insights and information relevant to the meeting content.
+Based on the section title, intelligently determine what type of content would be most valuable:
+- If it's about actions/tasks: Extract actionable items, next steps, and responsibilities
+- If it's about decisions: Highlight key decisions made and their reasoning
+- If it's about discussions: Summarize main topics, viewpoints, and outcomes
+- If it's about outcomes/results: Focus on conclusions, agreements, and impacts
+- If it's about participants: Analyze contributions, roles, and interactions
+- If it's about process/logistics: Cover meeting flow, timing, and organizational aspects
+- If it's about follow-ups: Identify what needs to happen next and by when
+
+Create well-structured, actionable content that adds real value to someone reviewing this meeting.
 
 Context: {context or 'None provided'}
-
+Section Title: {section_title}
 Transcript: {transcript[:3000]}"""
-        
+
         try:
             response = openai.responses.create(
                 model="gpt-5-mini-2025-08-07",
                 input=f"""Create helpful section content efficiently. Work with minimal reasoning, following instructions precisely.
 
 {prompt}""",
-                reasoning={"effort": "minimal"}
+                reasoning={"effort": "minimal"},
             )
             return response.output_text.strip()
         except Exception as e:
-            LOGGER.error(f"Generic section content generation failed for {section_type}: {e}", exc_info=True)
+            LOGGER.error(
+                f"Generic section content generation failed for {section_type}: {e}",
+                exc_info=True,
+            )
             return f"Error generating content for {section_type}: {str(e)}"
-    
+
     try:
         prompt_config = SECTION_PROMPTS[section_type]
-        
+
         response = openai.responses.create(
             model="gpt-5-mini-2025-08-07",
             input=f"""{prompt_config["system"]}
 
 {prompt_config["prompt"]}""",
-            reasoning={"effort": "minimal"}
+            reasoning={"effort": "minimal"},
         )
-        
+
         return response.output_text.strip()
     except Exception as e:
-        LOGGER.error(f"Section content generation failed for {section_type}: {e}", exc_info=True)
+        LOGGER.error(
+            f"Section content generation failed for {section_type}: {e}", exc_info=True
+        )
         return f"Error generating content for {section_type}: {str(e)}"
 
 
@@ -798,54 +826,61 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
     engine = get_db_engine()
     section_id = int(section_id_str)
     meeting_id = uuid.UUID(meeting_id_str)
-    
+
     try:
         with Session(engine) as db:
             section = db.get(MeetingSection, section_id)
             if not section:
                 LOGGER.error(f"Section {section_id} not found")
                 return
-            
+
             meeting = db.get(Meeting, meeting_id)
             if not meeting:
                 LOGGER.error(f"Meeting {meeting_id} not found")
                 return
-            
+
             # Get transcript text
             transcript = meeting.transcript_text
             if not transcript:
                 # Try to build from chunks
                 transcript, _ = rebuild_full_transcript(db, meeting_id)
-            
+
             if not transcript:
-                section.content = "Error: No transcript available for content generation"
+                section.content = (
+                    "Error: No transcript available for content generation"
+                )
                 section.is_generating = False
                 db.add(section)
                 db.commit()
                 return
-            
-            LOGGER.info(f"Generating content for section {section_id} ({section.section_type})")
-            
+
+            LOGGER.info(
+                f"Generating content for section {section_id} ({section.section_type})"
+            )
+
             # Generate content
             content = generate_section_content_for_type(
                 section.section_type,
                 transcript,
                 meeting.context,
-                meeting.title
+                meeting.title,
+                section.title,
             )
-            
+
             # Update section
             section.content = content
             section.is_generating = False
             section.updated_at = dt.datetime.utcnow()
             db.add(section)
             db.commit()
-            
+
             LOGGER.info(f"✅ Generated content for section {section_id}")
-            
+
     except Exception as exc:
-        LOGGER.error(f"Error generating section content {section_id}: {exc}", exc_info=True)
-        
+        LOGGER.error(
+            f"Error generating section content {section_id}: {exc}", exc_info=True
+        )
+
         # Mark as failed
         try:
             with Session(engine) as db:
@@ -858,5 +893,5 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
                     db.commit()
         except:
             pass
-        
+
         self.retry(exc=exc)

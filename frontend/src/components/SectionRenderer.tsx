@@ -29,7 +29,7 @@ export default function SectionRenderer({
   onAddSectionBelow,
   dragHandleProps,
   isDragging,
-  isCustomSection = section.section_type === 'custom'
+  isCustomSection = false // All sections are now editable
 }: SectionRendererProps) {
   const { theme } = useTheme()
   const currentTheme = theme === 'light' ? lightTheme : darkTheme
@@ -39,6 +39,12 @@ export default function SectionRenderer({
   const [editedTitle, setEditedTitle] = useState(section.title)
   const [editedContent, setEditedContent] = useState(section.content || '')
   const [isHovered, setIsHovered] = useState(false)
+
+  // Sync local state when section content changes (e.g., AI generation completes)
+  React.useEffect(() => {
+    setEditedTitle(section.title)
+    setEditedContent(section.content || '')
+  }, [section.title, section.content])
 
   const handleTitleSave = () => {
     if (editedTitle.trim() !== section.title) {
@@ -237,7 +243,7 @@ export default function SectionRenderer({
           }}>
             ⏳ Generating content...
           </div>
-        ) : isCustomSection && isEditingContent ? (
+        ) : isEditingContent ? (
           <div>
             <textarea
               value={editedContent}
@@ -251,16 +257,17 @@ export default function SectionRenderer({
               }}
               style={{
                 width: '100%',
-                minHeight: '150px',
-                padding: '12px',
-                borderRadius: '8px',
-                border: `1px solid ${currentTheme.input.border}`,
-                backgroundColor: currentTheme.input.background,
-                color: currentTheme.input.text,
+                minHeight: '100px',
+                padding: '0',
+                border: 'none',
+                backgroundColor: 'transparent',
+                color: currentTheme.text,
                 fontSize: '14px',
+                lineHeight: '1.6',
                 resize: 'vertical',
                 boxSizing: 'border-box',
                 fontFamily: "'Jost', serif",
+                outline: 'none'
               }}
               placeholder="Enter your content here..."
               autoFocus
@@ -268,9 +275,9 @@ export default function SectionRenderer({
           </div>
         ) : section.content ? (
           <div
-            onClick={() => isCustomSection && setIsEditingContent(true)}
+            onClick={() => setIsEditingContent(true)}
             style={{
-              cursor: isCustomSection ? 'pointer' : 'default',
+              cursor: 'pointer',
             }}
           >
             <ReactMarkdown
@@ -287,7 +294,7 @@ export default function SectionRenderer({
               }}
             />
           </div>
-        ) : isCustomSection ? (
+        ) : (
           <div
             onClick={() => setIsEditingContent(true)}
             style={{
@@ -301,15 +308,6 @@ export default function SectionRenderer({
             }}
           >
             Click to add content...
-          </div>
-        ) : (
-          <div style={{ 
-            color: currentTheme.secondaryText, 
-            fontStyle: 'italic',
-            textAlign: 'center',
-            padding: '16px 0',
-          }}>
-            No content available
           </div>
         )}
 

@@ -26,9 +26,9 @@ const SECTION_TEMPLATES: SectionTemplate[] = [
   },
   {
     type: 'feedback_suggestions',
-    title: 'Feedback & Suggestions',
+    title: 'Discussion',
     icon: '💡',
-    description: 'Meeting improvement recommendations'
+    description: 'Key discussion points and viewpoints'
   },
   {
     type: 'metrics',

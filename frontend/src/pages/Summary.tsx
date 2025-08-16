@@ -153,14 +153,6 @@ export default function Summary() {
 
 	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
 		try {
-			let title = template.title
-			
-			if (template.type === 'custom') {
-				const customTitle = prompt('Enter section title:', title)
-				if (!customTitle) return
-				title = customTitle.trim()
-			}
-
 			await createSection(template, addSectionPosition)
 		} catch (error) {
 			console.error('Error adding section:', error)
