@@ -396,28 +396,81 @@ export default function SectionRenderer({
           </div>
         )}
 
-        {/* Add section below button - mobile */}
-        {isMobile && (
-          <div style={{ textAlign: 'center', marginTop: '12px' }}>
+        {/* Mobile controls - tiny icons between sections */}
+        {isMobile && showControls && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            gap: '8px', 
+            marginTop: '16px',
+            padding: '8px 0',
+            borderTop: `1px solid ${currentTheme.border}`,
+            opacity: 0.7
+          }}>
+            {/* Add above */}
+            <button
+              onClick={(e) => onAddSectionAbove(section.position, e)}
+              style={{
+                width: '28px',
+                height: '28px',
+                border: 'none',
+                borderRadius: '4px',
+                backgroundColor: 'transparent',
+                color: currentTheme.secondaryText,
+                fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title="Add section above"
+            >
+              ⬆️
+            </button>
+
+            {/* Add below */}
             <button
               onClick={(e) => onAddSectionBelow(section.position, e)}
               style={{
-                ...buttonStyle,
-                width: 'auto',
-                padding: '8px 16px',
+                width: '28px',
+                height: '28px',
+                border: 'none',
+                borderRadius: '4px',
+                backgroundColor: 'transparent',
+                color: currentTheme.secondaryText,
                 fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
-                e.currentTarget.style.borderColor = currentTheme.button.primary
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = currentTheme.background
-                e.currentTarget.style.borderColor = currentTheme.border
-              }}
+              title="Add section below"
             >
-              + Add Section
+              ⬇️
             </button>
+
+            {/* Delete */}
+            {canDelete && (
+              <button
+                onClick={() => onDeleteSection(section.id)}
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  backgroundColor: 'transparent',
+                  color: currentTheme.button.danger,
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="Delete section"
+              >
+                🗑️
+              </button>
+            )}
           </div>
         )}
       </div>

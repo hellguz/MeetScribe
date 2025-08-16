@@ -685,74 +685,87 @@ def generate_section_content_for_type(
     context: str | None,
     meeting_title: str,
     section_title: str = "",
+    summary_length: str = "auto",
+    target_language: str = "English",
 ) -> str:
     """Generate AI content for different section types."""
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
 
+    # Length adjustments based on summary length setting
+    LENGTH_ADJUSTMENTS = {
+        "quar_page": "Keep extremely brief: 2-3 key points maximum",
+        "half_page": "Keep concise: 3-4 key points maximum", 
+        "one_page": "Keep moderate: 4-5 key points maximum",
+        "two_pages": "Can be detailed: 5-7 key points maximum",
+        "auto": "Keep concise: 3-5 key points maximum"
+    }
+    length_instruction = LENGTH_ADJUSTMENTS.get(summary_length, LENGTH_ADJUSTMENTS["auto"])
+
     SECTION_PROMPTS = {
         "timeline": {
-            "system": "Create chronological breakdowns efficiently. Work with minimal reasoning, following instructions precisely.",
+            "system": f"Create chronological breakdowns efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}". 
 
-Focus on:
-- Important transitions between topics
-- Key decisions or announcements
-- Notable interactions or exchanges
-- Major milestones in the discussion
+CRITICAL REQUIREMENTS:
+- {length_instruction}
+- Write your entire response in {target_language}
+- Use simple bullet points or short paragraphs
+- NO subsections, NO markdown headers (###, ##, #)
+- Focus only on the most important transitions and decisions
 
-Format as a bulleted timeline with approximate timestamps or sequence markers. Be concise but informative.
+Format as brief timeline entries.
 
 Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "key_points": {
-            "system": "Extract key points efficiently. Work with minimal reasoning, following instructions precisely.",
+            "system": f"Extract key points efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Extract the most important key points from this meeting titled "{meeting_title}".
 
-Focus on:
-- Main topics discussed
-- Important insights or learnings
-- Critical information shared
-- Key themes or patterns
+CRITICAL REQUIREMENTS:
+- {length_instruction}
+- Write your entire response in {target_language}
+- Use simple bullet points or short paragraphs
+- NO subsections, NO markdown headers (###, ##, #)
+- Focus only on the most critical insights and information
 
-Format as clear, concise bullet points. Prioritize actionability and clarity.
+Format as brief key points.
 
 Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "feedback_suggestions": {
-            "system": "Provide improvement recommendations efficiently. Work with minimal reasoning, following instructions precisely.",
+            "system": f"Provide improvement recommendations efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze this meeting titled "{meeting_title}" and provide constructive feedback and suggestions for improvement.
 
-Consider:
-- Meeting structure and flow
-- Participation and engagement
-- Communication effectiveness
-- Time management
-- Action item clarity
+CRITICAL REQUIREMENTS:
+- {length_instruction}
+- Write your entire response in {target_language}
+- Use simple bullet points or short paragraphs
+- NO subsections, NO markdown headers (###, ##, #)
+- Focus only on the most actionable improvements
 
-Provide specific, actionable recommendations.
+Provide brief, specific recommendations.
 
 Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "metrics": {
-            "system": "Extract quantitative insights efficiently. Work with minimal reasoning, following instructions precisely.",
+            "system": f"Extract quantitative insights efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze the metrics and measurable aspects of this meeting titled "{meeting_title}".
 
-Look for:
-- Speaking time distribution
-- Number of decisions made
-- Action items identified
-- Topics covered
-- Participation levels
-- Meeting duration insights
+CRITICAL REQUIREMENTS:
+- {length_instruction}
+- Write your entire response in {target_language}
+- Use simple bullet points or short paragraphs
+- NO subsections, NO markdown headers (###, ##, #)
+- Focus only on the most relevant quantitative insights
 
-Present as organized data points and statistics.
+Present as brief data points.
 
 Context: {context or 'None provided'}
 
@@ -762,15 +775,15 @@ Transcript: {transcript[:3000]}""",
 
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
-        prompt = f"""Create concise, focused content for a section titled "{section_title}" based on this meeting.
+        prompt = f"""Create focused content for a section titled "{section_title}" based on this meeting.
 
 CRITICAL REQUIREMENTS:
 - Do NOT repeat the section title "{section_title}" in your response
-- Keep content short: 3-5 bullet points maximum
+- {length_instruction}
+- Write your entire response in {target_language}
 - NO subsections, NO markdown headers (###, ##, #)
-- Use simple bullet points only
-- Be extremely concise and to-the-point
-- Each bullet point should be 1-2 sentences maximum
+- Use simple bullet points or short paragraphs
+- Be concise and to-the-point
 
 Based on the section title, extract only the most essential information:
 - Actions/tasks: List only the most critical action items
@@ -865,6 +878,16 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
                 f"Generating content for section {section_id} ({section.section_type})"
             )
 
+            # Determine target language based on meeting settings
+            if meeting.summary_language_mode == "custom" and meeting.summary_custom_language:
+                target_language = meeting.summary_custom_language
+            elif meeting.summary_language_mode == "english":
+                target_language = "English"
+            else:  # 'auto' or any other case
+                # Use detected language from transcript
+                transcript_snippet = transcript[:2000] if transcript else ""
+                target_language = detect_language_local(transcript_snippet)
+
             # Generate content
             content = generate_section_content_for_type(
                 section.section_type,
@@ -872,6 +895,8 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
                 meeting.context,
                 meeting.title,
                 section.title,
+                meeting.summary_length,
+                target_language,
             )
 
             # Update section
