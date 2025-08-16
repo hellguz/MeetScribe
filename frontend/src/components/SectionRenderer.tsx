@@ -396,79 +396,81 @@ export default function SectionRenderer({
           </div>
         )}
 
-        {/* Mobile controls - tiny icons between sections */}
+        {/* Mobile controls - plus, 6 dots, cross icons */}
         {isMobile && showControls && (
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            gap: '8px', 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: '8px',
             marginTop: '16px',
             padding: '8px 0',
             borderTop: `1px solid ${currentTheme.border}`,
             opacity: 0.7
           }}>
-            {/* Add above */}
+            {/* Add section (plus) */}
             <button
-              onClick={(e) => onAddSectionAbove(section.position, e)}
+              onClick={(e) => onAddSectionBelow(section.position + 1, e)}
               style={{
-                width: '28px',
-                height: '28px',
+                width: '32px',
+                height: '32px',
                 border: 'none',
                 borderRadius: '4px',
                 backgroundColor: 'transparent',
                 color: currentTheme.secondaryText,
-                fontSize: '12px',
+                fontSize: '18px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
-              title="Add section above"
+              title="Add section"
             >
-              ⬆️
+              +
             </button>
 
-            {/* Add below */}
-            <button
-              onClick={(e) => onAddSectionBelow(section.position, e)}
-              style={{
-                width: '28px',
-                height: '28px',
-                border: 'none',
-                borderRadius: '4px',
-                backgroundColor: 'transparent',
-                color: currentTheme.secondaryText,
-                fontSize: '12px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              title="Add section below"
-            >
-              ⬇️
-            </button>
+            {/* Move section (6 dots) */}
+            {dragHandleProps && (
+              <div
+                {...dragHandleProps}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  backgroundColor: 'transparent',
+                  color: currentTheme.secondaryText,
+                  fontSize: '18px',
+                  cursor: 'grab',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="Move section"
+              >
+                ⋮⋮
+              </div>
+            )}
 
-            {/* Delete */}
+            {/* Remove section (cross) */}
             {canDelete && (
               <button
                 onClick={() => onDeleteSection(section.id)}
                 style={{
-                  width: '28px',
-                  height: '28px',
+                  width: '32px',
+                  height: '32px',
                   border: 'none',
                   borderRadius: '4px',
                   backgroundColor: 'transparent',
                   color: currentTheme.button.danger,
-                  fontSize: '12px',
+                  fontSize: '18px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
-                title="Delete section"
+                title="Remove section"
               >
-                🗑️
+                ×
               </button>
             )}
           </div>
