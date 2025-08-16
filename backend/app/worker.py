@@ -794,11 +794,11 @@ def generate_section_content_for_type(
 
     # Length adjustments based on summary length setting
     LENGTH_ADJUSTMENTS = {
-        "quar_page": "Keep extremely brief: 2-3 key points maximum",
-        "half_page": "Keep concise: 3-4 key points maximum", 
-        "one_page": "Keep moderate: 4-5 key points maximum",
-        "two_pages": "Can be detailed: 5-7 key points maximum",
-        "auto": "Keep concise: 3-5 key points maximum"
+        "quar_page": "Keep very short: 1-2 brief paragraphs maximum",
+        "half_page": "Keep short: 2-3 paragraphs maximum", 
+        "one_page": "Keep moderate: 3-4 paragraphs maximum",
+        "two_pages": "Can be longer: 4-6 paragraphs maximum",
+        "auto": "Keep concise: 2-3 paragraphs maximum"
     }
     length_instruction = LENGTH_ADJUSTMENTS.get(summary_length, LENGTH_ADJUSTMENTS["auto"])
 
@@ -808,92 +808,67 @@ def generate_section_content_for_type(
     
     SECTION_PROMPTS = {
         "timeline": {
-            "system": f"Create human-friendly chronological summaries in {target_language}. Focus on what actually happened and when. Work efficiently.",
-            "prompt": f"""Create a timeline showing how this {duration_text} meeting titled "{meeting_title}" unfolded.
-MEETING CONTEXT: {time_context}
-Purpose: {context or 'Not specified'}
+            "system": f"Create readable chronological overviews in {target_language}. Work efficiently.",
+            "prompt": f"""Summarize how this {duration_text} meeting titled "{meeting_title}" progressed chronologically.
 
 REQUIREMENTS:
 - {length_instruction}
-- Write in {target_language}
-- Show the meeting's natural flow and key moments
-- Include approximate timing when evident (beginning, middle, end)
-- Focus on decisions, transitions, and important discussions
-- Make it human-readable - someone should understand what happened when
-
-Create a narrative timeline that captures the meeting's progression.
+- Write in {target_language} as flowing text, not bullet points
+- Show the meeting's progression from start to finish
+- Mention key transitions and decisions in order
+- Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
         },
         "executive_summary": {
-            "system": f"Create executive-level overviews in {target_language}. Focus on outcomes and decisions that matter to leadership.",
+            "system": f"Create executive-level overviews in {target_language}. Work efficiently.",
             "prompt": f"""Create an executive summary of this {duration_text} meeting titled "{meeting_title}".
-MEETING CONTEXT: {time_context}
-Purpose: {context or 'Not specified'}
 
 REQUIREMENTS:
 - {length_instruction}
-- Write in {target_language}
-- Focus on outcomes, decisions, and business impact
-- Answer: What was accomplished? What decisions were made? What's next?
-- Use clear, professional language suitable for leadership
-- Highlight any risks, opportunities, or resource needs
-
-Write for busy executives who need to understand the key outcomes.
+- Write in {target_language} as flowing text
+- Focus on key outcomes, decisions, and next steps
+- Use professional but readable language
+- Write as coherent paragraphs, not bullet points
 
 Transcript: {transcript[:3000]}""",
         },
         "action_items": {
-            "system": f"Extract actionable tasks and assignments in {target_language}. Focus on who needs to do what by when.",
-            "prompt": f"""Extract all action items and tasks from this {duration_text} meeting titled "{meeting_title}".
-MEETING CONTEXT: {time_context}
-Purpose: {context or 'Not specified'}
+            "system": f"Extract actionable tasks in {target_language}. Work efficiently.",
+            "prompt": f"""Identify action items from this {duration_text} meeting titled "{meeting_title}".
 
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language}
-- Identify specific tasks, assignments, and follow-ups
-- Include owners/assignees when mentioned
-- Note deadlines or timeframes when discussed
-- Focus on what needs to happen next
-
-Create a clear task list that participants can act on.
+- List tasks clearly (this is one case where a simple list is appropriate)
+- Include who should do what when mentioned
+- Note deadlines when discussed
 
 Transcript: {transcript[:3000]}""",
         },
         "decisions_made": {
-            "system": f"Capture key decisions and their rationale in {target_language}. Focus on what was decided and why.",
-            "prompt": f"""Document the key decisions made during this {duration_text} meeting titled "{meeting_title}".
-MEETING CONTEXT: {time_context}
-Purpose: {context or 'Not specified'}
+            "system": f"Document key decisions in {target_language}. Work efficiently.",
+            "prompt": f"""Summarize the key decisions made during this {duration_text} meeting titled "{meeting_title}".
 
 REQUIREMENTS:
 - {length_instruction}
-- Write in {target_language}
-- Identify specific decisions that were reached
-- Include the reasoning or factors that led to each decision
-- Note any alternatives that were considered
-- Highlight any decisions that still need approval or confirmation
-
-Create a decision log that preserves the rationale for future reference.
+- Write in {target_language} as flowing text
+- Explain what was decided and why
+- Include the reasoning behind major decisions
+- Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
         },
         "participants": {
-            "system": f"Identify participant contributions in {target_language}. Focus on who said what and their key insights.",
-            "prompt": f"""Analyze who participated in this {duration_text} meeting titled "{meeting_title}" and their key contributions.
-MEETING CONTEXT: {time_context}
-Purpose: {context or 'Not specified'}
+            "system": f"Summarize participant contributions in {target_language}. Work efficiently.",
+            "prompt": f"""Describe who participated in this {duration_text} meeting titled "{meeting_title}" and their key contributions.
 
 REQUIREMENTS:
 - {length_instruction}
-- Write in {target_language}
-- Identify different speakers and their main contributions
-- Note expertise, roles, or perspectives each person brought
-- Highlight key insights or unique viewpoints shared
-- Focus on substantive contributions, not just participation
-
-Create a summary that shows who added value and how.
+- Write in {target_language} as flowing text
+- Identify different speakers and their main insights
+- Highlight key perspectives each person brought
+- Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
         },
@@ -901,21 +876,14 @@ Transcript: {transcript[:3000]}""",
 
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
-        prompt = f"""Create focused content for a section titled "{section_title}" from this {duration_text} meeting.
-MEETING CONTEXT: {time_context}
-Meeting: "{meeting_title}"
-Purpose: {context or 'Not specified'}
+        prompt = f"""Create content for a section titled "{section_title}" from this {duration_text} meeting.
 
 REQUIREMENTS:
-- Do NOT repeat the section title "{section_title}" in your response
 - {length_instruction}
-- Write in {target_language}
-- Focus specifically on what the section title requests
-- Make it practical and actionable for meeting participants
-- Include relevant context, timing, or people when helpful
-- Be human-readable and scan-friendly
-
-Analyze the transcript and extract information that directly relates to "{section_title}".
+- Write in {target_language} as flowing text, not bullet points
+- Focus specifically on what "{section_title}" suggests
+- Write as readable paragraphs
+- Be practical and useful for meeting participants
 
 Transcript: {transcript[:3000]}"""
 

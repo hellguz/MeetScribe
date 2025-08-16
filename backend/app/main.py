@@ -743,7 +743,17 @@ def create_section(mid: uuid.UUID, body: SectionCreate):
             db.add(section)
         
         # Determine if this section needs AI generation
-        needs_ai_generation = body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"] or body.section_type.startswith("ai_") or body.section_type == "custom"
+        # All template sections and AI/custom sections should be auto-generated
+        template_types = [
+            "executive_summary", "action_items", "decisions_made", "questions_raised", 
+            "next_steps", "timeline", "participants", "technical_details", 
+            "risks_challenges", "feedback_given", "budget_resources", "alternatives_considered"
+        ]
+        needs_ai_generation = (
+            body.section_type in template_types or 
+            body.section_type.startswith("ai_") or 
+            body.section_type == "custom"
+        )
         
         new_section = MeetingSection(
             meeting_id=mid,
