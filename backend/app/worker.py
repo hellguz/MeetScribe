@@ -762,24 +762,25 @@ Transcript: {transcript[:3000]}""",
 
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
-        prompt = f"""Create helpful content for a section titled "{section_title}" based on this meeting.
+        prompt = f"""Create concise, focused content for a section titled "{section_title}" based on this meeting.
 
-IMPORTANT FORMATTING RULES:
+CRITICAL REQUIREMENTS:
 - Do NOT repeat the section title "{section_title}" in your response
-- Keep structure simple - avoid excessive subsections or complex headers
-- Use bullet points for lists, not numbered sub-headers
-- Write in a clean, readable format without unnecessary markdown headers
-- Focus on actionable, valuable content
+- Keep content short: 3-5 bullet points maximum
+- NO subsections, NO markdown headers (###, ##, #)
+- Use simple bullet points only
+- Be extremely concise and to-the-point
+- Each bullet point should be 1-2 sentences maximum
 
-Based on the section title, provide relevant content:
-- If about actions/tasks: List actionable items and responsibilities
-- If about decisions: Highlight key decisions and reasoning
-- If about discussions: Summarize main topics and viewpoints
-- If about outcomes: Focus on conclusions and agreements
-- If about participants: Note key contributions and roles
-- If about follow-ups: Identify next steps and timelines
+Based on the section title, extract only the most essential information:
+- Actions/tasks: List only the most critical action items
+- Decisions: Highlight only key decisions made
+- Discussions: Summarize only main points discussed
+- Outcomes: Focus only on final conclusions
+- Participants: Note only key contributors
+- Follow-ups: List only immediate next steps
 
-Keep it simple, focused, and directly valuable for meeting review.
+Keep it brief, actionable, and scan-friendly.
 
 Meeting: "{meeting_title}"
 Context: {context or 'None provided'}

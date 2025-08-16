@@ -50,15 +50,31 @@ export default function SectionRenderer({
   React.useEffect(() => {
     if (isEditingContent) {
       const timer = setTimeout(() => {
-        const textarea = document.querySelector('textarea') as HTMLTextAreaElement
-        if (textarea) {
+        const textareas = document.querySelectorAll('textarea')
+        textareas.forEach(textarea => {
           textarea.style.height = 'auto'
-          textarea.style.height = textarea.scrollHeight + 'px'
-        }
+          const newHeight = Math.max(textarea.scrollHeight, 100)
+          textarea.style.height = newHeight + 'px'
+        })
       }, 0)
       return () => clearTimeout(timer)
     }
   }, [isEditingContent])
+
+  // Separate effect to handle content changes and set initial height
+  React.useEffect(() => {
+    if (isEditingContent && editedContent) {
+      const timer = setTimeout(() => {
+        const textareas = document.querySelectorAll('textarea')
+        textareas.forEach(textarea => {
+          textarea.style.height = 'auto'
+          const newHeight = Math.max(textarea.scrollHeight, 100)
+          textarea.style.height = newHeight + 'px'
+        })
+      }, 10) // Small delay to ensure content is rendered
+      return () => clearTimeout(timer)
+    }
+  }, [editedContent, isEditingContent])
 
   const handleTitleSave = () => {
     if (editedTitle.trim() !== section.title) {
@@ -114,9 +130,9 @@ export default function SectionRenderer({
   const buttonStyle: React.CSSProperties = {
     width: '32px',
     height: '32px',
-    border: `1px solid ${currentTheme.border}`,
+    border: 'none',
     borderRadius: '4px',
-    backgroundColor: currentTheme.background,
+    backgroundColor: 'transparent',
     color: currentTheme.secondaryText,
     fontSize: '14px',
     cursor: 'pointer',
@@ -124,7 +140,6 @@ export default function SectionRenderer({
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.2s ease',
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
   }
 
   const dragHandleStyle: React.CSSProperties = {
@@ -147,11 +162,9 @@ export default function SectionRenderer({
           style={buttonStyle}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
-            e.currentTarget.style.borderColor = currentTheme.button.primary
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = currentTheme.background
-            e.currentTarget.style.borderColor = currentTheme.border
+            e.currentTarget.style.backgroundColor = 'transparent'
           }}
           title="Add section above"
         >
@@ -267,8 +280,8 @@ export default function SectionRenderer({
             }}
             style={{
               width: '100%',
-              minHeight: 'auto',
-              height: 'auto',
+              minHeight: '100px',
+              height: Math.max(editedContent.split('\n').length * 24, 100) + 'px',
               padding: '0',
               border: 'none',
               backgroundColor: 'transparent',
@@ -286,7 +299,7 @@ export default function SectionRenderer({
             onInput={(e) => {
               // Auto-resize textarea to fit content
               e.currentTarget.style.height = 'auto'
-              e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'
+              e.currentTarget.style.height = Math.max(e.currentTarget.scrollHeight, 100) + 'px'
             }}
           />
         ) : section.content ? (
@@ -308,8 +321,7 @@ export default function SectionRenderer({
                     color: currentTheme.text, 
                     fontSize: '20px', 
                     fontWeight: '600', 
-                    margin: '16px 0 8px 0',
-                    fontFamily: "'Jost', serif"
+                    margin: '16px 0 8px 0'
                   }} {...props} />
                 ),
                 h2: ({ ...props }) => (
@@ -317,8 +329,7 @@ export default function SectionRenderer({
                     color: currentTheme.text, 
                     fontSize: '18px', 
                     fontWeight: '600', 
-                    margin: '14px 0 6px 0',
-                    fontFamily: "'Jost', serif"
+                    margin: '14px 0 6px 0'
                   }} {...props} />
                 ),
                 h3: ({ ...props }) => (
@@ -326,8 +337,7 @@ export default function SectionRenderer({
                     color: currentTheme.text, 
                     fontSize: '16px', 
                     fontWeight: '600', 
-                    margin: '12px 0 4px 0',
-                    fontFamily: "'Jost', serif"
+                    margin: '12px 0 4px 0'
                   }} {...props} />
                 ),
                 p: ({ ...props }) => (
@@ -335,24 +345,21 @@ export default function SectionRenderer({
                     lineHeight: 1.6, 
                     color: currentTheme.text, 
                     margin: '0 0 12px 0',
-                    fontSize: '16px',
-                    fontFamily: "'Jost', serif"
+                    fontSize: '16px'
                   }} {...props} />
                 ),
                 ul: ({ ...props }) => (
                   <ul style={{ 
                     color: currentTheme.text, 
                     margin: '0 0 12px 0',
-                    paddingLeft: '20px',
-                    fontFamily: "'Jost', serif"
+                    paddingLeft: '20px'
                   }} {...props} />
                 ),
                 ol: ({ ...props }) => (
                   <ol style={{ 
                     color: currentTheme.text, 
                     margin: '0 0 12px 0',
-                    paddingLeft: '20px',
-                    fontFamily: "'Jost', serif"
+                    paddingLeft: '20px'
                   }} {...props} />
                 ),
                 li: ({ ...props }) => (
@@ -360,15 +367,13 @@ export default function SectionRenderer({
                     color: currentTheme.text, 
                     marginBottom: '4px',
                     fontSize: '16px',
-                    lineHeight: 1.6,
-                    fontFamily: "'Jost', serif"
+                    lineHeight: 1.6
                   }} {...props} />
                 ),
                 strong: ({ ...props }) => (
                   <strong style={{ 
                     color: currentTheme.text, 
-                    fontWeight: '600',
-                    fontFamily: "'Jost', serif"
+                    fontWeight: '600'
                   }} {...props} />
                 ),
               }}

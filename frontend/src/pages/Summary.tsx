@@ -83,7 +83,6 @@ export default function Summary() {
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
 	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
-	const [showSectionsWarning, setShowSectionsWarning] = useState(false)
 	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
 
 	const {
@@ -119,11 +118,6 @@ export default function Summary() {
 		setIsEditingTitle(false)
 	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
-	// Check if we have custom sections when regenerating
-	useEffect(() => {
-		const hasCustomSections = sections.some(s => s.section_type !== 'default_summary')
-		setShowSectionsWarning(hasCustomSections)
-	}, [sections])
 
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) {
@@ -253,9 +247,9 @@ export default function Summary() {
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
-	const showControls = summary && !isProcessing
 	const useSectionsView = sections.length > 0
 	const hasSections = !sectionsLoading && sections.length > 0
+	const showControls = (summary && !isProcessing) || (hasSections && !sectionsLoading)
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -471,19 +465,6 @@ export default function Summary() {
 							)}
 						</div>
 						
-						{showSectionsWarning && hasSections && (
-							<div style={{
-								marginTop: '16px',
-								padding: '12px',
-								backgroundColor: 'rgba(255, 165, 0, 0.1)',
-								border: '1px solid rgba(255, 165, 0, 0.3)',
-								borderRadius: '8px',
-								fontSize: '14px',
-								color: currentThemeColors.text,
-							}}>
-								⚠️ You have custom sections. Regenerating the summary will preserve your custom sections but may affect the default summary content.
-							</div>
-						)}
 					</div>
 				)}
 			</div>
@@ -530,7 +511,6 @@ export default function Summary() {
 									alignItems: 'center',
 									justifyContent: 'center',
 									transition: 'all 0.2s ease',
-									boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
 								}}
 								onMouseEnter={(e) => {
 									e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
