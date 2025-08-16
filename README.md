@@ -12,7 +12,7 @@ Ever been in back-to-back meetings, frantically trying to type notes while also 
   * **🌐 Multi-Lingual Summaries:** Generate summaries in over 25 languages, including English, Spanish, Japanese, and more. The system can auto-detect the transcript language or you can specify a target language.
   * **🤖 Powerful & Flexible AI Core:**
       * **Local or Cloud Transcription:** Uses the high-quality `whisper-large-v3` model for speech-to-text. You can configure it to run on your own hardware for maximum privacy or use a faster cloud API (Groq) for transcription.
-      * **Intelligent Summarization:** Leverages `gpt-4.1-mini` for intelligent, context-aware summaries with a sophisticated prompting strategy that ensures high-quality, structured output.
+      * **Intelligent Summarization:** Leverages `gpt-5-mini` for intelligent, context-aware summaries with a sophisticated prompting strategy that ensures high-quality, structured output.
   * **📊 Comprehensive Admin Dashboard:** A new dashboard page gives a full overview of platform usage, device statistics, user feedback trends, and interesting facts like the "busiest hour" and "most active day".
   * **🎤 Live Transcription:** See the text appear in near real-time as you speak, so you know it's working.
   * **🔒 Private & Self-Hostable:** Your recordings and transcripts are processed on your own server, not a third-party service. Run it on your own machine or cloud server with a single Docker command.
@@ -79,7 +79,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
 
       * When you click "Stop & Summarize," the final audio chunk is uploaded.
       * After the Celery worker transcribes this last chunk, it sees that the meeting is complete. It assembles the full transcript from all chunks in SQLite.
-      * The worker detects the language of the transcript. Based on your selection (Auto, English, or Custom), it sends the complete text to the **OpenAI API** (`gpt-4.1-mini`) with a detailed prompt asking for a structured summary in the target language and desired length.
+      * The worker detects the language of the transcript. Based on your selection (Auto, English, or Custom), it sends the complete text to the **OpenAI API** (`gpt-5-mini`) with a detailed prompt asking for a structured summary in the target language and desired length.
       * The final summary, a dynamically generated title, and the full transcript are saved to the `Meeting` record in SQLite, and the `done` flag is set. The next time the frontend polls, it receives the completed summary and navigates you to the results page.
 
 ## 🚀 Quick Start (Docker)
