@@ -406,12 +406,12 @@ export default function SectionRenderer({
             gap: '8px',
             marginTop: '16px',
             padding: '8px 0',
-            borderTop: `1px solid ${currentTheme.border}`,
+            // borderTop: `1px solid ${currentTheme.border}`,
             opacity: 0.7
           }}>
             {/* Add section (plus) */}
             <button
-              onClick={(e) => onAddSectionBelow(section.position + 1, e)}
+              onClick={(e) => onAddSectionBelow(section.position, e)}
               style={{
                 width: '32px',
                 height: '32px',
