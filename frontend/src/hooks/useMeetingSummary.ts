@@ -11,7 +11,6 @@ interface UseMeetingSummaryProps {
 }
 
 export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseMeetingSummaryProps) => {
-    const [summary, setSummary] = useState<string | null>(null);
     const [transcript, setTranscript] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -24,6 +23,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
     const [isRegenerating, setIsRegenerating] = useState(false);
+    
     const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
         if (!mid) return;
 
@@ -46,7 +46,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             if (data.summary_language_mode) {
                 setLanguageState({
                     mode: data.summary_language_mode,
-                    // Use the meeting's custom language, but fall back to user's last known one if null
                     lastCustomLanguage: data.summary_custom_language || languageState.lastCustomLanguage,
                 });
             }
@@ -72,11 +71,18 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
                 setMeetingStartedAt(data.started_at || new Date().toISOString());
             }
 
-            if (data.done && data.summary_markdown) {
-                setSummary(data.summary_markdown);
+            if (data.done) {
                 setIsProcessing(false);
                 setIsLoading(false);
-                saveCached({ id: data.id, title: data.title, summary: data.summary_markdown, transcript: trn, updatedAt: new Date().toISOString() });
+                // Caching the raw summary is less important now, but we can cache the transcript
+                const cachedData = getCached(mid);
+                saveCached({ 
+                    id: data.id, 
+                    title: data.title, 
+                    summary: cachedData?.summary || '', // Keep old summary in cache for now
+                    transcript: trn, 
+                    updatedAt: new Date().toISOString() 
+                });
                 const historyList = getHistory();
                 const existingMeta = historyList.find((m) => m.id === data.id);
                 saveMeeting({ id: data.id, title: data.title, started_at: existingMeta?.started_at || data.started_at, status: 'complete' });
@@ -92,6 +98,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             setIsProcessing(false);
         }
     }, [mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState]);
+
     const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
         if (!mid) return;
         setSubmittedFeedback(prev => isSelected ? [...prev, type] : prev.filter(t => t !== type));
@@ -106,6 +113,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             fetchMeetingData(false); // Re-fetch to revert
         }
     };
+
     const handleSuggestionSubmit = async (suggestionText: string) => {
         if (!mid || !suggestionText) return;
         try {
@@ -119,6 +127,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             alert("Sorry, we couldn't submit your suggestion right now.");
         }
     };
+
     const handleRegenerate = useCallback(async (
         settings: {
             newLength?: SummaryLength;
@@ -128,7 +137,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     ) => {
         if (!mid) return;
 
-        // Optimistically update UI state
         if(settings.newLength) setCurrentMeetingLength(settings.newLength);
         if(settings.newContext !== undefined) setContext(settings.newContext);
 
@@ -147,8 +155,8 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
                 body: JSON.stringify(payload),
             });
             if (!res.ok) throw new Error('Failed to start summary regeneration.');
-            removeCached(mid);
-            setSummary(null);
+            
+            // Backend now handles section deletion. Frontend just needs to start polling.
             setIsProcessing(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -169,19 +177,21 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             const updatedMeeting = await res.json();
             setMeetingTitle(updatedMeeting.title);
             saveMeeting({ id: mid, title: updatedMeeting.title, started_at: meetingStartedAt, status: 'complete' });
-            if (summary) {
-                saveCached({ id: mid, title: updatedMeeting.title, summary, transcript, updatedAt: new Date().toISOString() });
+            
+            const cachedData = getCached(mid);
+            if (cachedData) {
+                saveCached({ ...cachedData, title: updatedMeeting.title, updatedAt: new Date().toISOString() });
             }
         } catch (err) {
             console.error(err);
             alert('Failed to update title');
         }
-    }, [mid, meetingTitle, meetingStartedAt, summary, transcript]);
+    }, [mid, meetingTitle, meetingStartedAt, transcript]);
+
     useEffect(() => {
         if (mid) {
             const cachedData = getCached(mid);
             if (cachedData) {
-                setSummary(cachedData.summary);
                 setTranscript(cachedData.transcript || null);
                 setMeetingTitle(cachedData.title);
                 setLoadedFromCache(true);
@@ -190,13 +200,14 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             fetchMeetingData(true);
         }
     }, [mid]);
+
     useEffect(() => {
         if (!isProcessing) return;
         const pollInterval = setInterval(() => fetchMeetingData(false), 5000);
         return () => clearInterval(pollInterval);
     }, [isProcessing, fetchMeetingData]);
+    
     return {
-        summary,
         transcript,
         isLoading,
         isProcessing,

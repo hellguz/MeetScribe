@@ -3,9 +3,10 @@ import { MeetingSection, SectionTemplate } from '../types'
 
 interface UseSectionsProps {
   meetingId: string | undefined
+  isProcessing: boolean // NEW: Get processing status from parent hook
 }
 
-export const useSections = ({ meetingId }: UseSectionsProps) => {
+export const useSections = ({ meetingId, isProcessing }: UseSectionsProps) => {
   const [sections, setSections] = useState<MeetingSection[]>([])
   const [isLoading, setIsLoading] = useState(true) 
   const [error, setError] = useState<string | null>(null)
@@ -18,10 +19,12 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
     }
 
     try {
-      setIsLoading(true)
-      setError(null)
+      // Don't set loading to true on polls, only on initial load
+      if (isLoading) {
+        setError(null)
+      }
       
-      const response = await fetch(`/api/meetings/${meetingId}/sections`)
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/sections`)
       if (!response.ok) {
         throw new Error(`Failed to fetch sections: ${response.statusText}`)
       }
@@ -35,13 +38,28 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
     } finally {
       setIsLoading(false)
     }
-  }, [meetingId])
+  }, [meetingId, isLoading])
+
+  // Initial fetch
+  useEffect(() => {
+    fetchSections()
+  }, [fetchSections])
+
+  // NEW: Polling logic based on the isProcessing flag from useMeetingSummary
+  useEffect(() => {
+    if (isProcessing) {
+      // When processing starts, clear current sections to show the loading state
+      setSections([]);
+      const pollInterval = setInterval(fetchSections, 3000);
+      return () => clearInterval(pollInterval);
+    }
+  }, [isProcessing, fetchSections]);
 
   const createSection = useCallback(async (template: SectionTemplate, position: number) => {
     if (!meetingId) return
 
     try {
-      const response = await fetch(`/api/meetings/${meetingId}/sections`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/sections`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -58,34 +76,17 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
         throw new Error(`Failed to create section: ${response.statusText}`)
       }
 
-      const newSection = await response.json()
-      
-      // Insert the new section at the correct position
-      setSections(current => {
-        const updated = [...current]
-        // Adjust positions of existing sections
-        for (let i = 0; i < updated.length; i++) {
-          if (updated[i].position >= position) {
-            updated[i].position += 1
-          }
-        }
-        // Add the new section
-        updated.push(newSection)
-        // Sort by position
-        return updated.sort((a, b) => a.position - b.position)
-      })
-
-      return newSection
+      await fetchSections() // Refetch all sections to ensure correct order
     } catch (err) {
       console.error('Error creating section:', err)
       setError(err instanceof Error ? err.message : 'Failed to create section')
       throw err
     }
-  }, [meetingId])
+  }, [meetingId, fetchSections])
 
   const updateSection = useCallback(async (sectionId: number, updates: Partial<MeetingSection>) => {
     try {
-      const response = await fetch(`/api/sections/${sectionId}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/sections/${sectionId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -115,7 +116,7 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
 
   const deleteSection = useCallback(async (sectionId: number) => {
     try {
-      const response = await fetch(`/api/sections/${sectionId}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/sections/${sectionId}`, {
         method: 'DELETE'
       })
 
@@ -123,31 +124,29 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
         throw new Error(`Failed to delete section: ${response.statusText}`)
       }
 
-      setSections(current => {
-        const sectionToDelete = current.find(s => s.id === sectionId)
-        if (!sectionToDelete) return current
-
-        const updated = current.filter(s => s.id !== sectionId)
-        // Adjust positions of remaining sections
-        return updated.map(section => ({
-          ...section,
-          position: section.position > sectionToDelete.position 
-            ? section.position - 1 
-            : section.position
-        })).sort((a, b) => a.position - b.position)
-      })
+      await fetchSections() // Refetch all sections to ensure correct order
     } catch (err) {
       console.error('Error deleting section:', err)
       setError(err instanceof Error ? err.message : 'Failed to delete section')
       throw err
     }
-  }, [])
+  }, [fetchSections])
 
   const reorderSections = useCallback(async (reorderedSections: Array<{ id: number; position: number }>) => {
     if (!meetingId) return
 
+    // Optimistically update the UI
+    setSections(current => {
+      const sectionMap = new Map(current.map(s => [s.id, s]));
+      const reordered = reorderedSections.map(r => {
+        const section = sectionMap.get(r.id);
+        return section ? { ...section, position: r.position } : null;
+      }).filter(Boolean) as MeetingSection[];
+      return reordered.sort((a, b) => a.position - b.position);
+    });
+
     try {
-      const response = await fetch(`/api/meetings/${meetingId}/sections/reorder`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/sections/reorder`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -158,25 +157,21 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
       if (!response.ok) {
         throw new Error(`Failed to reorder sections: ${response.statusText}`)
       }
+      
+      // Data is already updated, but a refetch can ensure consistency.
+      await fetchSections();
 
-      // Update local state to reflect new order
-      setSections(current => {
-        const updated = current.map(section => {
-          const reordered = reorderedSections.find(r => r.id === section.id)
-          return reordered ? { ...section, position: reordered.position } : section
-        })
-        return updated.sort((a, b) => a.position - b.position)
-      })
     } catch (err) {
       console.error('Error reordering sections:', err)
       setError(err instanceof Error ? err.message : 'Failed to reorder sections')
+      await fetchSections(); // Revert on error
       throw err
     }
-  }, [meetingId])
+  }, [meetingId, fetchSections])
 
   const regenerateSection = useCallback(async (sectionId: number) => {
     try {
-      const response = await fetch(`/api/sections/${sectionId}/regenerate`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/sections/${sectionId}/regenerate`, {
         method: 'POST'
       })
 
@@ -184,73 +179,18 @@ export const useSections = ({ meetingId }: UseSectionsProps) => {
         throw new Error(`Failed to regenerate section: ${response.statusText}`)
       }
 
-      // Mark section as generating
-      setSections(current => 
-        current.map(section => 
-          section.id === sectionId 
-            ? { ...section, is_generating: true, content: null }
-            : section
-        )
-      )
+      await fetchSections() // Just refetch to get updated generating status
 
-      // Poll for completion
-      const pollForContent = () => {
-        setTimeout(async () => {
-          try {
-            const checkResponse = await fetch(`/api/meetings/${meetingId}/sections`)
-            if (checkResponse.ok) {
-              const updatedSections = await checkResponse.json()
-              const updatedSection = updatedSections.find((s: MeetingSection) => s.id === sectionId)
-              
-              if (updatedSection && !updatedSection.is_generating) {
-                setSections(updatedSections.sort((a: MeetingSection, b: MeetingSection) => a.position - b.position))
-              } else {
-                pollForContent() // Continue polling
-              }
-            }
-          } catch (err) {
-            console.error('Error polling for section content:', err)
-          }
-        }, 2000)
-      }
-      
-      pollForContent()
     } catch (err) {
       console.error('Error regenerating section:', err)
       setError(err instanceof Error ? err.message : 'Failed to regenerate section')
       throw err
     }
-  }, [meetingId])
-
-  // Initial fetch
-  useEffect(() => {
-    fetchSections()
   }, [fetchSections])
-
-  // Poll for generating sections
-  useEffect(() => {
-    const generatingSections = sections.filter(s => s.is_generating)
-    
-    if (generatingSections.length === 0) return
-
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await fetch(`/api/meetings/${meetingId}/sections`)
-        if (response.ok) {
-          const updatedSections = await response.json()
-          setSections(updatedSections.sort((a: MeetingSection, b: MeetingSection) => a.position - b.position))
-        }
-      } catch (err) {
-        console.error('Error polling for section updates:', err)
-      }
-    }, 3000)
-
-    return () => clearInterval(pollInterval)
-  }, [sections, meetingId])
 
   return {
     sections,
-    isLoading,
+    isLoading: isLoading,
     error,
     fetchSections,
     createSection,

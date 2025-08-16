@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import os
 import sqlite3
+import re
 
 from celery import Celery
 from celery.schedules import crontab
@@ -15,7 +16,7 @@ from celery.signals import worker_ready
 from faster_whisper import WhisperModel
 from groq import BadRequestError, Groq
 import openai
-from sqlmodel import Session, select, func, create_engine
+from sqlmodel import Session, select, func, create_engine, delete
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
@@ -190,8 +191,7 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 **Instructions:**
 1.  **Language:** The title MUST be in the same language as the summary and transcript.
 2.  **Length:** The title must be between 6 and 15 words.
-3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting.
-Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
+3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
 **Meeting Summary:**
 ---
@@ -385,6 +385,85 @@ def rebuild_full_transcript(
     transcript_text = " ".join(text for text in chunks if text).strip()
     return transcript_text, len(chunks)
 
+def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -> list[MeetingSection]:
+    """
+    Parse a markdown summary and convert it into section objects. Splits on major headers (###, ####) and creates appropriate sections.
+    """
+    if not summary_markdown:
+        return []
+    
+    sections = []
+    
+    # Split the content by lines and identify headers
+    lines = summary_markdown.split('\n')
+    current_section_lines = []
+    current_title = ""
+    current_header_level = ""
+    position = 0
+    
+    def create_section_from_current():
+        nonlocal current_section_lines, current_title, position
+        if current_title or current_section_lines:
+            content = '\n'.join(current_section_lines).strip()
+            title = current_title if current_title else "Meeting Summary"
+            
+            # Determine section type based on title keywords
+            title_lower = title.lower()
+            if 'summary' in title_lower and position == 0:
+                section_type = "default_summary"
+            elif any(keyword in title_lower for keyword in ['timeline', 'chronolog', 'sequence']):
+                section_type = "timeline"
+            elif any(keyword in title_lower for keyword in ['key points', 'main points', 'important']):
+                section_type = "key_points"
+            elif any(keyword in title_lower for keyword in ['feedback', 'suggestions', 'recommendations']):
+                section_type = "feedback_suggestions"
+            elif any(keyword in title_lower for keyword in ['metrics', 'data', 'statistics', 'numbers']):
+                section_type = "metrics"
+            elif any(keyword in title_lower for keyword in ['decisions', 'action', 'next steps']):
+                section_type = "decisions_actions"
+            else:
+                section_type = "custom"
+            
+            sections.append(MeetingSection(
+                meeting_id=meeting_id,
+                section_type=section_type,
+                title=title,
+                content=content,
+                position=position
+            ))
+            
+            current_section_lines = []
+            current_title = ""
+            position += 1
+    
+    for line in lines:
+        # Check if this line is a header (### or ####)
+        header_match = re.match(r'^(#{3,4})\s+(.+)$', line.strip())
+        if header_match:
+            # Save previous section if it exists
+            create_section_from_current()
+            # Start new section
+            current_header_level = header_match.group(1)
+            current_title = header_match.group(2).strip()
+        else:
+            # Add to current section content
+            current_section_lines.append(line)
+    
+    # Don't forget the last section
+    create_section_from_current()
+    
+    # If no sections were created (no headers found), create a single default section
+    if not sections:
+        sections.append(MeetingSection(
+            meeting_id=meeting_id,
+            section_type="default_summary",
+            title="Meeting Summary",
+            content=summary_markdown.strip(),
+            position=0
+        ))
+    
+    return sections
+
 
 def finalize_meeting_processing(db: Session, mtg: Meeting):
     """Centralized logic to finalize a meeting."""
@@ -405,6 +484,21 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             mtg.context,
         )
         mtg.summary_markdown = summary_md
+
+        # --- NEW: Section creation logic ---
+        # 1. Delete any old sections to ensure a clean slate
+        LOGGER.info(f"Finalize: Deleting old sections for meeting {mtg.id}")
+        db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mtg.id))
+        
+        # 2. Parse the new markdown into section objects
+        new_sections = parse_markdown_into_sections(summary_md, mtg.id)
+
+        # 3. Add new sections to the database
+        if new_sections:
+            LOGGER.info(f"Finalize: Creating {len(new_sections)} new sections for meeting {mtg.id}")
+            db.add_all(new_sections)
+        else:
+            LOGGER.warning(f"Finalize: No sections were parsed from summary for meeting {mtg.id}")
 
         # Only generate a title if the current one is still a default placeholder.
         is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith(
@@ -705,8 +799,7 @@ def generate_section_content_for_type(
     SECTION_PROMPTS = {
         "timeline": {
             "system": f"Create chronological breakdowns efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
-            "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}". 
-
+            "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}".
 CRITICAL REQUIREMENTS:
 - {length_instruction}
 - Write your entire response in {target_language}
@@ -714,16 +807,13 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most important transitions and decisions
 
-Format as brief timeline entries.
-
-Context: {context or 'None provided'}
+Format as brief timeline entries. Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "key_points": {
             "system": f"Extract key points efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Extract the most important key points from this meeting titled "{meeting_title}".
-
 CRITICAL REQUIREMENTS:
 - {length_instruction}
 - Write your entire response in {target_language}
@@ -731,16 +821,13 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most critical insights and information
 
-Format as brief key points.
-
-Context: {context or 'None provided'}
+Format as brief key points. Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "feedback_suggestions": {
             "system": f"Provide improvement recommendations efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze this meeting titled "{meeting_title}" and provide constructive feedback and suggestions for improvement.
-
 CRITICAL REQUIREMENTS:
 - {length_instruction}
 - Write your entire response in {target_language}
@@ -748,16 +835,13 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most actionable improvements
 
-Provide brief, specific recommendations.
-
-Context: {context or 'None provided'}
+Provide brief, specific recommendations. Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
         "metrics": {
             "system": f"Extract quantitative insights efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze the metrics and measurable aspects of this meeting titled "{meeting_title}".
-
 CRITICAL REQUIREMENTS:
 - {length_instruction}
 - Write your entire response in {target_language}
@@ -765,9 +849,7 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most relevant quantitative insights
 
-Present as brief data points.
-
-Context: {context or 'None provided'}
+Present as brief data points. Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
@@ -776,7 +858,6 @@ Transcript: {transcript[:3000]}""",
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
         prompt = f"""Create focused content for a section titled "{section_title}" based on this meeting.
-
 CRITICAL REQUIREMENTS:
 - Do NOT repeat the section title "{section_title}" in your response
 - {length_instruction}
@@ -793,9 +874,7 @@ Based on the section title, extract only the most essential information:
 - Participants: Note only key contributors
 - Follow-ups: List only immediate next steps
 
-Keep it brief, actionable, and scan-friendly.
-
-Meeting: "{meeting_title}"
+Keep it brief, actionable, and scan-friendly. Meeting: "{meeting_title}"
 Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
 

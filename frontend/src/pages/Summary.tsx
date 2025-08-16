@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
@@ -14,22 +13,14 @@ import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SectionTemplate } from '../types'
 
-/**
- * Formats an ISO date string into a readable format, optionally for a specific timezone.
- * @param {string} isoString - The ISO date string to format.
- * @param {string | null} timeZone - The IANA timezone string.
- * @returns {string | null} The formatted date string or null on error.
- */
 const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
 	if (!isoString) return null
 
 	try {
 		const date = new Date(isoString)
-
-		// Round minutes
 		const minutes = date.getMinutes()
 		const roundedMinutes = Math.round(minutes)
-		date.setMinutes(roundedMinutes, 0, 0) // Also reset seconds and milliseconds
+		date.setMinutes(roundedMinutes, 0, 0)
 
 		const options: Intl.DateTimeFormatOptions = {
 			day: 'numeric',
@@ -38,7 +29,7 @@ const formatMeetingDate = (isoString?: string, timeZone?: string | null): string
 			hour: '2-digit',
 			minute: '2-digit',
 			hour12: false,
-			timeZone: timeZone || undefined, // Use system default if null/undefined
+			timeZone: timeZone || undefined,
 		}
 
 		return new Intl.DateTimeFormat('en-GB', options).format(date)
@@ -56,7 +47,6 @@ export default function Summary() {
 	const { languageState, setLanguageState } = useSummaryLanguage()
 
 	const {
-		summary,
 		transcript,
 		isLoading,
 		isProcessing,
@@ -75,6 +65,17 @@ export default function Summary() {
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
 
+	const {
+		sections,
+		isLoading: sectionsLoading,
+		error: sectionsError,
+		createSection,
+		updateSection,
+		deleteSection,
+		reorderSections,
+		regenerateSection
+	} = useSections({ meetingId: mid, isProcessing })
+
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
 	const [editedContext, setEditedContext] = useState<string | null>(null)
@@ -85,17 +86,6 @@ export default function Summary() {
 	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
 	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
 
-	const {
-		sections,
-		isLoading: sectionsLoading,
-		error: sectionsError,
-		createSection,
-		updateSection,
-		deleteSection,
-		reorderSections,
-		regenerateSection
-	} = useSections({ meetingId: mid })
-
 	useEffect(() => {
 		if (context !== null && editedContext === null) {
 			setEditedContext(context)
@@ -103,13 +93,19 @@ export default function Summary() {
 	}, [context, editedContext])
 
 	useEffect(() => {
-		// Clear timeout on component unmount
 		return () => {
 			if (copyTimeoutRef.current) {
 				clearTimeout(copyTimeoutRef.current)
 			}
 		}
 	}, [])
+
+	const fullSummaryText = useMemo(() => {
+		if (!sections || sections.length === 0) return '';
+		return sections
+			.map(s => `### ${s.title}\n\n${s.content || ''}`)
+			.join('\n\n---\n\n');
+	}, [sections]);
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -191,32 +187,23 @@ export default function Summary() {
 		if (!confirm('Reset to default summary? This will delete all custom sections and regenerate the original summary.')) return
 		
 		try {
-			// Delete all sections to return to default summary mode
-			for (const section of sections) {
-				await deleteSection(section.id)
-			}
-			// Trigger summary regeneration
 			handleRegenerate({})
 		} catch (error) {
 			console.error('Error resetting to default:', error)
 		}
-	}, [sections, deleteSection, handleRegenerate])
+	}, [handleRegenerate])
 
-	/**
-	 * Copies the meeting summary to the clipboard in the specified format.
-	 * @param {'text' | 'markdown'} format - The desired format for the clipboard content.
-	 */
 	const handleCopy = async (format: 'text' | 'markdown') => {
-		if (!meetingTitle || !summary) return
+		if (!meetingTitle || !fullSummaryText) return
 
 		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
 		let textToCopy = ''
 
 		if (format === 'markdown') {
-			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summary}`
+			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${fullSummaryText}`
 		} else {
-			const plainSummary = summary
-				.replace(/^---\s*$/gm, '') // Remove horizontal rules
+			const plainSummary = fullSummaryText
+				.replace(/^---\s*$/gm, '')
 				.replace(/####\s/g, '')
 				.replace(/###\s/g, '')
 				.replace(/\*\*(.*?)\*\*/g, '$1')
@@ -248,11 +235,11 @@ export default function Summary() {
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
 	const hasSections = !sectionsLoading && sections.length > 0
-	const showControls = (summary && !isProcessing) || (hasSections && !sectionsLoading)
+	const showControls = hasSections && !isProcessing && !sectionsLoading
 	
 	const displayLoading = (isLoading && !loadedFromCache) || sectionsLoading;
     const displayError = error || sectionsError;
-    const showProcessingMessage = (isProcessing || isRegenerating) && !summary && !sections.length;
+    const showProcessingMessage = (isProcessing || isRegenerating) && !hasSections;
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -284,7 +271,7 @@ export default function Summary() {
 					← Back to Recordings
 				</button>
 
-				{summary && !isProcessing && (
+				{hasSections && !isProcessing && (
 					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
 						{copyStatus !== 'idle' && (
 							<span
@@ -298,35 +285,32 @@ export default function Summary() {
 							</span>
 						)}
 						
-						{/* Reset button - only show if we have custom sections */}
-						{hasSections && (
-							<button
-								onClick={handleResetToDefaultSummary}
-								style={{
-									padding: '8px 12px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '6px',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.secondaryText,
-									cursor: 'pointer',
-									fontSize: '14px',
-									fontWeight: 500,
-									transition: 'all 0.2s ease',
-									fontFamily: 'Jost, serif',
-								}}
-								onMouseEnter={(e) => {
-									e.currentTarget.style.backgroundColor = currentThemeColors.background
-									e.currentTarget.style.borderColor = currentThemeColors.button.primary
-								}}
-								onMouseLeave={(e) => {
-									e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
-									e.currentTarget.style.borderColor = currentThemeColors.border
-								}}
-								title="Reset to default summary"
-							>
-								Reset
-							</button>
-						)}
+						<button
+							onClick={handleResetToDefaultSummary}
+							style={{
+								padding: '8px 12px',
+								border: `1px solid ${currentThemeColors.border}`,
+								borderRadius: '6px',
+								backgroundColor: currentThemeColors.backgroundSecondary,
+								color: currentThemeColors.secondaryText,
+								cursor: 'pointer',
+								fontSize: '14px',
+								fontWeight: 500,
+								transition: 'all 0.2s ease',
+								fontFamily: 'Jost, serif',
+							}}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.backgroundColor = currentThemeColors.background
+								e.currentTarget.style.borderColor = currentThemeColors.button.primary
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
+								e.currentTarget.style.borderColor = currentThemeColors.border
+							}}
+							title="Reset to default summary"
+						>
+							Reset
+						</button>
 						
 						<div
 							style={{
@@ -408,7 +392,7 @@ export default function Summary() {
 					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: "'Jost', serif" }}>{formattedDate}</p>
 				)}
 
-				{showControls && (
+				{(hasSections || isProcessing) && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
 						<div
 							style={{
@@ -418,8 +402,8 @@ export default function Summary() {
 								justifyContent: 'space-between',
 								alignItems: 'center',
 							}}>
-							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
-							<LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
+							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(len) => handleRegenerate({ newLength: len })} />
+							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={onLanguageChange} />
 						</div>
 
 						<div>
@@ -431,7 +415,7 @@ export default function Summary() {
 								value={editedContext ?? ''}
 								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
-								disabled={isRegenerating}
+								disabled={isRegenerating || isProcessing}
 								style={{
 									width: '100%',
 									minHeight: '60px',
@@ -443,13 +427,13 @@ export default function Summary() {
 									fontSize: '14px',
 									resize: 'vertical',
 									boxSizing: 'border-box',
-									opacity: isRegenerating ? 0.7 : 1,
+									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
 								<button
 									onClick={handleContextUpdateConfirm}
-									disabled={isRegenerating}
+									disabled={isRegenerating || isProcessing}
 									style={{
 										marginTop: '12px',
 										padding: '8px 16px',
@@ -459,20 +443,19 @@ export default function Summary() {
 										color: currentThemeColors.button.primaryText,
 										fontSize: '14px',
 										fontWeight: '500',
-										cursor: isRegenerating ? 'not-allowed' : 'pointer',
-										opacity: isRegenerating ? 0.6 : 1,
+										cursor: (isRegenerating || isProcessing) ? 'not-allowed' : 'pointer',
+										opacity: (isRegenerating || isProcessing) ? 0.6 : 1,
 										transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate Summary
 								</button>
 							)}
 						</div>
-						
 					</div>
 				)}
 			</div>
 
-			{/* Sections View or Traditional Summary */}
+			{/* Main Content Area */}
 			{displayLoading ? (
 				<p>Loading summary...</p>
 			) : displayError ? (
@@ -490,65 +473,13 @@ export default function Summary() {
 					showControls={showControls}
 					enableDragAndDrop={true}
 				/>
-			) : summary ? (
-				<div style={{ position: 'relative' }}>
-					{/* Add section button for traditional summary */}
-					{showControls && (
-						<div style={{
-							position: 'absolute',
-							left: '-40px',
-							top: '0',
-							opacity: 0.7,
-							transition: 'opacity 0.2s ease'
-						}}
-						onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-						onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}>
-							<button
-								onClick={(e) => handleAddSection(0, e)}
-								style={{
-									width: '32px',
-									height: '32px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '4px',
-									backgroundColor: currentThemeColors.background,
-									color: currentThemeColors.secondaryText,
-									fontSize: '14px',
-									cursor: 'pointer',
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									transition: 'all 0.2s ease',
-								}}
-								onMouseEnter={(e) => {
-									e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
-									e.currentTarget.style.borderColor = currentThemeColors.button.primary
-								}}
-								onMouseLeave={(e) => {
-									e.currentTarget.style.backgroundColor = currentThemeColors.background
-									e.currentTarget.style.borderColor = currentThemeColors.border
-								}}
-								title="Add section"
-							>
-								+
-							</button>
-						</div>
-					)}
-					<ReactMarkdown
-						children={summary}
-						components={{
-							h1: ({ ...props }) => <h1 style={{ color: currentThemeColors.text }} {...props} />,
-							h2: ({ ...props }) => <h2 style={{ color: currentThemeColors.text }} {...props} />,
-							p: ({ ...props }) => <p style={{ lineHeight: 1.6 }} {...props} />,
-						}}
-					/>
-				</div>
 			) : showProcessingMessage ? (
                 <p>⏳ Processing summary, please wait...</p>
             ) : (
 				<p>No summary is available for this meeting.</p>
 			)}
 
-			{summary && !isLoading && (
+			{hasSections && !isLoading && (
 				<FeedbackComponent
 					submittedTypes={submittedFeedback}
 					onFeedbackToggle={handleFeedbackToggle}
@@ -595,7 +526,6 @@ export default function Summary() {
 				</div>
 			)}
 
-			{/* Section Template Picker Modal */}
 			<SectionTemplatePicker
 				isOpen={isTemplatePickerOpen}
 				onClose={() => {
