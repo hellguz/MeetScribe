@@ -11,6 +11,7 @@ import DraggableSectionList from '../components/DraggableSectionList'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
 import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { SectionTemplate } from '../types'
 
 const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
@@ -254,6 +255,20 @@ export default function Summary() {
 		}
 	}
 
+	const handleLengthChangeWithWarning = (newLength: SummaryLength) => {
+		const hasCustomizations = sections && sections.length > 0
+		if (hasCustomizations) {
+			if (
+				!window.confirm(
+					'Changing the summary length will discard all current sections, including custom content and edits, and generate a new summary from the original transcript. Are you sure?'
+				)
+			) {
+				return // Abort if user cancels
+			}
+		}
+		handleRegenerate({ newLength })
+	}
+
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
 	const hasSections = !sectionsLoading && sections.length > 0
@@ -424,7 +439,7 @@ export default function Summary() {
 								justifyContent: 'space-between',
 								alignItems: 'center',
 							}}>
-							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(len) => handleRegenerate({ newLength: len })} />
+							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={handleLengthChangeWithWarning} />
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 

@@ -40,6 +40,7 @@ from .worker import (
     process_transcription_and_summary,
     generate_summary_only,
     translate_meeting_sections,
+    parse_markdown_into_sections,
 )
 
 LOGGER = logging.getLogger("meetscribe")
@@ -690,13 +691,34 @@ def get_meeting_sections(mid: uuid.UUID):
         meeting = db.get(Meeting, mid)
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
-        
+
         sections = db.exec(
             select(MeetingSection)
             .where(MeetingSection.meeting_id == mid)
             .order_by(MeetingSection.position)
         ).all()
-        
+
+        # Backfill logic for old meetings without sections
+        if not sections and meeting.summary_markdown:
+            LOGGER.info(
+                f"Meeting {mid} has markdown summary but no sections. Backfilling now."
+            )
+            new_sections = parse_markdown_into_sections(meeting.summary_markdown, mid)
+
+            if new_sections:
+                db.add_all(new_sections)
+                db.commit()
+                LOGGER.info(
+                    f"Successfully created {len(new_sections)} sections for meeting {mid}."
+                )
+                # Re-fetch the sections to get their DB-assigned IDs before returning
+                refreshed_sections = db.exec(
+                    select(MeetingSection)
+                    .where(MeetingSection.meeting_id == mid)
+                    .order_by(MeetingSection.position)
+                ).all()
+                return refreshed_sections
+
         return sections
 
 

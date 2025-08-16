@@ -23,7 +23,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
     const [isRegenerating, setIsRegenerating] = useState(false);
-    
+
     const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
         if (!mid) return;
 
@@ -156,7 +156,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             });
             if (!res.ok) throw new Error('Failed to start summary regeneration.');
             
-            // Backend now handles section deletion. Frontend just needs to start polling.
+            // Immediately start the processing state to update the UI
             setIsProcessing(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -186,7 +186,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             console.error(err);
             alert('Failed to update title');
         }
-    }, [mid, meetingTitle, meetingStartedAt, transcript]);
+    }, [mid, meetingTitle, meetingStartedAt]);
 
     useEffect(() => {
         if (mid) {
@@ -206,7 +206,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         const pollInterval = setInterval(() => fetchMeetingData(false), 5000);
         return () => clearInterval(pollInterval);
     }, [isProcessing, fetchMeetingData]);
-    
+
     return {
         transcript,
         isLoading,
