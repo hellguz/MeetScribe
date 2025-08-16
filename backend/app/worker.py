@@ -814,8 +814,8 @@ def generate_section_content_for_type(
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language} as flowing text, not bullet points
+- Do NOT repeat "timeline" or similar words in your response
 - Show the meeting's progression from start to finish
-- Mention key transitions and decisions in order
 - Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
@@ -827,8 +827,8 @@ Transcript: {transcript[:3000]}""",
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language} as flowing text
+- Do NOT repeat "executive summary" or similar words in your response
 - Focus on key outcomes, decisions, and next steps
-- Use professional but readable language
 - Write as coherent paragraphs, not bullet points
 
 Transcript: {transcript[:3000]}""",
@@ -840,9 +840,9 @@ Transcript: {transcript[:3000]}""",
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language}
+- Do NOT repeat "action items" or similar words in your response
 - List tasks clearly (this is one case where a simple list is appropriate)
 - Include who should do what when mentioned
-- Note deadlines when discussed
 
 Transcript: {transcript[:3000]}""",
         },
@@ -853,8 +853,8 @@ Transcript: {transcript[:3000]}""",
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language} as flowing text
+- Do NOT repeat "decisions" or similar words in your response
 - Explain what was decided and why
-- Include the reasoning behind major decisions
 - Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
@@ -866,8 +866,8 @@ Transcript: {transcript[:3000]}""",
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language} as flowing text
+- Do NOT repeat "participants" or similar words in your response
 - Identify different speakers and their main insights
-- Highlight key perspectives each person brought
 - Write as readable paragraphs, not lists
 
 Transcript: {transcript[:3000]}""",
@@ -881,9 +881,9 @@ Transcript: {transcript[:3000]}""",
 REQUIREMENTS:
 - {length_instruction}
 - Write in {target_language} as flowing text, not bullet points
+- Do NOT repeat "{section_title}" or similar words in your response
 - Focus specifically on what "{section_title}" suggests
 - Write as readable paragraphs
-- Be practical and useful for meeting participants
 
 Transcript: {transcript[:3000]}"""
 

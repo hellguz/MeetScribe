@@ -149,12 +149,20 @@ export default function SectionTemplatePicker({
 
   const allTemplates = [...SECTION_TEMPLATES, ...aiTemplates]
 
-  const handleSelectTemplate = (template: SectionTemplate) => {
+  const handleSelectTemplate = (template: SectionTemplate, event?: React.MouseEvent) => {
+    if (event) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
     onSelectTemplate(template)
     onClose()
   }
 
-  const handleCustomSectionCreate = () => {
+  const handleCustomSectionCreate = (event?: React.MouseEvent) => {
+    if (event) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
     if (customSectionTitle.trim()) {
       const customTemplate: SectionTemplate = {
         type: 'custom',
@@ -270,7 +278,8 @@ export default function SectionTemplatePicker({
               />
               {customSectionTitle.trim() && (
                 <button
-                  onClick={handleCustomSectionCreate}
+                  type="button"
+                  onClick={(e) => handleCustomSectionCreate(e)}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -307,7 +316,8 @@ export default function SectionTemplatePicker({
           {ESSENTIAL_TEMPLATES.map((template) => (
             <button
               key={template.type}
-              onClick={() => handleSelectTemplate(template)}
+              type="button"
+              onClick={(e) => handleSelectTemplate(template, e)}
               style={{
                 background: 'none',
                 border: 'none',
@@ -365,7 +375,8 @@ export default function SectionTemplatePicker({
           {ANALYSIS_TEMPLATES.map((template) => (
             <button
               key={template.type}
-              onClick={() => handleSelectTemplate(template)}
+              type="button"
+              onClick={(e) => handleSelectTemplate(template, e)}
               style={{
                 background: 'none',
                 border: 'none',
@@ -423,7 +434,8 @@ export default function SectionTemplatePicker({
           {CONTEXT_TEMPLATES.map((template) => (
             <button
               key={template.type}
-              onClick={() => handleSelectTemplate(template)}
+              type="button"
+              onClick={(e) => handleSelectTemplate(template, e)}
               style={{
                 background: 'none',
                 border: 'none',
@@ -495,7 +507,8 @@ export default function SectionTemplatePicker({
                 aiTemplates.map((template) => (
                   <button
                     key={template.type}
-                    onClick={() => handleSelectTemplate(template)}
+                    type="button"
+                    onClick={(e) => handleSelectTemplate(template, e)}
                     style={{
                       background: 'none',
                       border: 'none',

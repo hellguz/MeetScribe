@@ -144,8 +144,16 @@ export default function Summary() {
 	}, [handleAddSection])
 
 	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
+		// Preserve scroll position
+		const scrollPosition = window.scrollY
+		
 		try {
 			await createSection(template, addSectionPosition)
+			
+			// Restore scroll position after a brief delay to allow re-render
+			setTimeout(() => {
+				window.scrollTo(0, scrollPosition)
+			}, 0)
 		} catch (error) {
 			console.error('Error adding section:', error)
 		}
