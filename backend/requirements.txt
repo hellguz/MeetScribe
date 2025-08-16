@@ -10,8 +10,8 @@ python-multipart==0.0.9
 faster-whisper==1.1.1
 
 # OpenAI & deps
-openai==1.23.6               # 1.23 is the newest that still ships the v1 SDK
-httpx<0.27                   # keep httpx ≤ 0.26 so openai’s legacy `proxies=` arg works
+openai>=1.58.0               # Latest version with responses API and GPT-5 support
+httpx                        # Latest httpx for new OpenAI features
 
 # Celery & Redis
 celery==5.4.0

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import os
 import sqlite3
+import re
 
 from celery import Celery
 from celery.schedules import crontab
@@ -15,13 +16,13 @@ from celery.signals import worker_ready
 from faster_whisper import WhisperModel
 from groq import BadRequestError, Groq
 import openai
-from sqlmodel import Session, select, func, create_engine
+from sqlmodel import Session, select, func, create_engine, delete
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
 
 from .config import settings
-from .models import Meeting, MeetingChunk
+from .models import Meeting, MeetingChunk, MeetingSection
 
 # Configure Celery
 celery_app = Celery(
@@ -45,7 +46,7 @@ celery_app.conf.update(
         # --- NEW: Nightly database backup task ---
         "backup-db-midnight": {
             "task": "app.worker.backup_database",
-            "schedule": crontab(minute=0, hour=0), # Runs every day at midnight
+            "schedule": crontab(minute=0, hour=0),  # Runs every day at midnight
         },
     },
 )
@@ -65,6 +66,7 @@ logging.basicConfig(
 
 # It's recommended to set a seed for consistent results for short texts
 DetectorFactory.seed = 0
+
 
 def get_db_engine():
     global _db_engine_instance
@@ -189,8 +191,7 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 **Instructions:**
 1.  **Language:** The title MUST be in the same language as the summary and transcript.
 2.  **Length:** The title must be between 6 and 15 words.
-3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting.
-Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
+3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
 4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
 **Meeting Summary:**
 ---
@@ -204,18 +205,14 @@ Avoid generic titles like "Meeting Summary" or "Project Update". It should be sp
 
 Based on the content, generate the title now.
 """
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.5,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that creates concise meeting titles.",
-                },
-                {"role": "user", "content": title_prompt},
-            ],
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""Create a concise meeting title efficiently. Follow instructions precisely with minimal reasoning.
+
+{title_prompt}""",
+            reasoning={"effort": "minimal"},
         )
-        generated_title = response.choices[0].message.content.strip().strip('"')
+        generated_title = response.output_text.strip().strip('"')
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
         return generated_title
     except Exception as e:
@@ -230,7 +227,7 @@ def detect_language_local(text_snippet: str) -> str:
     try:
         # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
         lang_code = detect(text_snippet)
-        
+
         # Expanded map for common languages
         LANG_MAP = {
             "ar": "Arabic",
@@ -290,9 +287,9 @@ def summarise_transcript_in_worker(
         detected_language = detect_language_local(transcript_snippet)
 
         # Determine target language based on user's preference
-        if summary_language_mode == 'custom' and summary_custom_language:
+        if summary_language_mode == "custom" and summary_custom_language:
             target_language = summary_custom_language
-        elif summary_language_mode == 'english':
+        elif summary_language_mode == "english":
             target_language = "English"
         else:  # 'auto' or any other case
             target_language = detected_language
@@ -319,7 +316,7 @@ This is critical context provided by the user. You MUST use it as a source of tr
 """
 
         system_prompt = f"""
-You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+You are 'Scribe', an expert AI analyst. Work efficiently with minimal reasoning - follow instructions precisely to create an insightful, well-structured summary.
 {context_section}
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
@@ -334,15 +331,16 @@ You are 'Scribe', an expert AI analyst with the writing style of a seasoned cons
 
 <output_rules>
 **2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary. DO NOT include a title, heading, or date at the top. Start directly with the 'Summary' section.
+- Your response MUST BE ONLY the Markdown summary. DO NOT include a title or date at the top.
 - **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
+- **HEADINGS:** Use `####` for the initial overview and `###` for subsequent thematic sections. Headings should be descriptive and concise. **DO NOT** start headings with prefixes like "Theme:", "Topic:", or "Summary:".
 ---
-#### Summary
-Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
----
-*(...Thematic Sections Go Here...)*
----
+#### Overview
+Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes. Start the paragraph directly, without any prefix.
 
+*(...Generate thematic sections below this point, each starting with a `###` heading...)*
+
+---
 #### Key Decisions & Action Items
 - This section is mandatory unless there were absolutely no decisions or actions.
 - List all firm decisions made and all actionable next steps. This section should use bullet points.
@@ -350,22 +348,26 @@ Write an insightful overview paragraph (3-5 sentences). It should set the scene,
 </output_rules>
 
 <thematic_body_instructions>
-This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
-- **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
-- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Feedback & Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback. **This is crucial for design reviews.**
+After the 'Overview' section, create a `###` heading for each major theme you identified.
+- Under each heading, write a clear paragraph summarizing the main points of discussion for that theme. Explain the core arguments, proposals, and conclusions. **Start the paragraph directly, without any prefix.**
+- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback or discussion centering around the current section. **This is crucial for design reviews.**
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
-        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
-        response = openai.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.4, # Lower temperature for more deterministic output
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt_content},
-            ],
+        full_prompt = f"""{system_prompt}
+
+Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}
+
+TRANSCRIPT:
+---
+{full_transcript}"""
+
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=full_prompt,
+            reasoning={"effort": "minimal"},
         )
-        return response.choices[0].message.content.strip()
+        return response.output_text.strip()
     except Exception as e:
         LOGGER.error(f"Celery Worker: Summary generation failed: {e}", exc_info=True)
         return "Error: Summary generation failed."
@@ -383,6 +385,88 @@ def rebuild_full_transcript(
     ).all()
     transcript_text = " ".join(text for text in chunks if text).strip()
     return transcript_text, len(chunks)
+
+def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -> list[MeetingSection]:
+    """
+    Parse a markdown summary and convert it into section objects.
+    Splits on major headers (###, ####) and creates appropriate sections.
+    """
+    if not summary_markdown:
+        return []
+    
+    sections = []
+    
+    # Split the content by lines and identify headers
+    lines = summary_markdown.split('\n')
+    current_section_lines = []
+    current_title = ""
+    current_header_level = ""
+    position = 0
+    
+    def create_section_from_current():
+        nonlocal current_section_lines, current_title, position
+        if current_title or current_section_lines:
+            content = '\n'.join(current_section_lines).strip()
+            title = current_title if current_title else "Meeting Summary"
+            
+            # Determine section type based on title keywords
+            title_lower = title.lower()
+            if 'summary' in title_lower and position == 0:
+                section_type = "default_summary"
+            elif 'overview' in title_lower and position == 0:
+                section_type = "default_summary"
+            elif any(keyword in title_lower for keyword in ['timeline', 'chronolog', 'sequence']):
+                section_type = "timeline"
+            elif any(keyword in title_lower for keyword in ['key points', 'main points', 'important']):
+                section_type = "key_points"
+            elif any(keyword in title_lower for keyword in ['feedback', 'suggestions', 'recommendations', 'discussion']):
+                section_type = "feedback_suggestions"
+            elif any(keyword in title_lower for keyword in ['metrics', 'data', 'statistics', 'numbers']):
+                section_type = "metrics"
+            elif any(keyword in title_lower for keyword in ['decisions', 'action', 'next steps']):
+                section_type = "decisions_actions"
+            else:
+                section_type = "custom"
+            
+            sections.append(MeetingSection(
+                meeting_id=meeting_id,
+                section_type=section_type,
+                title=title,
+                content=content,
+                position=position
+            ))
+            
+            current_section_lines = []
+            current_title = ""
+            position += 1
+    
+    for line in lines:
+        # Check if this line is a header (### or ####)
+        header_match = re.match(r'^(#{3,4})\s+(.+)$', line.strip())
+        if header_match:
+            # Save previous section if it exists
+            create_section_from_current()
+            # Start new section
+            current_header_level = header_match.group(1)
+            current_title = header_match.group(2).strip()
+        else:
+            # Add to current section content
+            current_section_lines.append(line)
+    
+    # Don't forget the last section
+    create_section_from_current()
+    
+    # If no sections were created (no headers found), create a single default section
+    if not sections:
+        sections.append(MeetingSection(
+            meeting_id=meeting_id,
+            section_type="default_summary",
+            title="Meeting Summary",
+            content=summary_markdown.strip(),
+            position=0
+        ))
+    
+    return sections
 
 
 def finalize_meeting_processing(db: Session, mtg: Meeting):
@@ -405,14 +489,33 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         )
         mtg.summary_markdown = summary_md
 
+        # --- NEW: Section creation logic ---
+        # 1. Delete any old sections to ensure a clean slate
+        LOGGER.info(f"Finalize: Deleting old sections for meeting {mtg.id}")
+        db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mtg.id))
+        
+        # 2. Parse the new markdown into section objects
+        new_sections = parse_markdown_into_sections(summary_md, mtg.id)
+
+        # 3. Add new sections to the database
+        if new_sections:
+            LOGGER.info(f"Finalize: Creating {len(new_sections)} new sections for meeting {mtg.id}")
+            db.add_all(new_sections)
+        else:
+            LOGGER.warning(f"Finalize: No sections were parsed from summary for meeting {mtg.id}")
+
         # Only generate a title if the current one is still a default placeholder.
-        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith("Transcription of ")
+        is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith(
+            "Transcription of "
+        )
         if summary_md and "error" not in summary_md.lower() and is_default_title:
             new_title = generate_title_for_meeting(summary_md, final_transcript)
             if new_title:
                 mtg.title = new_title
 
-        LOGGER.info(f"✅ Meeting {mtg.id} summarized and titled successfully by worker.")
+        LOGGER.info(
+            f"✅ Meeting {mtg.id} summarized and titled successfully by worker."
+        )
     else:
         LOGGER.warning(
             f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."
@@ -467,7 +570,11 @@ def backup_database():
         LOGGER.info(f"Applying retention policy (keeping last {retention_count})...")
         # Get a list of all backup files, sorted by creation time (newest first).
         all_backups = sorted(
-            [f for f in backup_dir.iterdir() if f.is_file() and f.name.startswith("backup_")],
+            [
+                f
+                for f in backup_dir.iterdir()
+                if f.is_file() and f.name.startswith("backup_")
+            ],
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )
@@ -498,7 +605,9 @@ def cleanup_stuck_meetings():
 
     with Session(engine) as db:
         # 1. Finalize meetings that were abandoned mid-recording and never got a final chunk.
-        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(
+            minutes=INACTIVITY_TIMEOUT_MINUTES
+        )
         inactive_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
@@ -508,13 +617,15 @@ def cleanup_stuck_meetings():
         ).all()
 
         if inactive_meetings:
-            LOGGER.info(f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them.")
+            LOGGER.info(
+                f"Janitor: Found {len(inactive_meetings)} inactive, un-finalized meetings. Finalizing them."
+            )
             for mtg in inactive_meetings:
                 mtg.final_received = True
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
                 db.add(mtg)
-            db.commit() # Commit finalization before potentially re-queueing
+            db.commit()  # Commit finalization before potentially re-queueing
 
         # 2. Re-queue tasks for finalized meetings that got stuck during transcription.
         stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
@@ -664,3 +775,335 @@ def generate_summary_only(self, meeting_id_str: str):
         LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
         finalize_meeting_processing(db, mtg)
         LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+
+
+def generate_section_content_for_type(
+    section_type: str,
+    transcript: str,
+    context: str | None,
+    meeting_title: str,
+    section_title: str = "",
+    summary_length: str = "auto",
+    target_language: str = "English",
+    duration_minutes: int = 0,
+    meeting_started_at: str = "",
+) -> str:
+    """Generate AI content for different section types."""
+    if not openai.api_key:
+        openai.api_key = settings.openai_api_key
+
+    # Length adjustments based on summary length setting
+    LENGTH_ADJUSTMENTS = {
+        "quar_page": "Keep very short: 1-2 brief paragraphs maximum",
+        "half_page": "Keep short: 2-3 paragraphs maximum", 
+        "one_page": "Keep moderate: 3-4 paragraphs maximum",
+        "two_pages": "Can be longer: 4-6 paragraphs maximum",
+        "auto": "Keep concise: 2-3 paragraphs maximum"
+    }
+    length_instruction = LENGTH_ADJUSTMENTS.get(summary_length, LENGTH_ADJUSTMENTS["auto"])
+
+    # Prepare meeting metadata for more human context
+    duration_text = f"{duration_minutes} minutes" if duration_minutes > 0 else "unknown duration"
+    time_context = f"Started at {meeting_started_at}, lasting {duration_text}" if meeting_started_at else f"Duration: {duration_text}"
+    
+    SECTION_PROMPTS = {
+        "timeline": {
+            "system": f"Create readable chronological overviews in {target_language}. Work efficiently.",
+            "prompt": f"""Summarize how this {duration_text} meeting titled "{meeting_title}" progressed chronologically.
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language} as flowing text, not bullet points
+- Do NOT repeat "timeline" or similar words in your response
+- Show the meeting's progression from start to finish
+- Write as readable paragraphs, not lists
+
+Transcript: {transcript[:3000]}""",
+        },
+        "executive_summary": {
+            "system": f"Create executive-level overviews in {target_language}. Work efficiently.",
+            "prompt": f"""Create an executive summary of this {duration_text} meeting titled "{meeting_title}".
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language} as flowing text
+- Do NOT repeat "executive summary" or similar words in your response
+- Focus on key outcomes, decisions, and next steps
+- Write as coherent paragraphs, not bullet points
+
+Transcript: {transcript[:3000]}""",
+        },
+        "action_items": {
+            "system": f"Extract actionable tasks in {target_language}. Work efficiently.",
+            "prompt": f"""Identify action items from this {duration_text} meeting titled "{meeting_title}".
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Do NOT repeat "action items" or similar words in your response
+- List tasks clearly (this is one case where a simple list is appropriate)
+- Include who should do what when mentioned
+
+Transcript: {transcript[:3000]}""",
+        },
+        "decisions_made": {
+            "system": f"Document key decisions in {target_language}. Work efficiently.",
+            "prompt": f"""Summarize the key decisions made during this {duration_text} meeting titled "{meeting_title}".
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language} as flowing text
+- Do NOT repeat "decisions" or similar words in your response
+- Explain what was decided and why
+- Write as readable paragraphs, not lists
+
+Transcript: {transcript[:3000]}""",
+        },
+        "participants": {
+            "system": f"Summarize participant contributions in {target_language}. Work efficiently.",
+            "prompt": f"""Describe who participated in this {duration_text} meeting titled "{meeting_title}" and their key contributions.
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language} as flowing text
+- Do NOT repeat "participants" or similar words in your response
+- Identify different speakers and their main insights
+- Write as readable paragraphs, not lists
+
+Transcript: {transcript[:3000]}""",
+        },
+    }
+
+    if section_type not in SECTION_PROMPTS:
+        # Handle AI-generated or custom section types
+        prompt = f"""Create content for a section titled "{section_title}" from this {duration_text} meeting.
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language} as flowing text, not bullet points
+- Do NOT repeat "{section_title}" or similar words in your response
+- Focus specifically on what "{section_title}" suggests
+- Write as readable paragraphs
+
+Transcript: {transcript[:3000]}"""
+
+        try:
+            response = openai.responses.create(
+                model="gpt-5-mini-2025-08-07",
+                input=f"""Create helpful section content efficiently. Work with minimal reasoning, following instructions precisely.
+
+{prompt}""",
+                reasoning={"effort": "minimal"},
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            LOGGER.error(
+                f"Generic section content generation failed for {section_type}: {e}",
+                exc_info=True,
+            )
+            return f"Error generating content for {section_type}: {str(e)}"
+
+    try:
+        prompt_config = SECTION_PROMPTS[section_type]
+
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""{prompt_config["system"]}
+
+{prompt_config["prompt"]}""",
+            reasoning={"effort": "minimal"},
+        )
+
+        return response.output_text.strip()
+    except Exception as e:
+        LOGGER.error(
+            f"Section content generation failed for {section_type}: {e}", exc_info=True
+        )
+        return f"Error generating content for {section_type}: {str(e)}"
+
+
+@celery_app.task(
+    name="app.worker.generate_section_content",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=60,
+)
+def generate_section_content(self, section_id_str: str, meeting_id_str: str):
+    """Generate AI content for a specific section."""
+    engine = get_db_engine()
+    section_id = int(section_id_str)
+    meeting_id = uuid.UUID(meeting_id_str)
+
+    try:
+        with Session(engine) as db:
+            section = db.get(MeetingSection, section_id)
+            if not section:
+                LOGGER.error(f"Section {section_id} not found")
+                return
+
+            meeting = db.get(Meeting, meeting_id)
+            if not meeting:
+                LOGGER.error(f"Meeting {meeting_id} not found")
+                return
+
+            # Get transcript text
+            transcript = meeting.transcript_text
+            if not transcript:
+                # Try to build from chunks
+                transcript, _ = rebuild_full_transcript(db, meeting_id)
+
+            if not transcript:
+                section.content = (
+                    "Error: No transcript available for content generation"
+                )
+                section.is_generating = False
+                db.add(section)
+                db.commit()
+                return
+
+            LOGGER.info(
+                f"Generating content for section {section_id} ({section.section_type})"
+            )
+
+            # Determine target language based on meeting settings
+            if meeting.summary_language_mode == "custom" and meeting.summary_custom_language:
+                target_language = meeting.summary_custom_language
+            elif meeting.summary_language_mode == "english":
+                target_language = "English"
+            else:  # 'auto' or any other case
+                # Use detected language from transcript
+                transcript_snippet = transcript[:2000] if transcript else ""
+                target_language = detect_language_local(transcript_snippet)
+
+            # Prepare meeting metadata for enhanced content generation
+            duration_minutes = (meeting.duration_seconds or 0) // 60
+            meeting_started_at = meeting.started_at.strftime("%Y-%m-%d %H:%M") if meeting.started_at else ""
+            
+            # Generate content
+            content = generate_section_content_for_type(
+                section.section_type,
+                transcript,
+                meeting.context,
+                meeting.title,
+                section.title,
+                meeting.summary_length,
+                target_language,
+                duration_minutes,
+                meeting_started_at,
+            )
+
+            # Update section
+            section.content = content
+            section.is_generating = False
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+            db.commit()
+
+            LOGGER.info(f"✅ Generated content for section {section_id}")
+
+    except Exception as exc:
+        LOGGER.error(
+            f"Error generating section content {section_id}: {exc}", exc_info=True
+        )
+
+        # Mark as failed
+        try:
+            with Session(engine) as db:
+                section = db.get(MeetingSection, section_id)
+                if section:
+                    section.content = f"Error generating content: {str(exc)}"
+                    section.is_generating = False
+                    section.updated_at = dt.datetime.utcnow()
+                    db.add(section)
+                    db.commit()
+        except:
+            pass
+
+        self.retry(exc=exc)
+
+
+def translate_text(text: str, target_language: str, context: str | None) -> str:
+    """Translates a block of text using GPT-5-mini."""
+    if not text or not text.strip():
+        return text
+
+    context_prompt = ""
+    if context and context.strip():
+        context_prompt = (
+            f"Use this context for consistent terminology: <context>{context}</context>"
+        )
+
+    try:
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""Translate the following text into {target_language}.
+Maintain original formatting (like markdown headers and lists).
+{context_prompt}
+Only return the translated text.
+
+<text_to_translate>
+{text}
+</text_to_translate>""",
+            reasoning={"effort": "minimal"},
+        )
+        return response.output_text.strip()
+    except Exception as e:
+        LOGGER.error(f"Celery Worker: Text translation failed: {e}", exc_info=True)
+        return f"Error: Translation to {target_language} failed."
+
+
+@celery_app.task(
+    name="app.worker.translate_meeting_sections",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=120,
+)
+def translate_meeting_sections(self, meeting_id_str: str, target_language: str):
+    """Translates all sections of a meeting to a new language."""
+    engine = get_db_engine()
+    meeting_id = uuid.UUID(meeting_id_str)
+    LOGGER.info(f"Starting translation for meeting {meeting_id} to {target_language}")
+
+    with Session(engine) as db:
+        meeting = db.get(Meeting, meeting_id)
+        if not meeting:
+            LOGGER.error(f"Meeting {meeting_id} not found for translation.")
+            return
+
+        sections = db.exec(
+            select(MeetingSection).where(MeetingSection.meeting_id == meeting_id)
+        ).all()
+        if not sections:
+            LOGGER.warning(f"No sections found to translate for meeting {meeting_id}.")
+            return
+
+        for section in sections:
+            try:
+                # Translate title
+                if section.title:
+                    section.title = translate_text(
+                        section.title, target_language, meeting.context
+                    )
+
+                # Translate content
+                if section.content:
+                    section.content = translate_text(
+                        section.content, target_language, meeting.context
+                    )
+
+                section.is_generating = False  # Mark as done
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+
+            except Exception as e:
+                LOGGER.error(
+                    f"Failed to translate section {section.id} for meeting {meeting_id}: {e}"
+                )
+                section.content = f"Error during translation: {e}"
+                section.is_generating = False
+                db.add(section)
+        
+        db.commit()
+        LOGGER.info(f"✅ Translation complete for meeting {meeting_id}")

@@ -1,31 +1,27 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
+import SectionTemplatePicker from '../components/SectionTemplatePicker'
+import DraggableSectionList from '../components/DraggableSectionList'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
+import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { SummaryLength } from '../contexts/SummaryLengthContext'
+import { SectionTemplate } from '../types'
 
-/**
- * Formats an ISO date string into a readable format, optionally for a specific timezone.
- * @param {string} isoString - The ISO date string to format.
- * @param {string | null} timeZone - The IANA timezone string.
- * @returns {string | null} The formatted date string or null on error.
- */
 const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
 	if (!isoString) return null
 
 	try {
 		const date = new Date(isoString)
-
-		// Round minutes
 		const minutes = date.getMinutes()
 		const roundedMinutes = Math.round(minutes)
-		date.setMinutes(roundedMinutes, 0, 0) // Also reset seconds and milliseconds
+		date.setMinutes(roundedMinutes, 0, 0)
 
 		const options: Intl.DateTimeFormatOptions = {
 			day: 'numeric',
@@ -34,7 +30,7 @@ const formatMeetingDate = (isoString?: string, timeZone?: string | null): string
 			hour: '2-digit',
 			minute: '2-digit',
 			hour12: false,
-			timeZone: timeZone || undefined, // Use system default if null/undefined
+			timeZone: timeZone || undefined,
 		}
 
 		return new Intl.DateTimeFormat('en-GB', options).format(date)
@@ -52,7 +48,6 @@ export default function Summary() {
 	const { languageState, setLanguageState } = useSummaryLanguage()
 
 	const {
-		summary,
 		transcript,
 		isLoading,
 		isProcessing,
@@ -71,27 +66,48 @@ export default function Summary() {
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
 
+	const {
+		sections,
+		isLoading: sectionsLoading,
+		error: sectionsError,
+		fetchSections,
+		createSection,
+		updateSection,
+		deleteSection,
+		reorderSections,
+		regenerateSection
+	} = useSections({ meetingId: mid, isProcessing })
+
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
-	const [editedContext, setEditedContext] = useState('')
+	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
+	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
+	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
 
 	useEffect(() => {
-		if (context !== null) {
+		if (context !== null && editedContext === null) {
 			setEditedContext(context)
 		}
-	}, [context])
+	}, [context, editedContext])
 
 	useEffect(() => {
-		// Clear timeout on component unmount
 		return () => {
 			if (copyTimeoutRef.current) {
 				clearTimeout(copyTimeoutRef.current)
 			}
 		}
 	}, [])
+
+	const fullSummaryText = useMemo(() => {
+		if (!sections || sections.length === 0) return '';
+		return sections
+			.map(s => `### ${s.title}\n\n${s.content || ''}`)
+			.join('\n\n---\n\n');
+	}, [sections]);
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -100,27 +116,95 @@ export default function Summary() {
 		setIsEditingTitle(false)
 	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
+
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) {
 			handleRegenerate({ newContext: editedContext })
 		}
 	}
 
-	/**
-	 * Copies the meeting summary to the clipboard in the specified format.
-	 * @param {'text' | 'markdown'} format - The desired format for the clipboard content.
-	 */
+	const handleAddSection = useCallback((position: number, event?: React.MouseEvent) => {
+		setAddSectionPosition(position)
+		if (event) {
+			const rect = event.currentTarget.getBoundingClientRect()
+			setPickerPosition({
+				x: rect.right + 8,
+				y: rect.top
+			})
+		}
+		setIsTemplatePickerOpen(true)
+	}, [])
+
+	const handleAddSectionAbove = useCallback((position: number, event?: React.MouseEvent) => {
+		handleAddSection(position, event)
+	}, [handleAddSection])
+
+	const handleAddSectionBelow = useCallback((position: number, event?: React.MouseEvent) => {
+		handleAddSection(position + 1, event)
+	}, [handleAddSection])
+
+	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
+		// Preserve scroll position
+		const scrollPosition = window.scrollY
+		
+		try {
+			await createSection(template, addSectionPosition)
+			
+			// Restore scroll position after a brief delay to allow re-render
+			setTimeout(() => {
+				window.scrollTo(0, scrollPosition)
+			}, 0)
+		} catch (error) {
+			console.error('Error adding section:', error)
+		}
+	}, [createSection, addSectionPosition])
+
+	const handleUpdateTitle = useCallback(async (sectionId: number, title: string) => {
+		try {
+			await updateSection(sectionId, { title })
+		} catch (error) {
+			console.error('Error updating title:', error)
+		}
+	}, [updateSection])
+
+	const handleUpdateContent = useCallback(async (sectionId: number, content: string) => {
+		try {
+			await updateSection(sectionId, { content })
+		} catch (error) {
+			console.error('Error updating content:', error)
+		}
+	}, [updateSection])
+
+	const handleDeleteSection = useCallback(async (sectionId: number) => {
+		if (!confirm('Are you sure you want to delete this section?')) return
+		
+		try {
+			await deleteSection(sectionId)
+		} catch (error) {
+			console.error('Error deleting section:', error)
+		}
+	}, [deleteSection])
+
+	const handleRegenerateSection = useCallback(async (sectionId: number) => {
+		try {
+			await regenerateSection(sectionId)
+		} catch (error) {
+			console.error('Error regenerating section:', error)
+		}
+	}, [regenerateSection])
+
+
 	const handleCopy = async (format: 'text' | 'markdown') => {
-		if (!meetingTitle || !summary) return
+		if (!meetingTitle || !fullSummaryText) return
 
 		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
 		let textToCopy = ''
 
 		if (format === 'markdown') {
-			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summary}`
+			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${fullSummaryText}`
 		} else {
-			const plainSummary = summary
-				.replace(/^---\s*$/gm, '') // Remove horizontal rules
+			const plainSummary = fullSummaryText
+				.replace(/^---\s*$/gm, '')
 				.replace(/####\s/g, '')
 				.replace(/###\s/g, '')
 				.replace(/\*\*(.*?)\*\*/g, '$1')
@@ -143,15 +227,55 @@ export default function Summary() {
 		}
 	}
 
-	const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
+	const handleLanguageChange = async (update: Partial<SummaryLanguageState>) => {
+		if (!mid) return
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
-		handleRegenerate({ newLanguageState: newState })
+
+		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
+
+		try {
+			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					target_language: targetLanguage,
+					language_mode: newState.mode,
+				}),
+			})
+			if (!response.ok) {
+				throw new Error('Failed to start translation.')
+			}
+			// Fetch sections once to get the `is_generating` flags, which will trigger polling in useSections
+			fetchSections()
+		} catch (err) {
+			console.error('Translation error:', err)
+			alert('Could not start translation.')
+		}
+	}
+
+	const handleLengthChangeWithWarning = (newLength: SummaryLength) => {
+		const hasCustomizations = sections && sections.length > 0
+		if (hasCustomizations) {
+			if (
+				!window.confirm(
+					'Changing the summary length will discard all current sections, including custom content and edits, and generate a new summary from the original transcript. Are you sure?'
+				)
+			) {
+				return // Abort if user cancels
+			}
+		}
+		handleRegenerate({ newLength })
 	}
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
-	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
-	const showControls = summary && !isProcessing
+	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
+	const hasSections = !sectionsLoading && sections.length > 0
+	const showControls = hasSections && !isProcessing && !sectionsLoading
+	
+	const displayLoading = (isLoading && !loadedFromCache) || sectionsLoading;
+    const displayError = error || sectionsError;
+    const showProcessingMessage = (isProcessing || isRegenerating) && !hasSections;
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -162,7 +286,7 @@ export default function Summary() {
 		fontSize: '14px',
 		fontWeight: 500,
 		transition: 'background-color 0.2s ease',
-		fontFamily: 'Jost, serif',
+		fontFamily: 'inherit',
 	}
 
 	return (
@@ -178,17 +302,16 @@ export default function Summary() {
 						cursor: 'pointer',
 						color: currentThemeColors.secondaryText,
 						fontSize: '15px',
-						fontFamily: 'Jost, serif',
+						fontFamily: 'inherit',
 					}}>
 					← Back to Recordings
 				</button>
 
-				{summary && !isProcessing && (
-					<div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+				{hasSections && !isProcessing && (
+					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
 						{copyStatus !== 'idle' && (
 							<span
 								style={{
-									marginRight: '12px',
 									color: currentThemeColors.secondaryText,
 									fontSize: '14px',
 									transition: 'opacity 0.5s ease-in-out',
@@ -197,6 +320,7 @@ export default function Summary() {
 								Copied! ✨
 							</span>
 						)}
+						
 						<div
 							style={{
 								display: 'flex',
@@ -251,7 +375,7 @@ export default function Summary() {
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
-							fontFamily: "'Jost', serif",
+							fontFamily: 'inherit',
 						}}
 						autoFocus
 					/>
@@ -265,7 +389,7 @@ export default function Summary() {
 							cursor: 'pointer',
 							fontSize: '1.7em',
 							margin: 0,
-							fontFamily: "'Jost', serif",
+							fontFamily: 'inherit',
 							fontWeight: 600,
 							lineHeight: 1.2,
 						}}>
@@ -274,10 +398,10 @@ export default function Summary() {
 				)}
 
 				{formattedDate && (
-					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: "'Jost', serif" }}>{formattedDate}</p>
+					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
 				)}
 
-				{showControls && (
+				{(hasSections || isProcessing) && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
 						<div
 							style={{
@@ -287,8 +411,8 @@ export default function Summary() {
 								justifyContent: 'space-between',
 								alignItems: 'center',
 							}}>
-							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating} onSelect={(len) => handleRegenerate({ newLength: len })} />
-							<LanguageSelector disabled={isRegenerating} onSelectionChange={onLanguageChange} />
+							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={handleLengthChangeWithWarning} />
+							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 
 						<div>
@@ -297,10 +421,10 @@ export default function Summary() {
 							</label>
 							<textarea
 								id="context-editor"
-								value={editedContext}
+								value={editedContext ?? ''}
 								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
-								disabled={isRegenerating}
+								disabled={isRegenerating || isProcessing}
 								style={{
 									width: '100%',
 									minHeight: '60px',
@@ -312,13 +436,13 @@ export default function Summary() {
 									fontSize: '14px',
 									resize: 'vertical',
 									boxSizing: 'border-box',
-									opacity: isRegenerating ? 0.7 : 1,
+									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
 								<button
 									onClick={handleContextUpdateConfirm}
-									disabled={isRegenerating}
+									disabled={isRegenerating || isProcessing}
 									style={{
 										marginTop: '12px',
 										padding: '8px 16px',
@@ -328,8 +452,8 @@ export default function Summary() {
 										color: currentThemeColors.button.primaryText,
 										fontSize: '14px',
 										fontWeight: '500',
-										cursor: isRegenerating ? 'not-allowed' : 'pointer',
-										opacity: isRegenerating ? 0.6 : 1,
+										cursor: (isRegenerating || isProcessing) ? 'not-allowed' : 'pointer',
+										opacity: (isRegenerating || isProcessing) ? 0.6 : 1,
 										transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate Summary
@@ -340,24 +464,31 @@ export default function Summary() {
 				)}
 			</div>
 
-			{summary ? (
-				<ReactMarkdown
-					children={summary}
-					components={{
-						h1: ({ ...props }) => <h1 style={{ color: currentThemeColors.text }} {...props} />,
-						h2: ({ ...props }) => <h2 style={{ color: currentThemeColors.text }} {...props} />,
-						p: ({ ...props }) => <p style={{ lineHeight: 1.6 }} {...props} />,
-					}}
+			{/* Main Content Area */}
+			{displayLoading ? (
+				<p>Loading summary...</p>
+			) : displayError ? (
+				<p style={{ color: currentThemeColors.button.danger }}>Error: {displayError}</p>
+			) : hasSections ? (
+				<DraggableSectionList
+					sections={sections}
+					onReorder={reorderSections}
+					onUpdateTitle={handleUpdateTitle}
+					onUpdateContent={handleUpdateContent}
+					onDeleteSection={handleDeleteSection}
+					onRegenerateSection={handleRegenerateSection}
+					onAddSectionAbove={handleAddSectionAbove}
+					onAddSectionBelow={handleAddSectionBelow}
+					showControls={showControls}
+					enableDragAndDrop={true}
 				/>
-			) : (
-				<>
-					{isLoading && !loadedFromCache && <p>Loading summary...</p>}
-					{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
-					{(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
-				</>
+			) : showProcessingMessage ? (
+                <p>⏳ Processing summary, please wait...</p>
+            ) : (
+				<p>No summary is available for this meeting.</p>
 			)}
 
-			{summary && !isLoading && (
+			{hasSections && !isLoading && (
 				<FeedbackComponent
 					submittedTypes={submittedFeedback}
 					onFeedbackToggle={handleFeedbackToggle}
@@ -403,6 +534,17 @@ export default function Summary() {
 					)}
 				</div>
 			)}
+
+			<SectionTemplatePicker
+				isOpen={isTemplatePickerOpen}
+				onClose={() => {
+					setIsTemplatePickerOpen(false)
+					setPickerPosition(null)
+				}}
+				onSelectTemplate={handleTemplateSelect}
+				meetingId={mid}
+				position={pickerPosition}
+			/>
 		</div>
 	)
 }

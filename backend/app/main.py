@@ -4,6 +4,7 @@ import logging
 import shutil
 import uuid
 import datetime as dt
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import openai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, SQLModel, create_engine, select, func
+from sqlmodel import Session, SQLModel, create_engine, select, func, delete
 
 from .config import settings
 from .models import (
@@ -29,8 +30,18 @@ from .models import (
     MeetingConfigUpdate,
     FeedbackStatusUpdate,
     MeetingContextUpdate,
+    MeetingSection,
+    SectionCreate,
+    SectionUpdate,
+    SectionReorder,
+    MeetingTranslatePayload,
 )
-from .worker import process_transcription_and_summary, generate_summary_only
+from .worker import (
+    process_transcription_and_summary,
+    generate_summary_only,
+    translate_meeting_sections,
+    parse_markdown_into_sections,
+)
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -39,6 +50,10 @@ logging.basicConfig(
 )
 
 openai.api_key = settings.openai_api_key
+
+# Ensure database directory exists before creating engine
+db_path = Path(settings.db_path)
+db_path.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(f"sqlite:///{settings.db_path}", echo=False)
 SQLModel.metadata.create_all(engine)
@@ -176,6 +191,10 @@ async def upload_chunk(
             )
             mtg.done = False
             mtg.summary_markdown = None
+            
+            # Also delete existing sections
+            db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == meeting_id))
+
 
         if is_final:
             mtg.final_received = True
@@ -384,6 +403,10 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         # Update context if provided (allows setting to "" or null)
         if payload.context is not None:
             mtg.context = payload.context
+
+        # NEW: Immediately delete existing sections to clear the UI
+        LOGGER.info("Regenerate: Deleting old sections for meeting %s.", mid)
+        db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mid))
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False
@@ -657,4 +680,387 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Section Management API
+# ──────────────────────────────────────────────────────────────────────────────
 
+@app.get("/api/meetings/{mid}/sections", response_model=list[MeetingSection])
+def get_meeting_sections(mid: uuid.UUID):
+    """Get all sections for a meeting, ordered by position."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == mid)
+            .order_by(MeetingSection.position)
+        ).all()
+
+        # Backfill logic for old meetings without sections
+        if not sections and meeting.summary_markdown:
+            LOGGER.info(
+                f"Meeting {mid} has markdown summary but no sections. Backfilling now."
+            )
+            new_sections = parse_markdown_into_sections(meeting.summary_markdown, mid)
+
+            if new_sections:
+                db.add_all(new_sections)
+                db.commit()
+                LOGGER.info(
+                    f"Successfully created {len(new_sections)} sections for meeting {mid}."
+                )
+                # Re-fetch the sections to get their DB-assigned IDs before returning
+                refreshed_sections = db.exec(
+                    select(MeetingSection)
+                    .where(MeetingSection.meeting_id == mid)
+                    .order_by(MeetingSection.position)
+                ).all()
+                return refreshed_sections
+
+        return sections
+
+
+@app.post("/api/meetings/{mid}/sections", response_model=MeetingSection, status_code=201)
+def create_section(mid: uuid.UUID, body: SectionCreate):
+    """Create a new section for a meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Adjust positions of existing sections
+        existing_sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == mid)
+            .where(MeetingSection.position >= body.position)
+        ).all()
+        
+        for section in existing_sections:
+            section.position += 1
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+        
+        # Determine if this section needs AI generation
+        # All template sections and AI/custom sections should be auto-generated
+        template_types = [
+            "executive_summary", "action_items", "decisions_made", "questions_raised", 
+            "next_steps", "timeline", "participants", "technical_details", 
+            "risks_challenges", "feedback_given", "budget_resources", "alternatives_considered"
+        ]
+        needs_ai_generation = (
+            body.section_type in template_types or 
+            body.section_type.startswith("ai_") or 
+            body.section_type == "custom"
+        )
+        
+        new_section = MeetingSection(
+            meeting_id=mid,
+            section_type=body.section_type,
+            title=body.title,
+            position=body.position,
+            is_generating=needs_ai_generation
+        )
+        db.add(new_section)
+        db.commit()
+        db.refresh(new_section)
+        
+        # Queue AI generation for template sections and AI-generated sections
+        if needs_ai_generation:
+            from .worker import generate_section_content
+            generate_section_content.delay(str(new_section.id), str(mid))
+        
+        return new_section
+
+
+@app.put("/api/sections/{section_id}", response_model=MeetingSection)
+def update_section(section_id: int, body: SectionUpdate):
+    """Update a section's content, title, or position."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            raise HTTPException(status_code=404, detail="Section not found")
+        
+        if body.title is not None:
+            section.title = body.title
+        if body.content is not None:
+            section.content = body.content
+        if body.position is not None:
+            # Handle position changes
+            old_position = section.position
+            new_position = body.position
+            
+            if old_position != new_position:
+                # Update positions of other sections
+                if new_position > old_position:
+                    # Moving down
+                    sections_to_update = db.exec(
+                        select(MeetingSection)
+                        .where(MeetingSection.meeting_id == section.meeting_id)
+                        .where(MeetingSection.position > old_position)
+                        .where(MeetingSection.position <= new_position)
+                        .where(MeetingSection.id != section_id)
+                    ).all()
+                    for s in sections_to_update:
+                        s.position -= 1
+                        s.updated_at = dt.datetime.utcnow()
+                        db.add(s)
+                else:
+                    # Moving up
+                    sections_to_update = db.exec(
+                        select(MeetingSection)
+                        .where(MeetingSection.meeting_id == section.meeting_id)
+                        .where(MeetingSection.position >= new_position)
+                        .where(MeetingSection.position < old_position)
+                        .where(MeetingSection.id != section_id)
+                    ).all()
+                    for s in sections_to_update:
+                        s.position += 1
+                        s.updated_at = dt.datetime.utcnow()
+                        db.add(s)
+                
+                section.position = new_position
+        
+        section.updated_at = dt.datetime.utcnow()
+        db.add(section)
+        db.commit()
+        db.refresh(section)
+        return section
+
+
+@app.delete("/api/sections/{section_id}", status_code=204)
+def delete_section(section_id: int):
+    """Delete a section."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            return Response(status_code=204)  # Already gone
+        
+        meeting_id = section.meeting_id
+        deleted_position = section.position
+        
+        # Delete the section
+        db.delete(section)
+        
+        # Adjust positions of remaining sections
+        remaining_sections = db.exec(
+            select(MeetingSection)
+            .where(MeetingSection.meeting_id == meeting_id)
+            .where(MeetingSection.position > deleted_position)
+        ).all()
+        
+        for s in remaining_sections:
+            s.position -= 1
+            s.updated_at = dt.datetime.utcnow()
+            db.add(s)
+        
+        db.commit()
+        LOGGER.info(f"Deleted section {section_id}")
+    return Response(status_code=204)
+
+
+@app.post("/api/meetings/{mid}/sections/reorder", status_code=200)
+def reorder_sections(mid: uuid.UUID, body: SectionReorder):
+    """Reorder sections for a meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Update all section positions
+        for section_data in body.sections:
+            section = db.get(MeetingSection, section_data["id"])
+            if section and section.meeting_id == mid:
+                section.position = section_data["position"]
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+        
+        db.commit()
+        LOGGER.info(f"Reordered sections for meeting {mid}")
+    return {"ok": True, "message": "Sections reordered successfully"}
+
+
+@app.post("/api/sections/{section_id}/regenerate", status_code=200)
+def regenerate_section_content(section_id: int):
+    """Regenerate AI content for a section."""
+    with Session(engine) as db:
+        section = db.get(MeetingSection, section_id)
+        if not section:
+            raise HTTPException(status_code=404, detail="Section not found")
+        
+        # Check if section type supports regeneration
+        regenerable_types = ["timeline", "key_points", "feedback_suggestions", "metrics"]
+        if section.section_type not in regenerable_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Cannot regenerate section type '{section.section_type}'. Only {', '.join(regenerable_types)} sections can be regenerated."
+            )
+        
+        section.is_generating = True
+        section.content = None
+        section.updated_at = dt.datetime.utcnow()
+        db.add(section)
+        db.commit()
+        
+        # Queue AI generation
+        from .worker import generate_section_content
+        generate_section_content.delay(str(section_id), str(section.meeting_id))
+        
+    return {"ok": True, "message": "Section regeneration queued"}
+
+
+@app.post("/api/meetings/{mid}/translate", status_code=202)
+def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
+    """
+    Triggers a translation of all meeting sections to a new language.
+    """
+    target_language = payload.target_language
+    language_mode = payload.language_mode
+
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # 1. Update meeting's language settings immediately
+        mtg.summary_language_mode = language_mode
+        mtg.summary_custom_language = (
+            target_language if language_mode == "custom" else None
+        )
+        db.add(mtg)
+
+        # 2. Mark all sections as "generating" to trigger UI polling
+        sections = db.exec(
+            select(MeetingSection).where(MeetingSection.meeting_id == mid)
+        ).all()
+        if not sections:
+            # If no sections, nothing to do.
+            db.commit()
+            return {"ok": True, "message": "No sections to translate."}
+
+        for section in sections:
+            section.is_generating = True
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+
+        db.commit()
+
+        # 3. Queue the background translation task
+        translate_meeting_sections.delay(str(mid), target_language)
+        LOGGER.info(f"Queued translation task for meeting {mid} to {target_language}")
+
+    return {"ok": True, "message": "Translation task queued."}
+
+
+@app.post("/api/meetings/{mid}/ai-templates")
+def generate_ai_templates(mid: uuid.UUID):
+    """Generate 4-6 AI-suggested section templates specifically tailored for this meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Get meeting context and metadata
+        transcript = meeting.transcript_text or ""
+        summary = meeting.summary_markdown or ""
+        title = meeting.title or ""
+        context = meeting.context or ""
+        duration_minutes = (meeting.duration_seconds or 0) // 60
+        
+        # Use GPT-5-mini for contextual template generation
+        try:
+            response = openai.responses.create(
+                model="gpt-5-mini-2025-08-07",
+                input=f"""Analyze this meeting content and suggest 4-6 highly relevant section templates.
+
+MEETING DETAILS:
+Title: {title}
+Context: {context}
+Duration: {duration_minutes} minutes
+Summary: {summary[:1500]}
+Transcript preview: {transcript[:1000]}
+
+AVOID these existing default templates:
+- Executive Summary, Action Items, Decisions Made, Questions & Concerns, Next Steps
+- Meeting Flow, Who Spoke, Technical Details, Risks & Challenges, Feedback & Suggestions
+- Resources & Budget, Alternatives Discussed
+
+ANALYZE FOR:
+1. Meeting type (presentation, brainstorm, review, planning, update, etc.)
+2. Key content themes and specific topics discussed
+3. Stakeholder needs (who would read this summary?)
+4. Missing information gaps or perspectives
+5. Specialized insights unique to this discussion
+
+GENERATE 4-6 SPECIFIC templates that would genuinely help someone understand or act on this meeting.
+
+OUTPUT FORMAT (one per line):
+emoji|Title (2-4 words)|Description (specific to THIS meeting's content and value)
+
+EXAMPLES:
+🎨|Design Mockups|Visual concepts and interface designs discussed for the new app
+🏗️|Architecture Decisions|Technical infrastructure choices and system design rationale
+🎯|User Stories|Specific user scenarios and requirements identified during research
+📊|Market Analysis|Competitive research findings and market opportunity assessment
+🔬|Research Findings|Experimental results, data insights, and scientific observations
+🎓|Learning Outcomes|Key knowledge gained, skills developed, and educational insights
+⚖️|Legal Considerations|Compliance requirements, contracts, and regulatory constraints
+🌍|Stakeholder Impact|How different groups will be affected by proposed changes
+
+Focus on what would be MOST useful for the people involved in or affected by this meeting.""",
+                reasoning={"effort": "minimal"}
+            )
+            
+            ai_response = response.output_text.strip()
+            templates = []
+            
+            for line in ai_response.split('\n'):
+                if '|' in line and len(templates) < 6:
+                    parts = line.split('|', 2)
+                    if len(parts) == 3:
+                        emoji, title, description = parts
+                        templates.append({
+                            "type": f"ai_{len(templates)}",
+                            "title": title.strip(),
+                            "icon": emoji.strip(),
+                            "description": description.strip(),
+                            "is_ai_suggested": True
+                        })
+            
+            # Ensure at least 4 templates with contextual fallbacks
+            if len(templates) < 4:
+                fallback_templates = [
+                    {"title": "Key Topics", "icon": "💭", "description": f"Main themes and subjects covered in this {duration_minutes}-minute discussion"},
+                    {"title": "Outcomes", "icon": "🎯", "description": "What was accomplished, decided, or resolved during the meeting"},
+                    {"title": "Open Items", "icon": "🔄", "description": "Unresolved questions, pending decisions, and items requiring follow-up"},
+                    {"title": "Context & Background", "icon": "📖", "description": "Important background information and situational context discussed"}
+                ]
+                
+                for fallback in fallback_templates:
+                    if len(templates) < 4:
+                        templates.append({
+                            "type": f"ai_{len(templates)}",
+                            **fallback,
+                            "is_ai_suggested": True
+                        })
+            
+            return {"templates": templates[:6]}
+            
+        except Exception as e:
+            LOGGER.error(f"Failed to generate AI templates: {e}")
+            # Return contextual fallback templates based on available metadata
+            fallback_context = "discussion" if duration_minutes > 45 else "meeting"
+            if "presentation" in title.lower() or "demo" in title.lower():
+                fallback_context = "presentation"
+            elif "review" in title.lower() or "feedback" in title.lower():
+                fallback_context = "review"
+            
+            return {
+                "templates": [
+                    {"type": "ai_0", "title": "Key Outcomes", "icon": "🎯", "description": f"Main results and conclusions from this {fallback_context}", "is_ai_suggested": True},
+                    {"type": "ai_1", "title": "Action Items", "icon": "✅", "description": "Tasks, deadlines, and responsibilities assigned", "is_ai_suggested": True},
+                    {"type": "ai_2", "title": "Questions Raised", "icon": "❓", "description": "Open questions and items needing clarification", "is_ai_suggested": True},
+                    {"type": "ai_3", "title": "Next Steps", "icon": "➡️", "description": "Planned follow-up activities and upcoming milestones", "is_ai_suggested": True}
+                ]
+            }
