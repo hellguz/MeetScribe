@@ -70,7 +70,7 @@ export default function SectionTemplatePicker({
     
     setIsLoadingAiTemplates(true)
     try {
-      const response = await fetch(`/api/meetings/${meetingId}/ai-templates`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/ai-templates`, {
         method: 'POST'
       })
       if (response.ok) {
