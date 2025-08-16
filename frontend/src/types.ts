@@ -1,5 +1,16 @@
 export type AudioSource = 'mic' | 'system' | 'file';
 
+export type CopyStatus = 'idle' | 'copied' | 'copied_md';
+
+export type FeedbackType = 
+  | 'helpful' 
+  | 'accurate' 
+  | 'complete' 
+  | 'clear' 
+  | 'feature_suggestion';
+
+export type MeetingStatus = 'pending' | 'processing' | 'complete' | 'error';
+
 export interface StatSet {
     total_summaries: number;
     total_words: number;
@@ -62,8 +73,24 @@ export interface MeetingSection {
     extra_data?: string | null;       // JSON for additional context (tags, confidence, etc.)
 }
 
+export type SectionType = 
+  | 'executive_summary'
+  | 'action_items'
+  | 'decisions_made'
+  | 'questions_raised'
+  | 'next_steps'
+  | 'timeline'
+  | 'participants'
+  | 'technical_details'
+  | 'risks_challenges'
+  | 'feedback_given'
+  | 'budget_resources'
+  | 'alternatives_considered'
+  | 'custom'
+  | string; // for AI-generated types
+
 export interface SectionTemplate {
-    type: string;
+    type: SectionType;
     title: string;
     icon: string;
     description: string;
