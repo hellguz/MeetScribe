@@ -62,4 +62,5 @@ export interface SectionTemplate {
     title: string;
     icon: string;
     description: string;
+    is_ai_suggested?: boolean;
 }

@@ -981,4 +981,88 @@ def regenerate_section_content(section_id: int):
     return {"ok": True, "message": "Section regeneration queued"}
 
 
+@app.post("/api/meetings/{mid}/ai-templates")
+def generate_ai_templates(mid: uuid.UUID):
+    """Generate 4 AI-suggested section templates specifically for this meeting."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Get meeting context
+        transcript = meeting.transcript_text or ""
+        summary = meeting.summary_markdown or ""
+        title = meeting.title or ""
+        
+        # Use GPT-3.5-turbo for fast, cheap generation
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a meeting analyzer. Generate exactly 4 specific section templates tailored to this meeting. 
+                        
+                        IMPORTANT: The user already sees these 4 default templates:
+                        - Meeting Timeline (📝)
+                        - Key Points (📊) 
+                        - Feedback & Suggestions (💡)
+                        - Meeting Metrics (📈)
+                        
+                        Do NOT suggest anything similar to these. Instead, suggest 4 specific, meeting-relevant sections based on the content.
+                        
+                        Respond with exactly 4 lines in this format:
+                        emoji|Title|Description
+                        
+                        Use relevant emojis (avoid 📝📊💡📈) and keep titles short (2-4 words). Make descriptions 1 sentence explaining why this section is relevant to THIS specific meeting."""
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"Meeting: {title}\n\nSummary: {summary[:1000]}\n\nTranscript preview: {transcript[:500]}"
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.3
+            )
+            
+            ai_response = response.choices[0].message.content.strip()
+            templates = []
+            
+            for line in ai_response.split('\n'):
+                if '|' in line:
+                    parts = line.split('|', 2)
+                    if len(parts) == 3:
+                        emoji, title, description = parts
+                        templates.append({
+                            "type": f"ai_{len(templates)}",
+                            "title": title.strip(),
+                            "icon": emoji.strip(),
+                            "description": description.strip(),
+                            "is_ai_suggested": True
+                        })
+            
+            # Ensure exactly 4 templates
+            while len(templates) < 4:
+                templates.append({
+                    "type": f"ai_{len(templates)}",
+                    "title": "Custom Analysis",
+                    "icon": "🔍",
+                    "description": "Analyze specific aspects of this meeting",
+                    "is_ai_suggested": True
+                })
+            
+            return {"templates": templates[:4]}
+            
+        except Exception as e:
+            LOGGER.error(f"Failed to generate AI templates: {e}")
+            # Return fallback templates
+            return {
+                "templates": [
+                    {"type": "ai_0", "title": "Discussion Points", "icon": "💬", "description": "Key discussion topics from this meeting", "is_ai_suggested": True},
+                    {"type": "ai_1", "title": "Decisions Made", "icon": "✅", "description": "Important decisions reached", "is_ai_suggested": True},
+                    {"type": "ai_2", "title": "Follow-ups", "icon": "🎯", "description": "Action items and next steps", "is_ai_suggested": True},
+                    {"type": "ai_3", "title": "Insights", "icon": "💭", "description": "Key insights and takeaways", "is_ai_suggested": True}
+                ]
+            }
+
 

@@ -145,7 +145,7 @@ export default function Summary() {
 
 	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
 		try {
-			let title = template.title.replace(/^[📝📊💡📈➕]\s/, '')
+			let title = template.title
 			
 			if (template.type === 'custom') {
 				const customTitle = prompt('Enter section title:', title)
@@ -571,6 +571,7 @@ export default function Summary() {
 				isOpen={isTemplatePickerOpen}
 				onClose={() => setIsTemplatePickerOpen(false)}
 				onSelectTemplate={handleTemplateSelect}
+				meetingId={mid}
 			/>
 		</div>
 	)
