@@ -8,6 +8,7 @@ interface SectionTemplatePickerProps {
   onClose: () => void
   onSelectTemplate: (template: SectionTemplate) => void
   meetingId?: string
+  position?: {x: number, y: number} | null
 }
 
 const SECTION_TEMPLATES: SectionTemplate[] = [
@@ -34,12 +35,6 @@ const SECTION_TEMPLATES: SectionTemplate[] = [
     title: 'Meeting Metrics',
     icon: '📈',
     description: 'Data and statistics about the meeting'
-  },
-  {
-    type: 'custom',
-    title: 'Custom Section',
-    icon: '➕',
-    description: 'Create your own section with custom title'
   }
 ]
 
@@ -47,16 +42,19 @@ export default function SectionTemplatePicker({
   isOpen, 
   onClose, 
   onSelectTemplate,
-  meetingId 
+  meetingId,
+  position 
 }: SectionTemplatePickerProps) {
   const { theme } = useTheme()
   const currentTheme = theme === 'light' ? lightTheme : darkTheme
   const [aiTemplates, setAiTemplates] = useState<SectionTemplate[]>([])
   const [isLoadingAiTemplates, setIsLoadingAiTemplates] = useState(false)
+  const [customSectionTitle, setCustomSectionTitle] = useState('')
 
   useEffect(() => {
     if (isOpen && meetingId) {
       fetchAiTemplates()
+      setCustomSectionTitle('') // Clear input when opening
     }
   }, [isOpen, meetingId])
 
@@ -88,87 +86,146 @@ export default function SectionTemplatePicker({
     onClose()
   }
 
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+  const handleCustomSectionCreate = () => {
+    if (customSectionTitle.trim()) {
+      const customTemplate: SectionTemplate = {
+        type: 'custom',
+        title: customSectionTitle.trim(),
+        icon: '✏️',
+        description: 'Custom section'
+      }
+      handleSelectTemplate(customTemplate)
+    }
+  }
+
+  const handleCustomInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleCustomSectionCreate()
+    } else if (e.key === 'Escape') {
       onClose()
     }
   }
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    // For Notion-style popup, close on any outside click
+    onClose()
+  }
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
-      onClick={handleBackdropClick}
-    >
+    <>
+      {/* Invisible backdrop for outside clicks */}
       <div
         style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 999,
+        }}
+        onClick={handleBackdropClick}
+      />
+      
+      {/* Notion-style popup */}
+      <div
+        style={{
+          position: 'fixed',
+          top: position?.y || '50%',
+          left: position?.x || '50%',
+          transform: position ? 'none' : 'translate(-50%, -50%)',
           backgroundColor: currentTheme.background,
           borderRadius: '8px',
-          padding: '16px',
-          maxWidth: '320px',
-          width: '90%',
-          maxHeight: '70vh',
+          padding: '8px 0',
+          width: '280px',
+          maxHeight: '400px',
           overflow: 'auto',
           border: `1px solid ${currentTheme.border}`,
-          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12)',
+          zIndex: 1000,
         }}
       >
         <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '12px' 
+          padding: '12px 16px 8px 16px',
+          borderBottom: `1px solid ${currentTheme.border}`
         }}>
           <h3 style={{ 
             margin: 0, 
-            fontSize: '16px', 
+            fontSize: '14px', 
             fontWeight: '600',
             color: currentTheme.text,
             fontFamily: "'Jost', serif"
           }}>
             Add Section
           </h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '18px',
-              cursor: 'pointer',
-              color: currentTheme.secondaryText,
-              padding: '2px',
-              borderRadius: '4px',
-              transition: 'background-color 0.2s',
-              lineHeight: 1
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent'
-            }}
-          >
-            ✕
-          </button>
         </div>
 
         <div
           style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '4px'
+            padding: '4px 0'
           }}
         >
+          {/* Custom Section Input - First Item */}
+          <div style={{
+            padding: '8px 16px',
+            borderBottom: `1px solid ${currentTheme.border}`,
+            marginBottom: '4px'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <div style={{
+                fontSize: '16px',
+                flexShrink: 0
+              }}>
+                ✏️
+              </div>
+              <input
+                type="text"
+                value={customSectionTitle}
+                onChange={(e) => setCustomSectionTitle(e.target.value)}
+                onKeyDown={handleCustomInputKeyDown}
+                placeholder="Custom section name..."
+                autoFocus
+                style={{
+                  flex: 1,
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: currentTheme.text,
+                  fontFamily: "'Jost', serif",
+                  padding: '4px 0'
+                }}
+              />
+              {customSectionTitle.trim() && (
+                <button
+                  onClick={handleCustomSectionCreate}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: currentTheme.button.primary,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontFamily: "'Jost', serif"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent'
+                  }}
+                >
+                  Create
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Default Templates */}
           {SECTION_TEMPLATES.map((template) => (
             <button
@@ -177,14 +234,13 @@ export default function SectionTemplatePicker({
               style={{
                 background: 'none',
                 border: 'none',
-                borderRadius: '6px',
-                padding: '10px 12px',
+                padding: '8px 16px',
                 cursor: 'pointer',
                 textAlign: 'left',
-                transition: 'all 0.2s ease',
+                transition: 'background-color 0.1s ease',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '10px',
+                gap: '12px',
                 width: '100%',
               }}
               onMouseEnter={(e) => {
@@ -195,7 +251,7 @@ export default function SectionTemplatePicker({
               }}
             >
               <div style={{ 
-                fontSize: '18px', 
+                fontSize: '16px', 
                 lineHeight: 1,
                 flexShrink: 0
               }}>
@@ -204,19 +260,11 @@ export default function SectionTemplatePicker({
               <div style={{ flex: 1 }}>
                 <div style={{ 
                   fontWeight: '500', 
-                  fontSize: '14px', 
-                  marginBottom: '2px',
+                  fontSize: '14px',
                   color: currentTheme.text,
                   fontFamily: "'Jost', serif"
                 }}>
                   {template.title}
-                </div>
-                <div style={{ 
-                  fontSize: '12px', 
-                  color: currentTheme.secondaryText,
-                  fontFamily: "'Jost', serif"
-                }}>
-                  {template.description}
                 </div>
               </div>
             </button>
@@ -228,28 +276,27 @@ export default function SectionTemplatePicker({
               <div style={{
                 height: '1px',
                 backgroundColor: currentTheme.border,
-                margin: '8px 0 4px 0'
+                margin: '4px 0'
               }} />
               
               <div style={{
                 fontSize: '12px',
                 fontWeight: '500',
                 color: currentTheme.secondaryText,
-                margin: '4px 12px 8px 12px',
+                padding: '8px 16px 4px 16px',
                 fontFamily: "'Jost', serif"
               }}>
-                🤖 AI Suggestions for this meeting
+                🤖 AI Suggestions
               </div>
 
               {isLoadingAiTemplates ? (
                 <div style={{
-                  padding: '16px 12px',
-                  textAlign: 'center',
+                  padding: '8px 16px',
                   color: currentTheme.secondaryText,
-                  fontSize: '12px',
+                  fontSize: '13px',
                   fontFamily: "'Jost', serif"
                 }}>
-                  Generating suggestions...
+                  Generating...
                 </div>
               ) : (
                 aiTemplates.map((template) => (
@@ -259,14 +306,13 @@ export default function SectionTemplatePicker({
                     style={{
                       background: 'none',
                       border: 'none',
-                      borderRadius: '6px',
-                      padding: '10px 12px',
+                      padding: '8px 16px',
                       cursor: 'pointer',
                       textAlign: 'left',
-                      transition: 'all 0.2s ease',
+                      transition: 'background-color 0.1s ease',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '10px',
+                      gap: '12px',
                       width: '100%',
                     }}
                     onMouseEnter={(e) => {
@@ -277,7 +323,7 @@ export default function SectionTemplatePicker({
                     }}
                   >
                     <div style={{ 
-                      fontSize: '18px', 
+                      fontSize: '16px', 
                       lineHeight: 1,
                       flexShrink: 0
                     }}>
@@ -286,19 +332,11 @@ export default function SectionTemplatePicker({
                     <div style={{ flex: 1 }}>
                       <div style={{ 
                         fontWeight: '500', 
-                        fontSize: '14px', 
-                        marginBottom: '2px',
+                        fontSize: '14px',
                         color: currentTheme.text,
                         fontFamily: "'Jost', serif"
                       }}>
                         {template.title}
-                      </div>
-                      <div style={{ 
-                        fontSize: '12px', 
-                        color: currentTheme.secondaryText,
-                        fontFamily: "'Jost', serif"
-                      }}>
-                        {template.description}
                       </div>
                     </div>
                   </button>
@@ -308,6 +346,6 @@ export default function SectionTemplatePicker({
           )}
         </div>
       </div>
-    </div>
+    </>
   )
 }

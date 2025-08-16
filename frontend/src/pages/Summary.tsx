@@ -84,6 +84,7 @@ export default function Summary() {
 	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
 	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
 	const [showSectionsWarning, setShowSectionsWarning] = useState(false)
+	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
 
 	const {
 		sections,
@@ -130,17 +131,24 @@ export default function Summary() {
 		}
 	}
 
-	const handleAddSection = useCallback((position: number) => {
+	const handleAddSection = useCallback((position: number, event?: React.MouseEvent) => {
 		setAddSectionPosition(position)
+		if (event) {
+			const rect = event.currentTarget.getBoundingClientRect()
+			setPickerPosition({
+				x: rect.right + 8,
+				y: rect.top
+			})
+		}
 		setIsTemplatePickerOpen(true)
 	}, [])
 
-	const handleAddSectionAbove = useCallback((position: number) => {
-		handleAddSection(position)
+	const handleAddSectionAbove = useCallback((position: number, event?: React.MouseEvent) => {
+		handleAddSection(position, event)
 	}, [handleAddSection])
 
-	const handleAddSectionBelow = useCallback((position: number) => {
-		handleAddSection(position + 1)
+	const handleAddSectionBelow = useCallback((position: number, event?: React.MouseEvent) => {
+		handleAddSection(position + 1, event)
 	}, [handleAddSection])
 
 	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
@@ -192,6 +200,21 @@ export default function Summary() {
 			console.error('Error regenerating section:', error)
 		}
 	}, [regenerateSection])
+
+	const handleResetToDefaultSummary = useCallback(async () => {
+		if (!confirm('Reset to default summary? This will delete all custom sections and regenerate the original summary.')) return
+		
+		try {
+			// Delete all sections to return to default summary mode
+			for (const section of sections) {
+				await deleteSection(section.id)
+			}
+			// Trigger summary regeneration
+			handleRegenerate({})
+		} catch (error) {
+			console.error('Error resetting to default:', error)
+		}
+	}, [sections, deleteSection, handleRegenerate])
 
 	/**
 	 * Copies the meeting summary to the clipboard in the specified format.
@@ -273,11 +296,10 @@ export default function Summary() {
 				</button>
 
 				{summary && !isProcessing && (
-					<div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
 						{copyStatus !== 'idle' && (
 							<span
 								style={{
-									marginRight: '12px',
 									color: currentThemeColors.secondaryText,
 									fontSize: '14px',
 									transition: 'opacity 0.5s ease-in-out',
@@ -286,6 +308,37 @@ export default function Summary() {
 								Copied! ✨
 							</span>
 						)}
+						
+						{/* Reset button - only show if we have custom sections */}
+						{hasSections && (
+							<button
+								onClick={handleResetToDefaultSummary}
+								style={{
+									padding: '8px 12px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									cursor: 'pointer',
+									fontSize: '14px',
+									fontWeight: 500,
+									transition: 'all 0.2s ease',
+									fontFamily: 'Jost, serif',
+								}}
+								onMouseEnter={(e) => {
+									e.currentTarget.style.backgroundColor = currentThemeColors.background
+									e.currentTarget.style.borderColor = currentThemeColors.button.primary
+								}}
+								onMouseLeave={(e) => {
+									e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
+									e.currentTarget.style.borderColor = currentThemeColors.border
+								}}
+								title="Reset to default summary"
+							>
+								Reset
+							</button>
+						)}
+						
 						<div
 							style={{
 								display: 'flex',
@@ -471,7 +524,7 @@ export default function Summary() {
 						onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
 						onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}>
 							<button
-								onClick={() => handleAddSection(0)}
+								onClick={(e) => handleAddSection(0, e)}
 								style={{
 									width: '32px',
 									height: '32px',
@@ -569,9 +622,13 @@ export default function Summary() {
 			{/* Section Template Picker Modal */}
 			<SectionTemplatePicker
 				isOpen={isTemplatePickerOpen}
-				onClose={() => setIsTemplatePickerOpen(false)}
+				onClose={() => {
+					setIsTemplatePickerOpen(false)
+					setPickerPosition(null)
+				}}
 				onSelectTemplate={handleTemplateSelect}
 				meetingId={mid}
+				position={pickerPosition}
 			/>
 		</div>
 	)

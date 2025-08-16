@@ -11,8 +11,8 @@ interface SectionRendererProps {
   onDeleteSection: (sectionId: number) => void
   onRegenerateSection?: (sectionId: number) => void
   showControls: boolean
-  onAddSectionAbove: (position: number) => void
-  onAddSectionBelow: (position: number) => void
+  onAddSectionAbove: (position: number, event?: React.MouseEvent) => void
+  onAddSectionBelow: (position: number, event?: React.MouseEvent) => void
   dragHandleProps?: any
   isDragging?: boolean
   isCustomSection?: boolean
@@ -55,10 +55,6 @@ export default function SectionRenderer({
   }
 
   const canDelete = section.section_type !== 'default_summary'
-  const canRegenerate = section.section_type !== 'default_summary' && 
-                        section.section_type !== 'custom' && 
-                        section.section_type !== 'decisions_actions' &&
-                        ['timeline', 'key_points', 'feedback_suggestions', 'metrics'].includes(section.section_type)
 
   const sectionStyle: React.CSSProperties = {
     position: 'relative',
@@ -127,7 +123,7 @@ export default function SectionRenderer({
       <div style={controlsStyle}>
         {/* Add section above button */}
         <button
-          onClick={() => onAddSectionAbove(section.position)}
+          onClick={(e) => onAddSectionAbove(section.position, e)}
           style={buttonStyle}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
@@ -228,33 +224,6 @@ export default function SectionRenderer({
             }}
           >
             {section.title}
-            {canRegenerate && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRegenerateSection?.(section.id)
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: currentTheme.secondaryText,
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  borderRadius: '4px',
-                  transition: 'background-color 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                }}
-                title="Regenerate content"
-              >
-                🔄
-              </button>
-            )}
           </h3>
         )}
 
@@ -348,7 +317,7 @@ export default function SectionRenderer({
         {isMobile && (
           <div style={{ textAlign: 'center', marginTop: '12px' }}>
             <button
-              onClick={() => onAddSectionBelow(section.position)}
+              onClick={(e) => onAddSectionBelow(section.position, e)}
               style={{
                 ...buttonStyle,
                 width: 'auto',

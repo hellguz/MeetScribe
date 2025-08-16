@@ -10,8 +10,8 @@ interface DraggableSectionListProps {
   onUpdateContent: (sectionId: number, content: string) => void
   onDeleteSection: (sectionId: number) => void
   onRegenerateSection: (sectionId: number) => void
-  onAddSectionAbove: (position: number) => void
-  onAddSectionBelow: (position: number) => void
+  onAddSectionAbove: (position: number, event?: React.MouseEvent) => void
+  onAddSectionBelow: (position: number, event?: React.MouseEvent) => void
   showControls: boolean
   enableDragAndDrop?: boolean
 }

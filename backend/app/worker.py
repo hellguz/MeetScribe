@@ -204,18 +204,14 @@ Avoid generic titles like "Meeting Summary" or "Project Update". It should be sp
 
 Based on the content, generate the title now.
 """
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.5,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that creates concise meeting titles.",
-                },
-                {"role": "user", "content": title_prompt},
-            ],
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""Create a concise meeting title efficiently. Follow instructions precisely with minimal reasoning.
+
+{title_prompt}""",
+            reasoning={"effort": "minimal"}
         )
-        generated_title = response.choices[0].message.content.strip().strip('"')
+        generated_title = response.output_text.strip().strip('"')
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
         return generated_title
     except Exception as e:
@@ -319,7 +315,7 @@ This is critical context provided by the user. You MUST use it as a source of tr
 """
 
         system_prompt = f"""
-You are 'Scribe', an expert AI analyst with the writing style of a seasoned consultant. Your primary goal is to create a summary that is insightful, easy to read, and appropriately detailed.
+You are 'Scribe', an expert AI analyst. Work efficiently with minimal reasoning - follow instructions precisely to create an insightful, well-structured summary.
 {context_section}
 **Core Philosophy:**
 - **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
@@ -356,16 +352,20 @@ This is the core of the summary. For each **Key Theme** you identified, create a
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
 """
-        user_prompt_content = f"Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}\n\nTRANSCRIPT:\n---\n{full_transcript}"
-        response = openai.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.4, # Lower temperature for more deterministic output
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt_content},
-            ],
+        full_prompt = f"""{system_prompt}
+
+Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}
+
+TRANSCRIPT:
+---
+{full_transcript}"""
+        
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=full_prompt,
+            reasoning={"effort": "minimal"}
         )
-        return response.choices[0].message.content.strip()
+        return response.output_text.strip()
     except Exception as e:
         LOGGER.error(f"Celery Worker: Summary generation failed: {e}", exc_info=True)
         return "Error: Summary generation failed."
@@ -678,7 +678,7 @@ def generate_section_content_for_type(
     
     SECTION_PROMPTS = {
         "timeline": {
-            "system": "You are an expert meeting analyst specializing in chronological breakdowns.",
+            "system": "Create chronological breakdowns efficiently. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}". 
 
 Focus on:
@@ -694,7 +694,7 @@ Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
         },
         "key_points": {
-            "system": "You are an expert at distilling meetings into actionable key points.",
+            "system": "Extract key points efficiently. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Extract the most important key points from this meeting titled "{meeting_title}".
 
 Focus on:
@@ -710,7 +710,7 @@ Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
         },
         "feedback_suggestions": {
-            "system": "You are an expert meeting facilitator focused on improvement recommendations.",
+            "system": "Provide improvement recommendations efficiently. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze this meeting titled "{meeting_title}" and provide constructive feedback and suggestions for improvement.
 
 Consider:
@@ -727,7 +727,7 @@ Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
         },
         "metrics": {
-            "system": "You are a meeting analytics expert who extracts quantitative insights.",
+            "system": "Extract quantitative insights efficiently. Work with minimal reasoning, following instructions precisely.",
             "prompt": f"""Analyze the metrics and measurable aspects of this meeting titled "{meeting_title}".
 
 Look for:
@@ -747,21 +747,40 @@ Transcript: {transcript[:3000]}"""
     }
     
     if section_type not in SECTION_PROMPTS:
-        return f"Cannot regenerate content for section type '{section_type}'. This section type does not support AI generation."
+        # Handle AI-generated or custom section types
+        prompt = f"""Analyze this meeting titled "{meeting_title}" and create content for a section about the requested topic.
+
+Focus on providing valuable insights and information relevant to the meeting content.
+
+Context: {context or 'None provided'}
+
+Transcript: {transcript[:3000]}"""
+        
+        try:
+            response = openai.responses.create(
+                model="gpt-5-mini-2025-08-07",
+                input=f"""Create helpful section content efficiently. Work with minimal reasoning, following instructions precisely.
+
+{prompt}""",
+                reasoning={"effort": "minimal"}
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            LOGGER.error(f"Generic section content generation failed for {section_type}: {e}", exc_info=True)
+            return f"Error generating content for {section_type}: {str(e)}"
     
     try:
         prompt_config = SECTION_PROMPTS[section_type]
         
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.3,
-            messages=[
-                {"role": "system", "content": prompt_config["system"]},
-                {"role": "user", "content": prompt_config["prompt"]}
-            ]
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""{prompt_config["system"]}
+
+{prompt_config["prompt"]}""",
+            reasoning={"effort": "minimal"}
         )
         
-        return response.choices[0].message.content.strip()
+        return response.output_text.strip()
     except Exception as e:
         LOGGER.error(f"Section content generation failed for {section_type}: {e}", exc_info=True)
         return f"Error generating content for {section_type}: {str(e)}"

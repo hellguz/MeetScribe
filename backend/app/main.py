@@ -826,19 +826,22 @@ def create_section(mid: uuid.UUID, body: SectionCreate):
             section.updated_at = dt.datetime.utcnow()
             db.add(section)
         
+        # Determine if this section needs AI generation
+        needs_ai_generation = body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"] or body.section_type.startswith("ai_")
+        
         new_section = MeetingSection(
             meeting_id=mid,
             section_type=body.section_type,
             title=body.title,
             position=body.position,
-            is_generating=True if body.section_type != "custom" else False
+            is_generating=needs_ai_generation
         )
         db.add(new_section)
         db.commit()
         db.refresh(new_section)
         
-        # Queue AI generation for template sections
-        if body.section_type in ["timeline", "key_points", "feedback_suggestions", "metrics"]:
+        # Queue AI generation for template sections and AI-generated sections
+        if needs_ai_generation:
             from .worker import generate_section_content
             generate_section_content.delay(str(new_section.id), str(mid))
         
@@ -994,38 +997,33 @@ def generate_ai_templates(mid: uuid.UUID):
         summary = meeting.summary_markdown or ""
         title = meeting.title or ""
         
-        # Use GPT-3.5-turbo for fast, cheap generation
+        # Use GPT-5-mini for fast generation with minimal reasoning
         try:
-            response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a meeting analyzer. Generate exactly 4 specific section templates tailored to this meeting. 
-                        
-                        IMPORTANT: The user already sees these 4 default templates:
-                        - Meeting Timeline (📝)
-                        - Key Points (📊) 
-                        - Feedback & Suggestions (💡)
-                        - Meeting Metrics (📈)
-                        
-                        Do NOT suggest anything similar to these. Instead, suggest 4 specific, meeting-relevant sections based on the content.
-                        
-                        Respond with exactly 4 lines in this format:
-                        emoji|Title|Description
-                        
-                        Use relevant emojis (avoid 📝📊💡📈) and keep titles short (2-4 words). Make descriptions 1 sentence explaining why this section is relevant to THIS specific meeting."""
-                    },
-                    {
-                        "role": "user", 
-                        "content": f"Meeting: {title}\n\nSummary: {summary[:1000]}\n\nTranscript preview: {transcript[:500]}"
-                    }
-                ],
-                max_tokens=200,
-                temperature=0.3
+            response = openai.responses.create(
+                model="gpt-5-mini-2025-08-07",
+                input=f"""Generate exactly 4 specific section templates for this meeting. Work efficiently with minimal reasoning.
+
+AVOID these existing templates:
+- Meeting Timeline (📝), Key Points (📊), Feedback & Suggestions (💡), Meeting Metrics (📈)
+
+Generate 4 NEW suggestions focusing on:
+1. Meeting content themes (what was actually discussed)
+2. Alternative summary structures (how content could be reorganized)
+3. Missing perspectives or analysis angles
+4. Content-specific insights unique to this meeting
+
+Output format (exactly 4 lines):
+emoji|Title|Description
+
+Use diverse emojis (avoid 📝📊💡📈), 2-4 word titles, 1-sentence descriptions explaining relevance to THIS meeting.
+
+Meeting: {title}
+Summary: {summary[:1000]}
+Transcript preview: {transcript[:500]}""",
+                reasoning={"effort": "minimal"}
             )
             
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response.output_text.strip()
             templates = []
             
             for line in ai_response.split('\n'):
@@ -1058,10 +1056,10 @@ def generate_ai_templates(mid: uuid.UUID):
             # Return fallback templates
             return {
                 "templates": [
-                    {"type": "ai_0", "title": "Discussion Points", "icon": "💬", "description": "Key discussion topics from this meeting", "is_ai_suggested": True},
-                    {"type": "ai_1", "title": "Decisions Made", "icon": "✅", "description": "Important decisions reached", "is_ai_suggested": True},
-                    {"type": "ai_2", "title": "Follow-ups", "icon": "🎯", "description": "Action items and next steps", "is_ai_suggested": True},
-                    {"type": "ai_3", "title": "Insights", "icon": "💭", "description": "Key insights and takeaways", "is_ai_suggested": True}
+                    {"type": "ai_0", "title": "Content Breakdown", "icon": "🧩", "description": "Reorganize content by themes instead of chronology", "is_ai_suggested": True},
+                    {"type": "ai_1", "title": "Participant Views", "icon": "👥", "description": "Different perspectives and viewpoints shared", "is_ai_suggested": True},
+                    {"type": "ai_2", "title": "Context Analysis", "icon": "🔍", "description": "Background information and underlying factors", "is_ai_suggested": True},
+                    {"type": "ai_3", "title": "Impact Summary", "icon": "⚡", "description": "Potential outcomes and implications discussed", "is_ai_suggested": True}
                 ]
             }
 
