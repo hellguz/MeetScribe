@@ -99,11 +99,22 @@ export default function SectionRenderer({
     transition: 'opacity 0.2s ease',
   }
 
+
+
+
+  // Mobile detection and styles
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  React.useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
   const controlsStyle: React.CSSProperties = {
     position: 'absolute',
     left: '-40px',
     top: '0',
-    display: 'flex',
+    display: isMobile ? 'none' : 'flex', // Hide on mobile
     flexDirection: 'column',
     gap: '4px',
     opacity: showControls && (isHovered || window.innerWidth <= 768) ? 1 : 0,
@@ -111,15 +122,6 @@ export default function SectionRenderer({
     zIndex: 10,
   }
 
-  // Mobile detection and styles
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
-  
-  React.useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768)
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
-  
   const summaryStyle: React.CSSProperties = {
     marginLeft: isMobile ? '0' : '0',
     paddingLeft: isMobile ? '0' : '0',
