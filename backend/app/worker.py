@@ -785,6 +785,8 @@ def generate_section_content_for_type(
     section_title: str = "",
     summary_length: str = "auto",
     target_language: str = "English",
+    duration_minutes: int = 0,
+    meeting_started_at: str = "",
 ) -> str:
     """Generate AI content for different section types."""
     if not openai.api_key:
@@ -800,64 +802,98 @@ def generate_section_content_for_type(
     }
     length_instruction = LENGTH_ADJUSTMENTS.get(summary_length, LENGTH_ADJUSTMENTS["auto"])
 
+    # Prepare meeting metadata for more human context
+    duration_text = f"{duration_minutes} minutes" if duration_minutes > 0 else "unknown duration"
+    time_context = f"Started at {meeting_started_at}, lasting {duration_text}" if meeting_started_at else f"Duration: {duration_text}"
+    
     SECTION_PROMPTS = {
         "timeline": {
-            "system": f"Create chronological breakdowns efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
-            "prompt": f"""Create a chronological timeline of the key moments in this meeting titled "{meeting_title}".
-CRITICAL REQUIREMENTS:
-- {length_instruction}
-- Write your entire response in {target_language}
-- Use simple bullet points or short paragraphs
-- NO subsections, NO markdown headers (###, ##, #)
-- Focus only on the most important transitions and decisions
+            "system": f"Create human-friendly chronological summaries in {target_language}. Focus on what actually happened and when. Work efficiently.",
+            "prompt": f"""Create a timeline showing how this {duration_text} meeting titled "{meeting_title}" unfolded.
+MEETING CONTEXT: {time_context}
+Purpose: {context or 'Not specified'}
 
-Format as brief timeline entries.
-Context: {context or 'None provided'}
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Show the meeting's natural flow and key moments
+- Include approximate timing when evident (beginning, middle, end)
+- Focus on decisions, transitions, and important discussions
+- Make it human-readable - someone should understand what happened when
+
+Create a narrative timeline that captures the meeting's progression.
 
 Transcript: {transcript[:3000]}""",
         },
-        "key_points": {
-            "system": f"Extract key points efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
-            "prompt": f"""Extract the most important key points from this meeting titled "{meeting_title}".
-CRITICAL REQUIREMENTS:
-- {length_instruction}
-- Write your entire response in {target_language}
-- Use simple bullet points or short paragraphs
-- NO subsections, NO markdown headers (###, ##, #)
-- Focus only on the most critical insights and information
+        "executive_summary": {
+            "system": f"Create executive-level overviews in {target_language}. Focus on outcomes and decisions that matter to leadership.",
+            "prompt": f"""Create an executive summary of this {duration_text} meeting titled "{meeting_title}".
+MEETING CONTEXT: {time_context}
+Purpose: {context or 'Not specified'}
 
-Format as brief key points.
-Context: {context or 'None provided'}
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Focus on outcomes, decisions, and business impact
+- Answer: What was accomplished? What decisions were made? What's next?
+- Use clear, professional language suitable for leadership
+- Highlight any risks, opportunities, or resource needs
+
+Write for busy executives who need to understand the key outcomes.
 
 Transcript: {transcript[:3000]}""",
         },
-        "feedback_suggestions": {
-            "system": f"Provide improvement recommendations efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
-            "prompt": f"""Analyze this meeting titled "{meeting_title}" and provide constructive feedback and suggestions for improvement.
-CRITICAL REQUIREMENTS:
-- {length_instruction}
-- Write your entire response in {target_language}
-- Use simple bullet points or short paragraphs
-- NO subsections, NO markdown headers (###, ##, #)
-- Focus only on the most actionable improvements
+        "action_items": {
+            "system": f"Extract actionable tasks and assignments in {target_language}. Focus on who needs to do what by when.",
+            "prompt": f"""Extract all action items and tasks from this {duration_text} meeting titled "{meeting_title}".
+MEETING CONTEXT: {time_context}
+Purpose: {context or 'Not specified'}
 
-Provide brief, specific recommendations.
-Context: {context or 'None provided'}
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Identify specific tasks, assignments, and follow-ups
+- Include owners/assignees when mentioned
+- Note deadlines or timeframes when discussed
+- Focus on what needs to happen next
+
+Create a clear task list that participants can act on.
 
 Transcript: {transcript[:3000]}""",
         },
-        "metrics": {
-            "system": f"Extract quantitative insights efficiently in {target_language}. Work with minimal reasoning, following instructions precisely.",
-            "prompt": f"""Analyze the metrics and measurable aspects of this meeting titled "{meeting_title}".
-CRITICAL REQUIREMENTS:
-- {length_instruction}
-- Write your entire response in {target_language}
-- Use simple bullet points or short paragraphs
-- NO subsections, NO markdown headers (###, ##, #)
-- Focus only on the most relevant quantitative insights
+        "decisions_made": {
+            "system": f"Capture key decisions and their rationale in {target_language}. Focus on what was decided and why.",
+            "prompt": f"""Document the key decisions made during this {duration_text} meeting titled "{meeting_title}".
+MEETING CONTEXT: {time_context}
+Purpose: {context or 'Not specified'}
 
-Present as brief data points.
-Context: {context or 'None provided'}
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Identify specific decisions that were reached
+- Include the reasoning or factors that led to each decision
+- Note any alternatives that were considered
+- Highlight any decisions that still need approval or confirmation
+
+Create a decision log that preserves the rationale for future reference.
+
+Transcript: {transcript[:3000]}""",
+        },
+        "participants": {
+            "system": f"Identify participant contributions in {target_language}. Focus on who said what and their key insights.",
+            "prompt": f"""Analyze who participated in this {duration_text} meeting titled "{meeting_title}" and their key contributions.
+MEETING CONTEXT: {time_context}
+Purpose: {context or 'Not specified'}
+
+REQUIREMENTS:
+- {length_instruction}
+- Write in {target_language}
+- Identify different speakers and their main contributions
+- Note expertise, roles, or perspectives each person brought
+- Highlight key insights or unique viewpoints shared
+- Focus on substantive contributions, not just participation
+
+Create a summary that shows who added value and how.
 
 Transcript: {transcript[:3000]}""",
         },
@@ -865,18 +901,22 @@ Transcript: {transcript[:3000]}""",
 
     if section_type not in SECTION_PROMPTS:
         # Handle AI-generated or custom section types
-        prompt = f"""Create focused content for a section titled "{section_title}" based on this meeting.
-CRITICAL REQUIREMENTS:
-- Do NOT repeat the section title "{section_title}" in your response.
-- {length_instruction}.
-- Write your entire response in {target_language}.
-- NO subsections, NO markdown headers (###, ##, #).
-- Use simple bullet points or short paragraphs.
-- Be concise and to-the-point, extracting ONLY the most essential information relevant to the section title.
-
-Based on the section title, analyze the transcript and provide a brief, actionable, and scan-friendly summary.
+        prompt = f"""Create focused content for a section titled "{section_title}" from this {duration_text} meeting.
+MEETING CONTEXT: {time_context}
 Meeting: "{meeting_title}"
-Context: {context or 'None provided'}
+Purpose: {context or 'Not specified'}
+
+REQUIREMENTS:
+- Do NOT repeat the section title "{section_title}" in your response
+- {length_instruction}
+- Write in {target_language}
+- Focus specifically on what the section title requests
+- Make it practical and actionable for meeting participants
+- Include relevant context, timing, or people when helpful
+- Be human-readable and scan-friendly
+
+Analyze the transcript and extract information that directly relates to "{section_title}".
+
 Transcript: {transcript[:3000]}"""
 
         try:
@@ -968,6 +1008,10 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
                 transcript_snippet = transcript[:2000] if transcript else ""
                 target_language = detect_language_local(transcript_snippet)
 
+            # Prepare meeting metadata for enhanced content generation
+            duration_minutes = (meeting.duration_seconds or 0) // 60
+            meeting_started_at = meeting.started_at.strftime("%Y-%m-%d %H:%M") if meeting.started_at else ""
+            
             # Generate content
             content = generate_section_content_for_type(
                 section.section_type,
@@ -977,6 +1021,8 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
                 section.title,
                 meeting.summary_length,
                 target_language,
+                duration_minutes,
+                meeting_started_at,
             )
 
             # Update section

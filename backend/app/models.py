@@ -202,6 +202,11 @@ class MeetingSection(SQLModel, table=True):
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     is_generating: bool = Field(default=False)
+    # Enhanced context fields
+    start_timestamp: Optional[int] = None  # Seconds from meeting start
+    end_timestamp: Optional[int] = None    # Seconds from meeting start
+    speakers: Optional[str] = None         # JSON array of speaker names when available
+    extra_data: Optional[str] = None       # JSON for additional context (tags, confidence, etc.)
 
 
 class SectionCreate(SQLModel):

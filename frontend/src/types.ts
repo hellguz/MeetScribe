@@ -55,6 +55,11 @@ export interface MeetingSection {
     created_at: string;
     updated_at: string;
     is_generating: boolean;
+    // Enhanced context for more human context
+    start_timestamp?: number | null;  // Seconds from meeting start
+    end_timestamp?: number | null;    // Seconds from meeting start  
+    speakers?: string | null;         // JSON array of speaker names when available
+    extra_data?: string | null;       // JSON for additional context (tags, confidence, etc.)
 }
 
 export interface SectionTemplate {

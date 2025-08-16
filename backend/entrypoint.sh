@@ -15,6 +15,7 @@ python /app/utils/add_summary_language_columns.py
 python /app/utils/add_context_column.py
 python /app/utils/add_timezone_column.py
 python /app/utils/add_meeting_sections_table.py
+python /app/utils/add_enhanced_section_columns.py
 echo "Database migrations complete."
 
 # Execute the command passed to this script (e.g., uvicorn for the backend,

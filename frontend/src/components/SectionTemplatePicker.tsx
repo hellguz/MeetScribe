@@ -11,31 +11,92 @@ interface SectionTemplatePickerProps {
   position?: {x: number, y: number} | null
 }
 
-const SECTION_TEMPLATES: SectionTemplate[] = [
+// Organized section templates by category for better UX
+const ESSENTIAL_TEMPLATES: SectionTemplate[] = [
+  {
+    type: 'executive_summary',
+    title: 'Executive Summary',
+    icon: '📋',
+    description: 'High-level overview for stakeholders and decision-makers'
+  },
+  {
+    type: 'action_items',
+    title: 'Action Items',
+    icon: '✅',
+    description: 'Tasks, deadlines, and assigned responsibilities'
+  },
+  {
+    type: 'decisions_made',
+    title: 'Decisions Made',
+    icon: '🎯',
+    description: 'Key decisions reached and their reasoning'
+  },
+  {
+    type: 'next_steps',
+    title: 'Next Steps',
+    icon: '➡️',
+    description: 'What happens next and upcoming milestones'
+  }
+]
+
+const ANALYSIS_TEMPLATES: SectionTemplate[] = [
+  {
+    type: 'questions_raised',
+    title: 'Questions & Concerns',
+    icon: '❓',
+    description: 'Open questions, concerns, and items needing clarification'
+  },
+  {
+    type: 'risks_challenges',
+    title: 'Risks & Challenges',
+    icon: '⚠️',
+    description: 'Potential issues, blockers, and mitigation strategies'
+  },
+  {
+    type: 'alternatives_considered',
+    title: 'Alternatives Discussed',
+    icon: '🔄',
+    description: 'Different approaches, options, and trade-offs considered'
+  },
+  {
+    type: 'feedback_given',
+    title: 'Feedback & Suggestions',
+    icon: '💬',
+    description: 'Input, suggestions, and recommendations shared'
+  }
+]
+
+const CONTEXT_TEMPLATES: SectionTemplate[] = [
   {
     type: 'timeline',
-    title: 'Meeting Timeline',
-    icon: '📝',
-    description: 'Chronological breakdown of key moments'
+    title: 'Meeting Flow',
+    icon: '⏱️',
+    description: 'Chronological progression with timestamps'
   },
   {
-    type: 'key_points',
-    title: 'Key Points',
-    icon: '📊',
-    description: 'Important topics as bullet points'
+    type: 'participants',
+    title: 'Who Spoke',
+    icon: '👥',
+    description: 'Speaker contributions and key insights from each person'
   },
   {
-    type: 'feedback_suggestions',
-    title: 'Discussion',
-    icon: '💡',
-    description: 'Key discussion points and viewpoints'
+    type: 'technical_details',
+    title: 'Technical Details',
+    icon: '🔧',
+    description: 'Implementation specifics, requirements, and constraints'
   },
   {
-    type: 'metrics',
-    title: 'Meeting Metrics',
-    icon: '📈',
-    description: 'Data and statistics about the meeting'
+    type: 'budget_resources',
+    title: 'Resources & Budget',
+    icon: '💰',
+    description: 'Cost implications, resource needs, and budget discussions'
   }
+]
+
+const SECTION_TEMPLATES: SectionTemplate[] = [
+  ...ESSENTIAL_TEMPLATES,
+  ...ANALYSIS_TEMPLATES,
+  ...CONTEXT_TEMPLATES
 ]
 
 export default function SectionTemplatePicker({ 
@@ -233,8 +294,133 @@ export default function SectionTemplatePicker({
             </div>
           </div>
 
-          {/* Default Templates */}
-          {SECTION_TEMPLATES.map((template) => (
+          {/* Essential Templates */}
+          <div style={{
+            fontSize: '12px',
+            fontWeight: '500',
+            color: currentTheme.secondaryText,
+            padding: '8px 16px 4px 16px',
+            fontFamily: 'inherit'
+          }}>
+            📋 Essentials
+          </div>
+          {ESSENTIAL_TEMPLATES.map((template) => (
+            <button
+              key={template.type}
+              onClick={() => handleSelectTemplate(template)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: '8px 16px',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background-color 0.1s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                width: '100%',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent'
+              }}
+            >
+              <div style={{ 
+                fontSize: '16px', 
+                lineHeight: 1,
+                flexShrink: 0
+              }}>
+                {template.icon}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ 
+                  fontWeight: '500', 
+                  fontSize: '14px',
+                  color: currentTheme.text,
+                  fontFamily: 'inherit'
+                }}>
+                  {template.title}
+                </div>
+              </div>
+            </button>
+          ))}
+
+          {/* Analysis Templates */}
+          <div style={{
+            height: '1px',
+            backgroundColor: currentTheme.border,
+            margin: '4px 0'
+          }} />
+          <div style={{
+            fontSize: '12px',
+            fontWeight: '500',
+            color: currentTheme.secondaryText,
+            padding: '8px 16px 4px 16px',
+            fontFamily: 'inherit'
+          }}>
+            🔍 Analysis
+          </div>
+          {ANALYSIS_TEMPLATES.map((template) => (
+            <button
+              key={template.type}
+              onClick={() => handleSelectTemplate(template)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: '8px 16px',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background-color 0.1s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                width: '100%',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent'
+              }}
+            >
+              <div style={{ 
+                fontSize: '16px', 
+                lineHeight: 1,
+                flexShrink: 0
+              }}>
+                {template.icon}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ 
+                  fontWeight: '500', 
+                  fontSize: '14px',
+                  color: currentTheme.text,
+                  fontFamily: 'inherit'
+                }}>
+                  {template.title}
+                </div>
+              </div>
+            </button>
+          ))}
+
+          {/* Context Templates */}
+          <div style={{
+            height: '1px',
+            backgroundColor: currentTheme.border,
+            margin: '4px 0'
+          }} />
+          <div style={{
+            fontSize: '12px',
+            fontWeight: '500',
+            color: currentTheme.secondaryText,
+            padding: '8px 16px 4px 16px',
+            fontFamily: 'inherit'
+          }}>
+            📋 Context
+          </div>
+          {CONTEXT_TEMPLATES.map((template) => (
             <button
               key={template.type}
               onClick={() => handleSelectTemplate(template)}
