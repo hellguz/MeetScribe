@@ -50,6 +50,13 @@ export default function SectionTemplatePicker({
   const [aiTemplates, setAiTemplates] = useState<SectionTemplate[]>([])
   const [isLoadingAiTemplates, setIsLoadingAiTemplates] = useState(false)
   const [customSectionTitle, setCustomSectionTitle] = useState('')
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   useEffect(() => {
     if (isOpen && meetingId) {
@@ -130,9 +137,9 @@ export default function SectionTemplatePicker({
       <div
         style={{
           position: 'fixed',
-          top: position?.y || '50%',
-          left: position?.x || '50%',
-          transform: position ? 'none' : 'translate(-50%, -50%)',
+          top: isMobile || !position ? '50%' : position.y,
+          left: isMobile || !position ? '50%' : position.x,
+          transform: isMobile || !position ? 'translate(-50%, -50%)' : 'none',
           backgroundColor: currentTheme.background,
           borderRadius: '8px',
           padding: '8px 0',
@@ -153,7 +160,7 @@ export default function SectionTemplatePicker({
             fontSize: '14px', 
             fontWeight: '600',
             color: currentTheme.text,
-            fontFamily: "'Jost', serif"
+            fontFamily: 'inherit'
           }}>
             Add Section
           </h3>
@@ -196,7 +203,7 @@ export default function SectionTemplatePicker({
                   fontSize: '14px',
                   fontWeight: '500',
                   color: currentTheme.text,
-                  fontFamily: "'Jost', serif",
+                  fontFamily: 'inherit',
                   padding: '4px 0'
                 }}
               />
@@ -211,7 +218,7 @@ export default function SectionTemplatePicker({
                     cursor: 'pointer',
                     padding: '4px 8px',
                     borderRadius: '4px',
-                    fontFamily: "'Jost', serif"
+                    fontFamily: 'inherit'
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = currentTheme.backgroundSecondary
@@ -262,7 +269,7 @@ export default function SectionTemplatePicker({
                   fontWeight: '500', 
                   fontSize: '14px',
                   color: currentTheme.text,
-                  fontFamily: "'Jost', serif"
+                  fontFamily: 'inherit'
                 }}>
                   {template.title}
                 </div>
@@ -284,7 +291,7 @@ export default function SectionTemplatePicker({
                 fontWeight: '500',
                 color: currentTheme.secondaryText,
                 padding: '8px 16px 4px 16px',
-                fontFamily: "'Jost', serif"
+                fontFamily: 'inherit'
               }}>
                 🤖 AI Suggestions
               </div>
@@ -294,7 +301,7 @@ export default function SectionTemplatePicker({
                   padding: '8px 16px',
                   color: currentTheme.secondaryText,
                   fontSize: '13px',
-                  fontFamily: "'Jost', serif"
+                  fontFamily: 'inherit'
                 }}>
                   Generating...
                 </div>
@@ -334,7 +341,7 @@ export default function SectionTemplatePicker({
                         fontWeight: '500', 
                         fontSize: '14px',
                         color: currentTheme.text,
-                        fontFamily: "'Jost', serif"
+                        fontFamily: 'inherit'
                       }}>
                         {template.title}
                       </div>

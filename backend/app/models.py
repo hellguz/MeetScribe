@@ -181,6 +181,13 @@ class MeetingConfigUpdate(SQLModel):
     summary_custom_language: Optional[str] = None
 
 
+class MeetingTranslatePayload(SQLModel):
+    """Payload for translating a meeting."""
+
+    target_language: str
+    language_mode: str
+
+
 class MeetingSection(SQLModel, table=True):
     """
     Individual sections within a meeting summary that can be customized.

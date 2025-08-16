@@ -69,6 +69,7 @@ export default function Summary() {
 		sections,
 		isLoading: sectionsLoading,
 		error: sectionsError,
+		fetchSections,
 		createSection,
 		updateSection,
 		deleteSection,
@@ -226,10 +227,31 @@ export default function Summary() {
 		}
 	}
 
-	const onLanguageChange = (update: Partial<SummaryLanguageState>) => {
+	const handleLanguageChange = async (update: Partial<SummaryLanguageState>) => {
+		if (!mid) return
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
-		handleRegenerate({ newLanguageState: newState })
+
+		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
+
+		try {
+			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					target_language: targetLanguage,
+					language_mode: newState.mode,
+				}),
+			})
+			if (!response.ok) {
+				throw new Error('Failed to start translation.')
+			}
+			// Fetch sections once to get the `is_generating` flags, which will trigger polling in useSections
+			fetchSections()
+		} catch (err) {
+			console.error('Translation error:', err)
+			alert('Could not start translation.')
+		}
 	}
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
@@ -250,7 +272,7 @@ export default function Summary() {
 		fontSize: '14px',
 		fontWeight: 500,
 		transition: 'background-color 0.2s ease',
-		fontFamily: 'Jost, serif',
+		fontFamily: 'inherit',
 	}
 
 	return (
@@ -266,7 +288,7 @@ export default function Summary() {
 						cursor: 'pointer',
 						color: currentThemeColors.secondaryText,
 						fontSize: '15px',
-						fontFamily: 'Jost, serif',
+						fontFamily: 'inherit',
 					}}>
 					← Back to Recordings
 				</button>
@@ -297,7 +319,7 @@ export default function Summary() {
 								fontSize: '14px',
 								fontWeight: 500,
 								transition: 'all 0.2s ease',
-								fontFamily: 'Jost, serif',
+								fontFamily: 'inherit',
 							}}
 							onMouseEnter={(e) => {
 								e.currentTarget.style.backgroundColor = currentThemeColors.background
@@ -366,7 +388,7 @@ export default function Summary() {
 							borderRadius: '6px',
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
-							fontFamily: "'Jost', serif",
+							fontFamily: 'inherit',
 						}}
 						autoFocus
 					/>
@@ -380,7 +402,7 @@ export default function Summary() {
 							cursor: 'pointer',
 							fontSize: '1.7em',
 							margin: 0,
-							fontFamily: "'Jost', serif",
+							fontFamily: 'inherit',
 							fontWeight: 600,
 							lineHeight: 1.2,
 						}}>
@@ -389,7 +411,7 @@ export default function Summary() {
 				)}
 
 				{formattedDate && (
-					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: "'Jost', serif" }}>{formattedDate}</p>
+					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
 				)}
 
 				{(hasSections || isProcessing) && (
@@ -403,7 +425,7 @@ export default function Summary() {
 								alignItems: 'center',
 							}}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(len) => handleRegenerate({ newLength: len })} />
-							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={onLanguageChange} />
+							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 
 						<div>

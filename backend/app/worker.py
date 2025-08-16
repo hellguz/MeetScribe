@@ -331,15 +331,16 @@ You are 'Scribe', an expert AI analyst. Work efficiently with minimal reasoning 
 
 <output_rules>
 **2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary. DO NOT include a title, heading, or date at the top. Start directly with the 'Summary' section.
+- Your response MUST BE ONLY the Markdown summary. DO NOT include a title or date at the top.
 - **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
+- **HEADINGS:** Use `####` for the initial overview and `###` for subsequent thematic sections. Headings should be descriptive and concise. **DO NOT** start headings with prefixes like "Theme:", "Topic:", or "Summary:".
 ---
-#### Summary
-Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes.
----
-*(...Thematic Sections Go Here...)*
----
+#### Overview
+Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes. Start the paragraph directly, without any prefix.
 
+*(...Generate thematic sections below this point, each starting with a `###` heading...)*
+
+---
 #### Key Decisions & Action Items
 - This section is mandatory unless there were absolutely no decisions or actions.
 - List all firm decisions made and all actionable next steps. This section should use bullet points.
@@ -347,8 +348,8 @@ Write an insightful overview paragraph (3-5 sentences). It should set the scene,
 </output_rules>
 
 <thematic_body_instructions>
-This is the core of the summary. For each **Key Theme** you identified, create a `###` heading.
-- **Summarize the Discussion:** Write a clear paragraph summarizing the main points of the discussion for this theme. Explain the core arguments, proposals, and conclusions.
+After the 'Overview' section, create a `###` heading for each major theme you identified.
+- Under each heading, write a clear paragraph summarizing the main points of discussion for that theme. Explain the core arguments, proposals, and conclusions. **Start the paragraph directly, without any prefix.**
 - **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback or discussion centering around the current section. **This is crucial for design reviews.**
 - **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
 </thematic_body_instructions>
@@ -387,7 +388,8 @@ def rebuild_full_transcript(
 
 def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -> list[MeetingSection]:
     """
-    Parse a markdown summary and convert it into section objects. Splits on major headers (###, ####) and creates appropriate sections.
+    Parse a markdown summary and convert it into section objects.
+    Splits on major headers (###, ####) and creates appropriate sections.
     """
     if not summary_markdown:
         return []
@@ -411,11 +413,13 @@ def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -
             title_lower = title.lower()
             if 'summary' in title_lower and position == 0:
                 section_type = "default_summary"
+            elif 'overview' in title_lower and position == 0:
+                section_type = "default_summary"
             elif any(keyword in title_lower for keyword in ['timeline', 'chronolog', 'sequence']):
                 section_type = "timeline"
             elif any(keyword in title_lower for keyword in ['key points', 'main points', 'important']):
                 section_type = "key_points"
-            elif any(keyword in title_lower for keyword in ['feedback', 'suggestions', 'recommendations']):
+            elif any(keyword in title_lower for keyword in ['feedback', 'suggestions', 'recommendations', 'discussion']):
                 section_type = "feedback_suggestions"
             elif any(keyword in title_lower for keyword in ['metrics', 'data', 'statistics', 'numbers']):
                 section_type = "metrics"
@@ -807,7 +811,8 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most important transitions and decisions
 
-Format as brief timeline entries. Context: {context or 'None provided'}
+Format as brief timeline entries.
+Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
@@ -821,7 +826,8 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most critical insights and information
 
-Format as brief key points. Context: {context or 'None provided'}
+Format as brief key points.
+Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
@@ -835,7 +841,8 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most actionable improvements
 
-Provide brief, specific recommendations. Context: {context or 'None provided'}
+Provide brief, specific recommendations.
+Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
@@ -849,7 +856,8 @@ CRITICAL REQUIREMENTS:
 - NO subsections, NO markdown headers (###, ##, #)
 - Focus only on the most relevant quantitative insights
 
-Present as brief data points. Context: {context or 'None provided'}
+Present as brief data points.
+Context: {context or 'None provided'}
 
 Transcript: {transcript[:3000]}""",
         },
@@ -874,7 +882,8 @@ Based on the section title, extract only the most essential information:
 - Participants: Note only key contributors
 - Follow-ups: List only immediate next steps
 
-Keep it brief, actionable, and scan-friendly. Meeting: "{meeting_title}"
+Keep it brief, actionable, and scan-friendly.
+Meeting: "{meeting_title}"
 Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
 
@@ -1006,3 +1015,89 @@ def generate_section_content(self, section_id_str: str, meeting_id_str: str):
             pass
 
         self.retry(exc=exc)
+
+
+def translate_text(text: str, target_language: str, context: str | None) -> str:
+    """Translates a block of text using GPT-5-mini."""
+    if not text or not text.strip():
+        return text
+
+    context_prompt = ""
+    if context and context.strip():
+        context_prompt = (
+            f"Use this context for consistent terminology: <context>{context}</context>"
+        )
+
+    try:
+        response = openai.responses.create(
+            model="gpt-5-mini-2025-08-07",
+            input=f"""Translate the following text into {target_language}.
+Maintain original formatting (like markdown headers and lists).
+{context_prompt}
+Only return the translated text.
+
+<text_to_translate>
+{text}
+</text_to_translate>""",
+            reasoning={"effort": "minimal"},
+        )
+        return response.output_text.strip()
+    except Exception as e:
+        LOGGER.error(f"Celery Worker: Text translation failed: {e}", exc_info=True)
+        return f"Error: Translation to {target_language} failed."
+
+
+@celery_app.task(
+    name="app.worker.translate_meeting_sections",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=120,
+)
+def translate_meeting_sections(self, meeting_id_str: str, target_language: str):
+    """Translates all sections of a meeting to a new language."""
+    engine = get_db_engine()
+    meeting_id = uuid.UUID(meeting_id_str)
+    LOGGER.info(f"Starting translation for meeting {meeting_id} to {target_language}")
+
+    with Session(engine) as db:
+        meeting = db.get(Meeting, meeting_id)
+        if not meeting:
+            LOGGER.error(f"Meeting {meeting_id} not found for translation.")
+            return
+
+        sections = db.exec(
+            select(MeetingSection).where(MeetingSection.meeting_id == meeting_id)
+        ).all()
+        if not sections:
+            LOGGER.warning(f"No sections found to translate for meeting {meeting_id}.")
+            return
+
+        for section in sections:
+            try:
+                # Translate title
+                if section.title:
+                    section.title = translate_text(
+                        section.title, target_language, meeting.context
+                    )
+
+                # Translate content
+                if section.content:
+                    section.content = translate_text(
+                        section.content, target_language, meeting.context
+                    )
+
+                section.is_generating = False  # Mark as done
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+
+            except Exception as e:
+                LOGGER.error(
+                    f"Failed to translate section {section.id} for meeting {meeting_id}: {e}"
+                )
+                section.content = f"Error during translation: {e}"
+                section.is_generating = False
+                db.add(section)
+
+        db.commit()
+        LOGGER.info(f"✅ Translation complete for meeting {meeting_id}")

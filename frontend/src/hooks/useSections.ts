@@ -3,7 +3,7 @@ import { MeetingSection, SectionTemplate } from '../types'
 
 interface UseSectionsProps {
   meetingId: string | undefined
-  isProcessing: boolean // NEW: Get processing status from parent hook
+  isProcessing: boolean
 }
 
 export const useSections = ({ meetingId, isProcessing }: UseSectionsProps) => {
@@ -11,49 +11,53 @@ export const useSections = ({ meetingId, isProcessing }: UseSectionsProps) => {
   const [isLoading, setIsLoading] = useState(true) 
   const [error, setError] = useState<string | null>(null)
 
-  const fetchSections = useCallback(async () => {
+  const fetchSections = useCallback(async (isPoll = false) => {
     if (!meetingId) {
       setSections([])
       setIsLoading(false)
       return
     }
-
     try {
-      // Don't set loading to true on polls, only on initial load
-      if (isLoading) {
-        setError(null)
+      if (!isPoll) { // Only set loading on initial fetch, not polls
+          setIsLoading(true);
+          setError(null);
       }
-      
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/sections`)
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId}/sections`);
       if (!response.ok) {
-        throw new Error(`Failed to fetch sections: ${response.statusText}`)
+        throw new Error(`Failed to fetch sections: ${response.statusText}`);
       }
-      
-      const sectionsData = await response.json()
-      setSections(sectionsData)
+      const sectionsData = await response.json();
+      setSections(sectionsData);
     } catch (err) {
-      console.error('Error fetching sections:', err)
-      setError(err instanceof Error ? err.message : 'Failed to fetch sections')
-      setSections([])
+      console.error('Error fetching sections:', err);
+      if (!isPoll) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch sections');
+        setSections([]);
+      }
     } finally {
-      setIsLoading(false)
+      if (!isPoll) {
+        setIsLoading(false);
+      }
     }
-  }, [meetingId, isLoading])
+  }, [meetingId]);
 
   // Initial fetch
   useEffect(() => {
-    fetchSections()
-  }, [fetchSections])
+    if (meetingId) {
+        fetchSections(false)
+    }
+  }, [meetingId]);
 
-  // NEW: Polling logic based on the isProcessing flag from useMeetingSummary
+  // Polling logic
   useEffect(() => {
-    if (isProcessing) {
-      // When processing starts, clear current sections to show the loading state
-      setSections([]);
-      const pollInterval = setInterval(fetchSections, 3000);
+    const isAnySectionGenerating = sections.some(s => s.is_generating);
+    
+    // Condition for polling: whole meeting is processing OR some sections are generating
+    if (isProcessing || isAnySectionGenerating) {
+      const pollInterval = setInterval(() => fetchSections(true), 3000);
       return () => clearInterval(pollInterval);
     }
-  }, [isProcessing, fetchSections]);
+  }, [isProcessing, sections, fetchSections]);
 
   const createSection = useCallback(async (template: SectionTemplate, position: number) => {
     if (!meetingId) return
@@ -157,7 +161,7 @@ export const useSections = ({ meetingId, isProcessing }: UseSectionsProps) => {
       if (!response.ok) {
         throw new Error(`Failed to reorder sections: ${response.statusText}`)
       }
-      
+    
       // Data is already updated, but a refetch can ensure consistency.
       await fetchSections();
 

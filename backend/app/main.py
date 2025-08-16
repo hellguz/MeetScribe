@@ -34,8 +34,13 @@ from .models import (
     SectionCreate,
     SectionUpdate,
     SectionReorder,
+    MeetingTranslatePayload,
 )
-from .worker import process_transcription_and_summary, generate_summary_only
+from .worker import (
+    process_transcription_and_summary,
+    generate_summary_only,
+    translate_meeting_sections,
+)
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -873,6 +878,49 @@ def regenerate_section_content(section_id: int):
     return {"ok": True, "message": "Section regeneration queued"}
 
 
+@app.post("/api/meetings/{mid}/translate", status_code=202)
+def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
+    """
+    Triggers a translation of all meeting sections to a new language.
+    """
+    target_language = payload.target_language
+    language_mode = payload.language_mode
+
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # 1. Update meeting's language settings immediately
+        mtg.summary_language_mode = language_mode
+        mtg.summary_custom_language = (
+            target_language if language_mode == "custom" else None
+        )
+        db.add(mtg)
+
+        # 2. Mark all sections as "generating" to trigger UI polling
+        sections = db.exec(
+            select(MeetingSection).where(MeetingSection.meeting_id == mid)
+        ).all()
+        if not sections:
+            # If no sections, nothing to do.
+            db.commit()
+            return {"ok": True, "message": "No sections to translate."}
+
+        for section in sections:
+            section.is_generating = True
+            section.updated_at = dt.datetime.utcnow()
+            db.add(section)
+
+        db.commit()
+
+        # 3. Queue the background translation task
+        translate_meeting_sections.delay(str(mid), target_language)
+        LOGGER.info(f"Queued translation task for meeting {mid} to {target_language}")
+
+    return {"ok": True, "message": "Translation task queued."}
+
+
 @app.post("/api/meetings/{mid}/ai-templates")
 def generate_ai_templates(mid: uuid.UUID):
     """Generate 4 AI-suggested section templates specifically for this meeting."""
@@ -904,7 +952,8 @@ Generate 4 NEW suggestions focusing on:
 Output format (exactly 4 lines):
 emoji|Title|Description
 
-Use diverse emojis (avoid 📝📊💡📈), 2-4 word titles, 1-sentence descriptions explaining relevance to THIS meeting. Meeting: {title}
+Use diverse emojis (avoid 📝📊💡📈), 2-4 word titles, 1-sentence descriptions explaining relevance to THIS meeting.
+Meeting: {title}
 Summary: {summary[:1000]}
 Transcript preview: {transcript[:500]}""",
                 reasoning={"effort": "minimal"}
