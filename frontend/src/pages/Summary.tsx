@@ -193,15 +193,6 @@ export default function Summary() {
 		}
 	}, [regenerateSection])
 
-	const handleResetToDefaultSummary = useCallback(async () => {
-		if (!confirm('Reset to default summary? This will delete all custom sections and regenerate the original summary.')) return
-		
-		try {
-			handleRegenerate({})
-		} catch (error) {
-			console.error('Error resetting to default:', error)
-		}
-	}, [handleRegenerate])
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
 		if (!meetingTitle || !fullSummaryText) return
@@ -329,33 +320,6 @@ export default function Summary() {
 								Copied! ✨
 							</span>
 						)}
-						
-						<button
-							onClick={handleResetToDefaultSummary}
-							style={{
-								padding: '8px 12px',
-								border: `1px solid ${currentThemeColors.border}`,
-								borderRadius: '6px',
-								backgroundColor: currentThemeColors.backgroundSecondary,
-								color: currentThemeColors.secondaryText,
-								cursor: 'pointer',
-								fontSize: '14px',
-								fontWeight: 500,
-								transition: 'all 0.2s ease',
-								fontFamily: 'inherit',
-							}}
-							onMouseEnter={(e) => {
-								e.currentTarget.style.backgroundColor = currentThemeColors.background
-								e.currentTarget.style.borderColor = currentThemeColors.button.primary
-							}}
-							onMouseLeave={(e) => {
-								e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary
-								e.currentTarget.style.borderColor = currentThemeColors.border
-							}}
-							title="Reset to default summary"
-						>
-							Reset
-						</button>
 						
 						<div
 							style={{
