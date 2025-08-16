@@ -46,6 +46,20 @@ export default function SectionRenderer({
     setEditedContent(section.content || '')
   }, [section.title, section.content])
 
+  // Auto-resize textarea when entering edit mode
+  React.useEffect(() => {
+    if (isEditingContent) {
+      const timer = setTimeout(() => {
+        const textarea = document.querySelector('textarea') as HTMLTextAreaElement
+        if (textarea) {
+          textarea.style.height = 'auto'
+          textarea.style.height = textarea.scrollHeight + 'px'
+        }
+      }, 0)
+      return () => clearTimeout(timer)
+    }
+  }, [isEditingContent])
+
   const handleTitleSave = () => {
     if (editedTitle.trim() !== section.title) {
       onUpdateTitle(section.id, editedTitle.trim())
@@ -201,36 +215,33 @@ export default function SectionRenderer({
               }
             }}
             style={{
-              fontSize: '18px',
-              fontWeight: '600',
+              fontSize: '24px',
+              fontWeight: '700',
               width: '100%',
-              border: `1px solid ${currentTheme.input.border}`,
-              borderRadius: '6px',
-              backgroundColor: currentTheme.input.background,
-              color: currentTheme.input.text,
+              border: 'none',
+              outline: 'none',
+              backgroundColor: 'transparent',
+              color: currentTheme.text,
               fontFamily: "'Jost', serif",
-              padding: '8px',
+              padding: '0',
               marginBottom: '16px',
             }}
             autoFocus
           />
         ) : (
-          <h3
-            onClick={() => setIsEditingTitle(true)}
+          <h2
+            onDoubleClick={() => setIsEditingTitle(true)}
             style={{
-              cursor: 'pointer',
-              fontSize: '18px',
-              fontWeight: '600',
+              cursor: 'text',
+              fontSize: '24px',
+              fontWeight: '700',
               margin: '0 0 16px 0',
               color: currentTheme.text,
               fontFamily: "'Jost', serif",
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
             }}
           >
             {section.title}
-          </h3>
+          </h2>
         )}
 
         {/* Content */}
@@ -244,70 +255,139 @@ export default function SectionRenderer({
             ⏳ Generating content...
           </div>
         ) : isEditingContent ? (
-          <div>
-            <textarea
-              value={editedContent}
-              onChange={(e) => setEditedContent(e.target.value)}
-              onBlur={handleContentSave}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  setEditedContent(section.content || '')
-                  setIsEditingContent(false)
-                }
-              }}
-              style={{
-                width: '100%',
-                minHeight: '100px',
-                padding: '0',
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: currentTheme.text,
-                fontSize: '14px',
-                lineHeight: '1.6',
-                resize: 'vertical',
-                boxSizing: 'border-box',
-                fontFamily: "'Jost', serif",
-                outline: 'none'
-              }}
-              placeholder="Enter your content here..."
-              autoFocus
-            />
-          </div>
+          <textarea
+            value={editedContent}
+            onChange={(e) => setEditedContent(e.target.value)}
+            onBlur={handleContentSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setEditedContent(section.content || '')
+                setIsEditingContent(false)
+              }
+            }}
+            style={{
+              width: '100%',
+              minHeight: 'auto',
+              height: 'auto',
+              padding: '0',
+              border: 'none',
+              backgroundColor: 'transparent',
+              color: currentTheme.text,
+              fontSize: '16px',
+              lineHeight: '1.6',
+              resize: 'none',
+              boxSizing: 'border-box',
+              fontFamily: "'Jost', serif",
+              outline: 'none',
+              overflow: 'hidden'
+            }}
+            placeholder="Enter your content here..."
+            autoFocus
+            onInput={(e) => {
+              // Auto-resize textarea to fit content
+              e.currentTarget.style.height = 'auto'
+              e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'
+            }}
+          />
         ) : section.content ? (
           <div
-            onClick={() => setIsEditingContent(true)}
+            onDoubleClick={() => setIsEditingContent(true)}
             style={{
-              cursor: 'pointer',
+              cursor: 'text',
+              fontSize: '16px',
+              lineHeight: '1.6',
+              color: currentTheme.text,
+              fontFamily: "'Jost', serif",
             }}
           >
             <ReactMarkdown
               children={section.content}
               components={{
-                h1: ({ ...props }) => <h1 style={{ color: currentTheme.text }} {...props} />,
-                h2: ({ ...props }) => <h2 style={{ color: currentTheme.text }} {...props} />,
-                h3: ({ ...props }) => <h3 style={{ color: currentTheme.text }} {...props} />,
-                p: ({ ...props }) => <p style={{ lineHeight: 1.6, color: currentTheme.text }} {...props} />,
-                ul: ({ ...props }) => <ul style={{ color: currentTheme.text }} {...props} />,
-                ol: ({ ...props }) => <ol style={{ color: currentTheme.text }} {...props} />,
-                li: ({ ...props }) => <li style={{ color: currentTheme.text, marginBottom: '4px' }} {...props} />,
-                strong: ({ ...props }) => <strong style={{ color: currentTheme.text }} {...props} />,
+                h1: ({ ...props }) => (
+                  <h1 style={{ 
+                    color: currentTheme.text, 
+                    fontSize: '20px', 
+                    fontWeight: '600', 
+                    margin: '16px 0 8px 0',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                h2: ({ ...props }) => (
+                  <h2 style={{ 
+                    color: currentTheme.text, 
+                    fontSize: '18px', 
+                    fontWeight: '600', 
+                    margin: '14px 0 6px 0',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                h3: ({ ...props }) => (
+                  <h3 style={{ 
+                    color: currentTheme.text, 
+                    fontSize: '16px', 
+                    fontWeight: '600', 
+                    margin: '12px 0 4px 0',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                p: ({ ...props }) => (
+                  <p style={{ 
+                    lineHeight: 1.6, 
+                    color: currentTheme.text, 
+                    margin: '0 0 12px 0',
+                    fontSize: '16px',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                ul: ({ ...props }) => (
+                  <ul style={{ 
+                    color: currentTheme.text, 
+                    margin: '0 0 12px 0',
+                    paddingLeft: '20px',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                ol: ({ ...props }) => (
+                  <ol style={{ 
+                    color: currentTheme.text, 
+                    margin: '0 0 12px 0',
+                    paddingLeft: '20px',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                li: ({ ...props }) => (
+                  <li style={{ 
+                    color: currentTheme.text, 
+                    marginBottom: '4px',
+                    fontSize: '16px',
+                    lineHeight: 1.6,
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
+                strong: ({ ...props }) => (
+                  <strong style={{ 
+                    color: currentTheme.text, 
+                    fontWeight: '600',
+                    fontFamily: "'Jost', serif"
+                  }} {...props} />
+                ),
               }}
             />
           </div>
         ) : (
           <div
-            onClick={() => setIsEditingContent(true)}
+            onDoubleClick={() => setIsEditingContent(true)}
             style={{
               color: currentTheme.secondaryText,
               fontStyle: 'italic',
-              cursor: 'pointer',
+              cursor: 'text',
               padding: '16px',
               border: `1px dashed ${currentTheme.border}`,
               borderRadius: '8px',
               textAlign: 'center',
             }}
           >
-            Click to add content...
+            Double-click to add content...
           </div>
         )}
 
