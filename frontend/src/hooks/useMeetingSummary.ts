@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getCached, saveCached } from '../utils/summaryCache';
+import { getCached, saveCached, removeCached } from '../utils/summaryCache';
 import { getHistory, saveMeeting } from '../utils/history';
 import { SummaryLength } from '../contexts/SummaryLengthContext';
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext';
@@ -24,7 +24,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
     const [isRegenerating, setIsRegenerating] = useState(false);
-
     const fetchMeetingData = useCallback(async (isInitialFetch: boolean = false) => {
         if (!mid) return;
 
@@ -34,7 +33,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         }
 
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`);
+            const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}?_=${Date.now()}`);
             
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({ message: 'Failed to fetch meeting data' }));
@@ -93,7 +92,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             setIsProcessing(false);
         }
     }, [mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState]);
-
     const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
         if (!mid) return;
         setSubmittedFeedback(prev => isSelected ? [...prev, type] : prev.filter(t => t !== type));
@@ -108,7 +106,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             fetchMeetingData(false); // Re-fetch to revert
         }
     };
-
     const handleSuggestionSubmit = async (suggestionText: string) => {
         if (!mid || !suggestionText) return;
         try {
@@ -122,7 +119,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             alert("Sorry, we couldn't submit your suggestion right now.");
         }
     };
-
     const handleRegenerate = useCallback(async (
         settings: {
             newLength?: SummaryLength;
@@ -151,6 +147,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
                 body: JSON.stringify(payload),
             });
             if (!res.ok) throw new Error('Failed to start summary regeneration.');
+            removeCached(mid);
             setSummary(null);
             setIsProcessing(true);
         } catch (err) {
@@ -180,7 +177,6 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             alert('Failed to update title');
         }
     }, [mid, meetingTitle, meetingStartedAt, summary, transcript]);
-
     useEffect(() => {
         if (mid) {
             const cachedData = getCached(mid);
@@ -194,13 +190,11 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             fetchMeetingData(true);
         }
     }, [mid]);
-
     useEffect(() => {
         if (!isProcessing) return;
         const pollInterval = setInterval(() => fetchMeetingData(false), 5000);
         return () => clearInterval(pollInterval);
     }, [isProcessing, fetchMeetingData]);
-
     return {
         summary,
         transcript,
@@ -221,5 +215,3 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         loadedFromCache,
     };
 };
-
-

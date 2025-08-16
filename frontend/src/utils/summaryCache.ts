@@ -14,7 +14,6 @@ export interface CachedSummary {
 
 const CACHE_KEY = "meetscribe_cached_summaries";
 const FIVE_YEARS_MS = 1000 * 60 * 60 * 24 * 365 * 5;
-
 /* ─── internal helpers ──────────────────────────────────────────────── */
 function read(): CachedSummary[] {
   try {
@@ -46,4 +45,9 @@ export function saveCached(data: CachedSummary) {
   const list = read().filter((i) => i.id !== data.id); // drop existing copy
   list.push(data);
   write(list);
+}
+
+export function removeCached(id: string) {
+    const list = read().filter((i) => i.id !== id);
+    write(list);
 }

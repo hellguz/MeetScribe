@@ -237,7 +237,7 @@ export default function SectionRenderer({
               outline: 'none',
               backgroundColor: 'transparent',
               color: currentTheme.text,
-              fontFamily: "'Jost', serif",
+              // fontFamily: "'Jost', serif",
               padding: '0',
               marginBottom: '16px',
             }}
@@ -252,7 +252,7 @@ export default function SectionRenderer({
               fontWeight: '700',
               margin: '0 0 16px 0',
               color: currentTheme.text,
-              fontFamily: "'Jost', serif",
+              // fontFamily: "'Jost', serif",
             }}
           >
             {section.title}
@@ -292,7 +292,7 @@ export default function SectionRenderer({
               lineHeight: '1.6',
               resize: 'none',
               boxSizing: 'border-box',
-              fontFamily: "'Jost', serif",
+              // fontFamily: "'Jost', serif",
               outline: 'none',
               overflow: 'hidden'
             }}
@@ -312,7 +312,7 @@ export default function SectionRenderer({
               fontSize: '16px',
               lineHeight: '1.6',
               color: currentTheme.text,
-              fontFamily: "'Jost', serif",
+              // fontFamily: "'Jost', serif",
             }}
           >
             <ReactMarkdown

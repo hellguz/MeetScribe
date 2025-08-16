@@ -77,7 +77,7 @@ export default function Summary() {
 
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
-	const [editedContext, setEditedContext] = useState('')
+	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -97,10 +97,10 @@ export default function Summary() {
 	} = useSections({ meetingId: mid })
 
 	useEffect(() => {
-		if (context !== null) {
+		if (context !== null && editedContext === null) {
 			setEditedContext(context)
 		}
-	}, [context])
+	}, [context, editedContext])
 
 	useEffect(() => {
 		// Clear timeout on component unmount
@@ -246,10 +246,13 @@ export default function Summary() {
 	}
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
-	const contextHasChanged = editedContext !== context && context !== null && editedContext !== null
-	const useSectionsView = sections.length > 0
+	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
 	const hasSections = !sectionsLoading && sections.length > 0
 	const showControls = (summary && !isProcessing) || (hasSections && !sectionsLoading)
+	
+	const displayLoading = (isLoading && !loadedFromCache) || sectionsLoading;
+    const displayError = error || sectionsError;
+    const showProcessingMessage = (isProcessing || isRegenerating) && !summary && !sections.length;
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -425,7 +428,7 @@ export default function Summary() {
 							</label>
 							<textarea
 								id="context-editor"
-								value={editedContext}
+								value={editedContext ?? ''}
 								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
 								disabled={isRegenerating}
@@ -470,7 +473,11 @@ export default function Summary() {
 			</div>
 
 			{/* Sections View or Traditional Summary */}
-			{hasSections ? (
+			{displayLoading ? (
+				<p>Loading summary...</p>
+			) : displayError ? (
+				<p style={{ color: currentThemeColors.button.danger }}>Error: {displayError}</p>
+			) : hasSections ? (
 				<DraggableSectionList
 					sections={sections}
 					onReorder={reorderSections}
@@ -535,13 +542,10 @@ export default function Summary() {
 						}}
 					/>
 				</div>
-			) : (
-				<>
-					{isLoading && !loadedFromCache && <p>Loading summary...</p>}
-					{error && <p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>}
-					{sectionsError && <p style={{ color: currentThemeColors.button.danger }}>Sections Error: {sectionsError}</p>}
-					{(isProcessing || isRegenerating) && <p>⏳ Processing summary, please wait...</p>}
-				</>
+			) : showProcessingMessage ? (
+                <p>⏳ Processing summary, please wait...</p>
+            ) : (
+				<p>No summary is available for this meeting.</p>
 			)}
 
 			{summary && !isLoading && (
