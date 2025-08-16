@@ -867,22 +867,14 @@ Transcript: {transcript[:3000]}""",
         # Handle AI-generated or custom section types
         prompt = f"""Create focused content for a section titled "{section_title}" based on this meeting.
 CRITICAL REQUIREMENTS:
-- Do NOT repeat the section title "{section_title}" in your response
-- {length_instruction}
-- Write your entire response in {target_language}
-- NO subsections, NO markdown headers (###, ##, #)
-- Use simple bullet points or short paragraphs
-- Be concise and to-the-point
+- Do NOT repeat the section title "{section_title}" in your response.
+- {length_instruction}.
+- Write your entire response in {target_language}.
+- NO subsections, NO markdown headers (###, ##, #).
+- Use simple bullet points or short paragraphs.
+- Be concise and to-the-point, extracting ONLY the most essential information relevant to the section title.
 
-Based on the section title, extract only the most essential information:
-- Actions/tasks: List only the most critical action items
-- Decisions: Highlight only key decisions made
-- Discussions: Summarize only main points discussed
-- Outcomes: Focus only on final conclusions
-- Participants: Note only key contributors
-- Follow-ups: List only immediate next steps
-
-Keep it brief, actionable, and scan-friendly.
+Based on the section title, analyze the transcript and provide a brief, actionable, and scan-friendly summary.
 Meeting: "{meeting_title}"
 Context: {context or 'None provided'}
 Transcript: {transcript[:3000]}"""
@@ -1098,6 +1090,6 @@ def translate_meeting_sections(self, meeting_id_str: str, target_language: str):
                 section.content = f"Error during translation: {e}"
                 section.is_generating = False
                 db.add(section)
-
+        
         db.commit()
         LOGGER.info(f"✅ Translation complete for meeting {meeting_id}")
