@@ -23,30 +23,20 @@ logger = logging.getLogger("migration")
 def run_migration():
     """Add meeting_sections table if it doesn't exist."""
     db_path, engine = ensure_database_exists()
-    
+
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Check if table already exists
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name='meetingsection'
-        """)
-        
-        if cursor.fetchone():
-            logger.info("meetingsection table already exists. Skipping migration.")
-            return
-        
-        logger.info("meetingsection table does not exist. It will be created by SQLModel.metadata.create_all().")
-        logger.info("This migration ensures the database exists for SQLModel initialization.")
-        
-    except sqlite3.Error as e:
+        # Import models to ensure they're registered with SQLModel
+        from app.models import Meeting, MeetingChunk, Feedback, MeetingSection
+        from sqlmodel import SQLModel
+
+        # Create all tables using SQLModel
+        logger.info("Creating all database tables using SQLModel.metadata.create_all()...")
+        SQLModel.metadata.create_all(engine)
+        logger.info("Database tables created successfully.")
+
+    except Exception as e:
         logger.error(f"Error during migration: {e}")
         raise
-    finally:
-        if conn:
-            conn.close()
 
 if __name__ == "__main__":
     run_migration()
