@@ -82,11 +82,19 @@ export default function Summary() {
 		return () => { if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current) }
 	}, [])
 
+	// Set editor innerHTML and strip the first element's top margin so it aligns with the buttons
+	const setEditorHtml = useCallback((md: string) => {
+		if (!editorRef.current) return
+		editorRef.current.innerHTML = marked.parse(md || '') as string
+		const first = editorRef.current.firstElementChild as HTMLElement | null
+		if (first) first.style.marginTop = '0'
+	}, [])
+
 	// Sync markdown → HTML into the editor div whenever it changes, but never while the user is editing
 	useEffect(() => {
 		if (!editorRef.current || isEditingRef.current) return
-		editorRef.current.innerHTML = marked.parse(summaryMarkdown || '') as string
-	}, [summaryMarkdown])
+		setEditorHtml(summaryMarkdown || '')
+	}, [summaryMarkdown, setEditorHtml])
 
 	const enterEditMode = useCallback((e?: React.MouseEvent) => {
 		if (isEditingRef.current) return
@@ -141,9 +149,9 @@ export default function Summary() {
 		cancelClickedRef.current = false
 		setIsEditing(false)
 		// Restore original content
-		editorRef.current.innerHTML = marked.parse(summaryMarkdown || '') as string
+		setEditorHtml(summaryMarkdown || '')
 		editorRef.current.blur()
-	}, [summaryMarkdown])
+	}, [summaryMarkdown, setEditorHtml])
 
 	const handleEditorBlur = useCallback(() => {
 		if (cancelClickedRef.current) return
@@ -336,13 +344,12 @@ export default function Summary() {
 					backgroundColor: currentThemeColors.background,
 					borderRadius: '12px',
 					border: `1px solid ${currentThemeColors.border}`,
-					overflow: 'hidden',
 					position: 'relative',
 					boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
 					transition: 'box-shadow 0.15s ease',
 				}}>
-					{/* Edit / Save+Cancel */}
-					<div style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', gap: '6px', zIndex: 1 }}>
+					{/* Edit / Save+Cancel — absolutely positioned so they don't affect content layout */}
+					<div style={{ position: 'absolute', top: '20px', right: '24px', display: 'flex', gap: '6px', zIndex: 1 }}>
 						{isEditing ? (
 							<>
 								<button
