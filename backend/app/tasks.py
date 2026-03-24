@@ -187,7 +187,7 @@ def detect_language_local(text_snippet: str) -> str:
 
 def _summarise_essence(full_transcript: str, target_language: str, context_section: str) -> str:
     """Essence mode: ruthless selection."""
-    prompt = f"""You are a ruthless meeting editor. Your job is NOT to capture everything — it is to pick the most important facts from this transcript and discard everything else. Break all facts into clear sections. Sort all facts by importance. Think about overall structure and clarity first. Output in **{target_language}**.
+    prompt = f"""You are a ruthless meeting editor. Your job is NOT to capture everything — it is to pick the most important facts from this transcript and discard everything else. Break all facts into clear sections. Think about overall structure and clarity first. It should be easy to read - organize info in engaging way. Output in **{target_language}**.
 {context_section}
 
 ## Output format
@@ -195,14 +195,12 @@ def _summarise_essence(full_transcript: str, target_language: str, context_secti
 ```
 
 ## [Meeting Short Title — one line]
-##### [Context / org / project / meeting type, if useful]
+#### [Context / org / project / meeting type, if useful]
 
 > [2–3 sentences only: who met, the key result, what happens next. No filler. This is the TL;DR for a non-attendee. Start with the most critical info, not the chronological order.]
 
-### [Participants & Roles]
-- **[Name]:** [Role/Title] — [One extremely short line on their contribution or background relevant to the meeting, if useful]
-
-## [Topic 1: Topic name]
+### [Participants - optional, only if participants introduced themselves]
+- **[Name]:** [Role/Title] 
 
 ### [Section name]
 
@@ -214,8 +212,12 @@ def _summarise_essence(full_transcript: str, target_language: str, context_secti
 1. **[Item]:** One extremely short phrase/sentence if needed (use numbered list for ranked/sequential items)
 2. **[Item]:** One extremely short phrase/sentence if needed
 
-### [Action items]
+### [Section name]
 
+Very brief paragraphs of text only if it adds critical info beyond the bullet points. No filler.
+
+### [Action items]
+ 
 - **[Owner]** — What they must do — *[Deadline]*
 - **[Owner]** — What they must do
 ```
@@ -226,7 +228,7 @@ def _summarise_essence(full_transcript: str, target_language: str, context_secti
 - One phrase/sentence per item, no sub-bullets
 - Blockquote for exec summary only — no other prose
 - `###` headers only
-- Use `##` headers to break into major sections if needed (multiple unrelated topics), but avoid if possible
+- Use `## Topic 1: [Topic name]` headers to break into major sections if absolutely sure (i.e. multiple unrelated projects), but avoid if possible
 - No preamble, no trailing note, no "Here is the summary"
 - Entire output in **{target_language}**
 
