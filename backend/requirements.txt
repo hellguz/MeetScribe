@@ -8,6 +8,7 @@ python-multipart==0.0.9
 
 # speech-to-text
 faster-whisper==1.1.1
+requests
 
 # OpenAI & deps
 openai>=1.58.0               # Latest version with responses API and GPT-5 support
