@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python utils/migrate_sections_to_markdown.py)",
-      "Bash(npm install:*)"
-    ],
-    "defaultMode": "acceptEdits"
-  }
-}
