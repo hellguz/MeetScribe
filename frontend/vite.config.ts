@@ -8,7 +8,12 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     build: { outDir: "dist", emptyOutDir: true },
     define: {
-      'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL)
+      // env.VITE_API_BASE_URL comes from the root .env file (local dev).
+      // process.env.VITE_API_BASE_URL is the fallback for Docker builds where
+      // the value is injected as a build arg (ARG/ENV in Dockerfile).
+      'import.meta.env.VITE_API_BASE_URL': JSON.stringify(
+        env.VITE_API_BASE_URL ?? process.env.VITE_API_BASE_URL ?? ''
+      )
     },
     server: {
       proxy: {
