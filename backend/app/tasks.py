@@ -186,76 +186,49 @@ def detect_language_local(text_snippet: str) -> str:
 
 
 def _summarise_essence(full_transcript: str, target_language: str, context_section: str) -> str:
-    """Essence mode: high-density structured summary — distill, don't reconstruct."""
-    prompt = f"""You are an expert meeting analyst. Distill this transcript into a dense, scannable summary in **{target_language}**.
+    """Essence mode: ruthless selection."""
+    prompt = f"""You are a ruthless meeting editor. Your job is NOT to capture everything — it is to pick the most important facts from this transcript and discard everything else. Break all facts into clear sections. Sort all facts by importance. Think about overall structure and clarity first. Output in **{target_language}**.
 {context_section}
-## Core rules
 
-1. **DISTILL, don't reconstruct.** Compress every point to its essence — one sentence per item. Cut all filler, pleasantries, repetition, and process chatter. The summary should be roughly 500–800 words total.
-2. **Structure follows content.** Do NOT apply a fixed template. A funding review, a sprint, a legal debrief, and a sales call each need different sections. Pick only what's relevant.
-3. **Every word earns its place.** If a sentence doesn't add information a non-attendee needs, delete it. Prefer bullet lists and bold key terms over prose paragraphs.
-4. **Preserve specifics.** Never paraphrase away a number, name, date, deadline, or condition — but state each one once, in one sentence.
+## Output format
 
-## Internal analysis (do NOT output this)
-
-Before writing, identify:
-- Meeting type (grant review, sprint, client call, board meeting, 1:1, incident debrief, etc.)
-- Primary outcome (most important thing decided)
-- Who are the key people and what are their roles
-
-## Available sections (pick only what applies — this is a menu, not a checklist)
-
-- Participants
-- Overall outcome / verdict
-- Mandatory conditions / requirements
-- Additional recommendations (non-mandatory)
-- Key decisions
-- Timeline & deadlines
-- Budget & financial details
-- Action items (always include if any exist)
-- Process / next steps
-- Open questions
-
-## Output format (STRICT — follow exactly)
-
-```markdown
-# [Meeting Title] — [Meeting Type]
-**[Primary outcome]** · **[Key tag]** · [Org/context]
-
-> [3–4 sentence executive summary: who met, about what, primary outcome, what happens next. Keep it brief.]
-
----
-
-## Participants
-
-- **Name** — Role / affiliation
-- **Name** — Role / affiliation
-
----
-
-## [Section Name]
-
-[Content using bullets, numbered lists, or a brief paragraph. ONE sentence per point. Use bold for names, figures, dates, key terms.]
-
----
-
-## Action Items
-
-- **[Owner]** — [Task in one sentence] — *[Deadline]*
-- **[Owner]** — [Task in one sentence]
 ```
 
-**Critical formatting rules:**
-- Use `## Section Name` for sections, `---` between them
-- Use `> blockquote` ONLY for the executive summary (3–4 sentences max)
-- ONE sentence per bullet point — no multi-sentence bullets
-- For numbered requirements/conditions: `1. **Name:** one-sentence description`
-- For financial items: use a bullet list with bold category labels, one sentence each
-- For timeline: use bold dates with ` — ` separator: `**~4 weeks** — first revision due`
-- Do NOT use `###`, `####`, or `#####` headings
-- Do NOT write prose paragraphs longer than 2 sentences
-- Do NOT include preamble — start directly with the `#` title
-- The entire output MUST be in **{target_language}**
+## [Meeting Short Title — one line]
+##### [Context / org / project / meeting type, if useful]
+
+> [2–3 sentences only: who met, the key result, what happens next. No filler. This is the TL;DR for a non-attendee. Start with the most critical info, not the chronological order.]
+
+### [Participants & Roles]
+- **[Name]:** [Role/Title] — [One extremely short line on their contribution or background relevant to the meeting, if useful]
+
+## [Topic 1: Topic name]
+
+### [Section name]
+
+- **[Extremely short point formulation]:** One extremely short phrase/sentence if needed — include names, numbers, dates.
+- **[Extremely short point formulation]:** One extremely short phrase/sentence if needed — include names, numbers, dates.
+
+### [Section name]
+
+1. **[Item]:** One extremely short phrase/sentence if needed (use numbered list for ranked/sequential items)
+2. **[Item]:** One extremely short phrase/sentence if needed
+
+### [Action items]
+
+- **[Owner]** — What they must do — *[Deadline]*
+- **[Owner]** — What they must do
+```
+
+## Hard limits — no exceptions
+
+- **max one screen of text** — combine or drop if you'd exceed this
+- One phrase/sentence per item, no sub-bullets
+- Blockquote for exec summary only — no other prose
+- `###` headers only
+- Use `##` headers to break into major sections if needed (multiple unrelated topics), but avoid if possible
+- No preamble, no trailing note, no "Here is the summary"
+- Entire output in **{target_language}**
 
 TRANSCRIPT:
 ---
