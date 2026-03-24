@@ -60,12 +60,16 @@ All pure-logic functions are unchanged:
 - `rebuild_full_transcript`
 - `cleanup_stuck_meetings`
 - `backup_database`
+- `generate_section_content` (was a `@celery_app.task`; becomes a plain function)
 
 What changes:
 - Remove all `celery`, `@celery_app.task`, `@worker_ready.connect` imports and decorators
-- `process_transcription_and_summary`, `generate_summary_only`, `translate_meeting_sections` become plain Python functions with internal retry loops (3 attempts, 60s sleep between)
+- `process_transcription_and_summary`, `generate_summary_only`, `translate_meeting_sections`, `generate_section_content` become plain Python functions with internal retry loops (3 attempts, 60s sleep between)
 - `cleanup_stuck_meetings` and `backup_database` become plain functions (called by APScheduler)
+- **Important:** The body of `cleanup_stuck_meetings` itself calls `process_transcription_and_summary.delay(...)` internally to re-queue stuck chunks. This internal call must also be changed to `executor.submit(...)`. The executor reference must be passed into or imported by the function.
+- `generate_section_content` sets `section.is_generating = False` and writes an error to `section.content` in its error path — this UI-state cleanup must be preserved in the retry loop's final-failure branch.
 - `get_db_engine()` singleton is retained (threads each open their own `Session`)
+- Rename `LOGGER = logging.getLogger("celery_worker")` to `logging.getLogger("meetscribe_tasks")` and remove "Celery Worker:" prefix from embedded log strings
 
 Retry pattern (replaces Celery's `max_retries` / `default_retry_delay`):
 ```python
@@ -85,9 +89,14 @@ for attempt in range(3):
 - Import `tasks` instead of `worker`
 - Create module-level `ThreadPoolExecutor` and `APScheduler`
 - Add `lifespan` context manager:
-  - On startup: start scheduler, submit initial `cleanup_stuck_meetings` to executor
+  - On startup: start scheduler, pre-load Whisper model if `recognition_in_cloud` is False (preserving current startup behaviour), call `cleanup_stuck_meetings()` once immediately, then start APScheduler
   - On shutdown: shutdown scheduler, shutdown executor (wait=True)
-- Replace every `.delay(...)` call with `executor.submit(...)`
+- Replace every `.delay(...)` call with `executor.submit(...)`. Call sites:
+  - `upload_chunk` → `process_transcription_and_summary.delay(...)` → `executor.submit(...)`
+  - `get_meeting` → `generate_summary_only.delay(...)` → `executor.submit(...)`
+  - `create_section` → `generate_section_content.delay(...)` → `executor.submit(...)`
+  - `regenerate_section_content` → `generate_section_content.delay(...)` → `executor.submit(...)`
+  - Inside `cleanup_stuck_meetings` body → `process_transcription_and_summary.delay(...)` → `executor.submit(...)`
 - Remove Celery imports
 
 ### `backend/app/config.py`
@@ -106,6 +115,8 @@ for attempt in range(3):
 - Remove `celeryworker` service
 - Remove `redis-data` volume
 - Remove `depends_on: redis` from `backend`
+- Move `whisper-cache` volume mount from `celeryworker` to `backend` (Whisper now runs inside the backend process)
+- Add `stop_grace_period: 1m` to the `backend` service (previously on `celeryworker`; the backend now owns in-flight transcription threads and needs time to drain them on shutdown)
 
 ---
 
