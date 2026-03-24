@@ -1,4 +1,5 @@
 from __future__ import annotations
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import logging
 import shutil
@@ -665,22 +666,19 @@ def get_dashboard_stats():
         # --- New Interesting Stats ---
         avg_summary_words = db.scalar(select(func.avg(Meeting.word_count)).where(Meeting.word_count.is_not(None))) or 0
         
-        busiest_hour_query = db.exec(
-            select(func.strftime('%H', Meeting.started_at), func.count(Meeting.id))
-            .group_by(func.strftime('%H', Meeting.started_at))
-            .order_by(func.count(Meeting.id).desc())
-            .limit(1)
-        ).first()
-        busiest_hour = f"{busiest_hour_query[0]}:00" if busiest_hour_query else "N/A"
-
-        active_day_query = db.exec(
-            select(func.strftime('%w', Meeting.started_at), func.count(Meeting.id))
-            .group_by(func.strftime('%w', Meeting.started_at))
-            .order_by(func.count(Meeting.id).desc())
-            .limit(1)
-        ).first()
-        day_map = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        most_active_day = day_map[int(active_day_query[0])] if active_day_query else "N/A"
+        time_rows = db.exec(
+            select(Meeting.started_at, Meeting.timezone).where(Meeting.done == True)
+        ).all()
+        hour_counts: Counter = Counter()
+        day_counts: Counter = Counter()
+        for started_at, tz_str in time_rows:
+            try:
+                tz = ZoneInfo(tz_str) if tz_str else ZoneInfo("UTC")
+            except ZoneInfoNotFoundError:
+                tz = ZoneInfo("UTC")
+            local_dt = started_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+            hour_counts[local_dt.hour] += 1
+        busiest_hour = f"{max(hour_counts, key=hour_counts.get):02d}:00" if hour_counts else "N/A"
 
         # --- Summary Length Distribution ---
         LENGTH_LABELS = {
@@ -745,8 +743,7 @@ def get_dashboard_stats():
         ],
         "interesting_facts": {
             "avg_summary_words": round(avg_summary_words),
-            "busiest_hour": busiest_hour,
-            "most_active_day": most_active_day
+            "busiest_hour": busiest_hour
         },
         "length_distribution": length_distribution,
         "language_distribution": language_distribution,

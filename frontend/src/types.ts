@@ -9,7 +9,6 @@ export interface StatSet {
 export interface InterestingFacts {
     avg_summary_words: number;
     busiest_hour: string;
-    most_active_day: string;
 }
 
 export interface Feedback {

@@ -102,7 +102,6 @@ export default function Dashboard() {
                 <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>Interesting Facts (All-Time)</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
                     <StatCard title="Avg. Summary Words" value={stats.interesting_facts.avg_summary_words} icon="📊" color={cardColors.purple} />
-                    <StatCard title="Most Active Day" value={stats.interesting_facts.most_active_day} icon="🗓️" color={cardColors.pink} />
                     <StatCard title="Busiest Hour" value={stats.interesting_facts.busiest_hour} icon="⏰" color={cardColors.sky} />
                 </div>
             </div>
