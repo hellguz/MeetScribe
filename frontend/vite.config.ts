@@ -9,6 +9,11 @@ export default defineConfig(({ mode }) => {
     build: { outDir: "dist", emptyOutDir: true },
     define: {
       'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL)
+    },
+    server: {
+      proxy: {
+        '/api': 'http://localhost:8000'
+      }
     }
   }
 });

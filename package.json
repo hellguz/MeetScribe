@@ -1,5 +1,10 @@
 {
+  "scripts": {
+    "dev": "concurrently --names \"backend,frontend\" --prefix-colors \"blue,green\" \"cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload\" \"cd frontend && npm run dev\"",
+    "build": "cd frontend && npm run build"
+  },
   "dependencies": {
-    "@fontsource/inter": "^5.2.6"
+    "@fontsource/inter": "^5.2.6",
+    "concurrently": "^9.0.0"
   }
 }
