@@ -75,6 +75,7 @@ export default function Summary() {
 	const [isEditingMarkdown, setIsEditingMarkdown] = useState(false)
 	const [editedMarkdown, setEditedMarkdown] = useState('')
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	const cancelClickedRef = useRef(false)
 
 	useEffect(() => {
 		if (context !== null && editedContext === null) {
@@ -90,14 +91,14 @@ export default function Summary() {
 		}
 	}, [])
 
-	// Auto-resize textarea when editing
+	// Auto-resize textarea on open
 	useEffect(() => {
 		if (isEditingMarkdown && textareaRef.current) {
 			const ta = textareaRef.current
 			ta.style.height = 'auto'
 			ta.style.height = ta.scrollHeight + 'px'
 		}
-	}, [isEditingMarkdown, editedMarkdown])
+	}, [isEditingMarkdown])
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -112,22 +113,50 @@ export default function Summary() {
 		}
 	}
 
-	const handleEditMarkdown = () => {
-		setEditedMarkdown(summaryMarkdown || '')
-		setIsEditingMarkdown(true)
-	}
-
-	const handleSaveMarkdown = async () => {
+	const handleSaveMarkdown = useCallback(async () => {
 		setIsEditingMarkdown(false)
+		cancelClickedRef.current = false
 		if (editedMarkdown !== summaryMarkdown) {
 			await handleSummaryUpdate(editedMarkdown)
 		}
-	}
+	}, [editedMarkdown, summaryMarkdown, handleSummaryUpdate])
 
-	const handleCancelEdit = () => {
+	const handleCancelEdit = useCallback(() => {
+		cancelClickedRef.current = false
 		setIsEditingMarkdown(false)
 		setEditedMarkdown('')
-	}
+	}, [])
+
+	const handleTextareaBlur = useCallback(() => {
+		if (cancelClickedRef.current) return
+		handleSaveMarkdown()
+	}, [handleSaveMarkdown])
+
+	const handleMarkdownDoubleClick = useCallback(() => {
+		const markdown = summaryMarkdown || ''
+		const selectedText = window.getSelection()?.toString().trim() || ''
+		setEditedMarkdown(markdown)
+		setIsEditingMarkdown(true)
+		setTimeout(() => {
+			if (!textareaRef.current) return
+			textareaRef.current.focus()
+			if (selectedText) {
+				const idx = markdown.indexOf(selectedText)
+				if (idx >= 0) {
+					textareaRef.current.setSelectionRange(idx, idx + selectedText.length)
+					return
+				}
+			}
+			const len = markdown.length
+			textareaRef.current.setSelectionRange(len, len)
+		}, 0)
+	}, [summaryMarkdown])
+
+	const handleEditClick = useCallback(() => {
+		const markdown = summaryMarkdown || ''
+		setEditedMarkdown(markdown)
+		setIsEditingMarkdown(true)
+	}, [summaryMarkdown])
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
 		if (!meetingTitle || !summaryMarkdown) return
@@ -397,7 +426,62 @@ export default function Summary() {
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 						overflow: 'hidden',
+						position: 'relative',
 					}}>
+					{/* Edit / Save+Cancel buttons — always top right */}
+					<div style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', gap: '6px', zIndex: 1 }}>
+						{isEditingMarkdown ? (
+							<>
+								<button
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={handleSaveMarkdown}
+									style={{
+										padding: '6px 12px',
+										border: 'none',
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.button.primary,
+										color: currentThemeColors.button.primaryText,
+										fontSize: '13px',
+										fontWeight: 500,
+										cursor: 'pointer',
+										fontFamily: 'inherit',
+									}}>
+									Save
+								</button>
+								<button
+									onMouseDown={() => { cancelClickedRef.current = true }}
+									onClick={handleCancelEdit}
+									style={{
+										padding: '6px 12px',
+										border: `1px solid ${currentThemeColors.border}`,
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.background,
+										color: currentThemeColors.text,
+										fontSize: '13px',
+										cursor: 'pointer',
+										fontFamily: 'inherit',
+									}}>
+									Cancel
+								</button>
+							</>
+						) : (
+							<button
+								onClick={handleEditClick}
+								style={{
+									padding: '6px 12px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									fontSize: '13px',
+									cursor: 'pointer',
+									fontFamily: 'inherit',
+								}}>
+								Edit
+							</button>
+						)}
+					</div>
+
 					{isEditingMarkdown ? (
 						<div style={{ padding: '20px 24px' }}>
 							<textarea
@@ -408,10 +492,17 @@ export default function Summary() {
 									e.target.style.height = 'auto'
 									e.target.style.height = e.target.scrollHeight + 'px'
 								}}
+								onBlur={handleTextareaBlur}
+								onKeyDown={(e) => {
+									if (e.key === 'Escape') {
+										cancelClickedRef.current = true
+										handleCancelEdit()
+									}
+								}}
 								style={{
 									width: '100%',
 									minHeight: '300px',
-									padding: '0',
+									padding: '36px 0 0 0',
 									border: 'none',
 									outline: 'none',
 									backgroundColor: 'transparent',
@@ -424,67 +515,18 @@ export default function Summary() {
 								}}
 								autoFocus
 							/>
-							<div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${currentThemeColors.border}` }}>
-								<button
-									onClick={handleSaveMarkdown}
-									style={{
-										padding: '8px 16px',
-										border: 'none',
-										borderRadius: '6px',
-										backgroundColor: currentThemeColors.button.primary,
-										color: currentThemeColors.button.primaryText,
-										fontSize: '14px',
-										fontWeight: 500,
-										cursor: 'pointer',
-										fontFamily: 'inherit',
-									}}>
-									Save
-								</button>
-								<button
-									onClick={handleCancelEdit}
-									style={{
-										padding: '8px 16px',
-										border: `1px solid ${currentThemeColors.border}`,
-										borderRadius: '6px',
-										backgroundColor: 'transparent',
-										color: currentThemeColors.text,
-										fontSize: '14px',
-										cursor: 'pointer',
-										fontFamily: 'inherit',
-									}}>
-									Cancel
-								</button>
-							</div>
 						</div>
 					) : (
-						<div style={{ position: 'relative' }}>
-							<button
-								onClick={handleEditMarkdown}
-								style={{
-									position: 'absolute',
-									top: '16px',
-									right: '16px',
-									padding: '6px 12px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '6px',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.secondaryText,
-									fontSize: '13px',
-									cursor: 'pointer',
-									fontFamily: 'inherit',
-									zIndex: 1,
-								}}>
-								Edit
-							</button>
-							<div
-								style={{
-									padding: '20px 24px',
-									lineHeight: '1.7',
-									fontSize: '15px',
-								}}
-								className="markdown-content">
-								<ReactMarkdown>{summaryMarkdown}</ReactMarkdown>
-							</div>
+						<div
+							onDoubleClick={handleMarkdownDoubleClick}
+							style={{
+								padding: '20px 24px',
+								lineHeight: '1.7',
+								fontSize: '15px',
+								cursor: 'text',
+							}}
+							className="markdown-content">
+							<ReactMarkdown>{summaryMarkdown}</ReactMarkdown>
 						</div>
 					)}
 				</div>
