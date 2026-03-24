@@ -682,6 +682,48 @@ def get_dashboard_stats():
         day_map = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
         most_active_day = day_map[int(active_day_query[0])] if active_day_query else "N/A"
 
+        # --- Summary Length Distribution ---
+        LENGTH_LABELS = {
+            "auto":      "Auto",
+            "medium":    "Auto",
+            "quar_page": "Quarter Page",
+            "half_page": "Half Page",
+            "one_page":  "One Page",
+            "two_pages": "Two Pages",
+        }
+        length_rows = db.exec(
+            select(Meeting.summary_length, func.count(Meeting.id))
+            .where(Meeting.done == True)
+            .where(Meeting.summary_length.is_not(None))
+            .group_by(Meeting.summary_length)
+        ).all()
+        length_distribution = {
+            LENGTH_LABELS.get(raw, raw): count
+            for raw, count in length_rows
+        }
+
+        # --- Language Distribution ---
+        lang_rows = db.exec(
+            select(
+                Meeting.summary_language_mode,
+                Meeting.summary_custom_language,
+                func.count(Meeting.id),
+            )
+            .where(Meeting.done == True)
+            .where(Meeting.summary_language_mode.is_not(None))
+            .group_by(Meeting.summary_language_mode, Meeting.summary_custom_language)
+        ).all()
+        language_distribution: dict[str, int] = {}
+        for mode, custom_lang, count in lang_rows:
+            if mode == "auto":
+                label = "Auto-detect"
+            elif mode == "english":
+                label = "English"
+            elif mode == "custom" and custom_lang:
+                label = custom_lang
+            else:
+                label = mode
+            language_distribution[label] = language_distribution.get(label, 0) + count
 
     return {
         "all_time": {
@@ -705,7 +747,9 @@ def get_dashboard_stats():
             "avg_summary_words": round(avg_summary_words),
             "busiest_hour": busiest_hour,
             "most_active_day": most_active_day
-        }
+        },
+        "length_distribution": length_distribution,
+        "language_distribution": language_distribution,
     }
 
 

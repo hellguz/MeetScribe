@@ -100,19 +100,28 @@ export default function Dashboard() {
 
             <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '32px' }}>
                 <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>Interesting Facts (All-Time)</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px'}}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
                     <StatCard title="Avg. Summary Words" value={stats.interesting_facts.avg_summary_words} icon="📊" color={cardColors.purple} />
                     <StatCard title="Most Active Day" value={stats.interesting_facts.most_active_day} icon="🗓️" color={cardColors.pink} />
                     <StatCard title="Busiest Hour" value={stats.interesting_facts.busiest_hour} icon="⏰" color={cardColors.sky} />
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '32px', marginBottom: '32px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px', marginBottom: '32px', alignItems: 'flex-start' }}>
                 <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
                     <BarChart title="Device Types" data={stats.device_distribution} theme={currentThemeColors} />
                 </div>
                 <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
                     <PieChart title="Feedback Distribution" data={stats.feedback_counts} theme={currentThemeColors} />
+                </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px', marginBottom: '32px', alignItems: 'flex-start' }}>
+                <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
+                    <BarChart title="Summary Length Preferences" data={stats.length_distribution} theme={currentThemeColors} />
+                </div>
+                <div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
+                    <BarChart title="Summary Language Preferences" data={stats.language_distribution} theme={currentThemeColors} />
                 </div>
             </div>
 

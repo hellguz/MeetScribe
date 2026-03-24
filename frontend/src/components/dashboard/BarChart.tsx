@@ -10,11 +10,11 @@ interface BarChartProps {
 const BarChart: React.FC<BarChartProps> = ({ data, title, theme }) => {
     const maxValue = Math.max(...Object.values(data));
 
-    if (maxValue === 0) {
+    if (maxValue <= 0) {
         return (
             <div>
                 <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 500 }}>{title}</h3>
-                <p style={{ color: theme.secondaryText, textAlign: 'center' }}>No device data available.</p>
+                <p style={{ color: theme.secondaryText, textAlign: 'center' }}>No data available yet.</p>
             </div>
         );
     }
@@ -25,7 +25,7 @@ const BarChart: React.FC<BarChartProps> = ({ data, title, theme }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {Object.entries(data).map(([key, value]) => (
                     <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ width: '80px', fontSize: '12px', color: theme.secondaryText, textAlign: 'right', flexShrink: 0 }}>{key}</span>
+                        <span style={{ width: '100px', fontSize: '12px', color: theme.secondaryText, textAlign: 'right', flexShrink: 0 }}>{key}</span>
                         <div style={{ flexGrow: 1, backgroundColor: theme.backgroundSecondary, borderRadius: '4px' }}>
                             <div
                                 style={{

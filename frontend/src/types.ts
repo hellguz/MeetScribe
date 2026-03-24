@@ -43,6 +43,8 @@ export interface DashboardStats {
     feature_suggestions: FeatureSuggestion[];
     meetings_with_feedback: MeetingWithFeedback[];
     interesting_facts: InterestingFacts;
+    length_distribution: { [key: string]: number };
+    language_distribution: { [key: string]: number };
 }
 
 export interface MeetingSection {
