@@ -12,7 +12,7 @@ import re
 from faster_whisper import WhisperModel
 from groq import Groq
 import openai
-from sqlmodel import Session, select, func, create_engine, delete
+from sqlmodel import Session, select, func, create_engine
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
@@ -378,16 +378,6 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             mtg.context,
         )
         mtg.summary_markdown = summary_md
-
-        LOGGER.info(f"Finalize: Deleting old sections for meeting {mtg.id}")
-        db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mtg.id))
-
-        new_sections = parse_markdown_into_sections(summary_md, mtg.id)
-        if new_sections:
-            LOGGER.info(f"Finalize: Creating {len(new_sections)} new sections for meeting {mtg.id}")
-            db.add_all(new_sections)
-        else:
-            LOGGER.warning(f"Finalize: No sections were parsed from summary for meeting {mtg.id}")
 
         is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith(
             "Transcription of "
@@ -918,3 +908,51 @@ def translate_meeting_sections(meeting_id_str: str, target_language: str):
             )
             if attempt < 2:
                 time.sleep(60)
+
+
+def translate_meeting_markdown(meeting_id_str: str, target_language: str):
+    """Translates the full summary_markdown of a meeting to a new language."""
+    engine = get_db_engine()
+    meeting_id = uuid.UUID(meeting_id_str)
+
+    for attempt in range(3):
+        try:
+            LOGGER.info(f"Starting markdown translation for meeting {meeting_id} to {target_language}")
+            with Session(engine) as db:
+                meeting = db.get(Meeting, meeting_id)
+                if not meeting:
+                    LOGGER.error(f"Meeting {meeting_id} not found for translation.")
+                    return
+
+                if not meeting.summary_markdown:
+                    LOGGER.warning(f"No summary markdown to translate for meeting {meeting_id}.")
+                    meeting.done = True
+                    db.add(meeting)
+                    db.commit()
+                    return
+
+                translated = translate_text(meeting.summary_markdown, target_language, meeting.context)
+                meeting.summary_markdown = translated
+                meeting.done = True
+                db.add(meeting)
+                db.commit()
+                LOGGER.info(f"✅ Markdown translation complete for meeting {meeting_id}")
+            return
+        except Exception as exc:
+            LOGGER.error(
+                f"Markdown translation failed for {meeting_id_str} (attempt {attempt + 1}): {exc}",
+                exc_info=True,
+            )
+            if attempt < 2:
+                time.sleep(60)
+
+    # Ensure meeting is marked done even if all attempts failed
+    try:
+        with Session(engine) as db:
+            meeting = db.get(Meeting, meeting_id)
+            if meeting and not meeting.done:
+                meeting.done = True
+                db.add(meeting)
+                db.commit()
+    except Exception:
+        pass

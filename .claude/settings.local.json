@@ -1,5 +1,8 @@
 {
   "permissions": {
-    "defaultMode": "acceptEdits"
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(python utils/migrate_sections_to_markdown.py)"
+    ]
   }
 }

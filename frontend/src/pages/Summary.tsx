@@ -1,18 +1,15 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
-import SectionTemplatePicker from '../components/SectionTemplatePicker'
-import DraggableSectionList from '../components/DraggableSectionList'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
-import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
-import { SectionTemplate } from '../types'
 
 const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
 	if (!isoString) return null
@@ -49,6 +46,7 @@ export default function Summary() {
 
 	const {
 		transcript,
+		summaryMarkdown,
 		isLoading,
 		isProcessing,
 		error,
@@ -62,21 +60,10 @@ export default function Summary() {
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
+		handleSummaryUpdate,
 		handleTitleUpdate,
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
-
-	const {
-		sections,
-		isLoading: sectionsLoading,
-		error: sectionsError,
-		fetchSections,
-		createSection,
-		updateSection,
-		deleteSection,
-		reorderSections,
-		regenerateSection
-	} = useSections({ meetingId: mid, isProcessing })
 
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
@@ -84,9 +71,10 @@ export default function Summary() {
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
-	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
-	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
+
+	const [isEditingMarkdown, setIsEditingMarkdown] = useState(false)
+	const [editedMarkdown, setEditedMarkdown] = useState('')
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
 	useEffect(() => {
 		if (context !== null && editedContext === null) {
@@ -102,12 +90,14 @@ export default function Summary() {
 		}
 	}, [])
 
-	const fullSummaryText = useMemo(() => {
-		if (!sections || sections.length === 0) return '';
-		return sections
-			.map(s => `### ${s.title}\n\n${s.content || ''}`)
-			.join('\n\n---\n\n');
-	}, [sections]);
+	// Auto-resize textarea when editing
+	useEffect(() => {
+		if (isEditingMarkdown && textareaRef.current) {
+			const ta = textareaRef.current
+			ta.style.height = 'auto'
+			ta.style.height = ta.scrollHeight + 'px'
+		}
+	}, [isEditingMarkdown, editedMarkdown])
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -116,94 +106,39 @@ export default function Summary() {
 		setIsEditingTitle(false)
 	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
-
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) {
 			handleRegenerate({ newContext: editedContext })
 		}
 	}
 
-	const handleAddSection = useCallback((position: number, event?: React.MouseEvent) => {
-		setAddSectionPosition(position)
-		if (event) {
-			const rect = event.currentTarget.getBoundingClientRect()
-			setPickerPosition({
-				x: rect.right + 8,
-				y: rect.top
-			})
+	const handleEditMarkdown = () => {
+		setEditedMarkdown(summaryMarkdown || '')
+		setIsEditingMarkdown(true)
+	}
+
+	const handleSaveMarkdown = async () => {
+		setIsEditingMarkdown(false)
+		if (editedMarkdown !== summaryMarkdown) {
+			await handleSummaryUpdate(editedMarkdown)
 		}
-		setIsTemplatePickerOpen(true)
-	}, [])
+	}
 
-	const handleAddSectionAbove = useCallback((position: number, event?: React.MouseEvent) => {
-		handleAddSection(position, event)
-	}, [handleAddSection])
-
-	const handleAddSectionBelow = useCallback((position: number, event?: React.MouseEvent) => {
-		handleAddSection(position + 1, event)
-	}, [handleAddSection])
-
-	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
-		// Preserve scroll position
-		const scrollPosition = window.scrollY
-		
-		try {
-			await createSection(template, addSectionPosition)
-			
-			// Restore scroll position after a brief delay to allow re-render
-			setTimeout(() => {
-				window.scrollTo(0, scrollPosition)
-			}, 0)
-		} catch (error) {
-			console.error('Error adding section:', error)
-		}
-	}, [createSection, addSectionPosition])
-
-	const handleUpdateTitle = useCallback(async (sectionId: number, title: string) => {
-		try {
-			await updateSection(sectionId, { title })
-		} catch (error) {
-			console.error('Error updating title:', error)
-		}
-	}, [updateSection])
-
-	const handleUpdateContent = useCallback(async (sectionId: number, content: string) => {
-		try {
-			await updateSection(sectionId, { content })
-		} catch (error) {
-			console.error('Error updating content:', error)
-		}
-	}, [updateSection])
-
-	const handleDeleteSection = useCallback(async (sectionId: number) => {
-		if (!confirm('Are you sure you want to delete this section?')) return
-		
-		try {
-			await deleteSection(sectionId)
-		} catch (error) {
-			console.error('Error deleting section:', error)
-		}
-	}, [deleteSection])
-
-	const handleRegenerateSection = useCallback(async (sectionId: number) => {
-		try {
-			await regenerateSection(sectionId)
-		} catch (error) {
-			console.error('Error regenerating section:', error)
-		}
-	}, [regenerateSection])
-
+	const handleCancelEdit = () => {
+		setIsEditingMarkdown(false)
+		setEditedMarkdown('')
+	}
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
-		if (!meetingTitle || !fullSummaryText) return
+		if (!meetingTitle || !summaryMarkdown) return
 
 		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
 		let textToCopy = ''
 
 		if (format === 'markdown') {
-			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${fullSummaryText}`
+			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summaryMarkdown}`
 		} else {
-			const plainSummary = fullSummaryText
+			const plainSummary = summaryMarkdown
 				.replace(/^---\s*$/gm, '')
 				.replace(/####\s/g, '')
 				.replace(/###\s/g, '')
@@ -246,8 +181,6 @@ export default function Summary() {
 			if (!response.ok) {
 				throw new Error('Failed to start translation.')
 			}
-			// Fetch sections once to get the `is_generating` flags, which will trigger polling in useSections
-			fetchSections()
 		} catch (err) {
 			console.error('Translation error:', err)
 			alert('Could not start translation.')
@@ -255,27 +188,15 @@ export default function Summary() {
 	}
 
 	const handleLengthChangeWithWarning = (newLength: SummaryLength) => {
-		const hasCustomizations = sections && sections.length > 0
-		if (hasCustomizations) {
-			if (
-				!window.confirm(
-					'Changing the summary length will discard all current sections, including custom content and edits, and generate a new summary from the original transcript. Are you sure?'
-				)
-			) {
-				return // Abort if user cancels
-			}
-		}
 		handleRegenerate({ newLength })
 	}
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
-	const hasSections = !sectionsLoading && sections.length > 0
-	const showControls = hasSections && !isProcessing && !sectionsLoading
-	
-	const displayLoading = (isLoading && !loadedFromCache) || sectionsLoading;
-    const displayError = error || sectionsError;
-    const showProcessingMessage = (isProcessing || isRegenerating) && !hasSections;
+	const hasSummary = !!summaryMarkdown && !isProcessing
+	const displayLoading = (isLoading && !loadedFromCache)
+	const displayError = error
+	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '8px 16px',
@@ -307,7 +228,7 @@ export default function Summary() {
 					← Back to Recordings
 				</button>
 
-				{hasSections && !isProcessing && (
+				{hasSummary && !isProcessing && (
 					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
 						{copyStatus !== 'idle' && (
 							<span
@@ -320,7 +241,7 @@ export default function Summary() {
 								Copied! ✨
 							</span>
 						)}
-						
+
 						<div
 							style={{
 								display: 'flex',
@@ -401,7 +322,7 @@ export default function Summary() {
 					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
 				)}
 
-				{(hasSections || isProcessing) && (
+				{(hasSummary || isProcessing) && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
 						<div
 							style={{
@@ -469,26 +390,111 @@ export default function Summary() {
 				<p>Loading summary...</p>
 			) : displayError ? (
 				<p style={{ color: currentThemeColors.button.danger }}>Error: {displayError}</p>
-			) : hasSections ? (
-				<DraggableSectionList
-					sections={sections}
-					onReorder={reorderSections}
-					onUpdateTitle={handleUpdateTitle}
-					onUpdateContent={handleUpdateContent}
-					onDeleteSection={handleDeleteSection}
-					onRegenerateSection={handleRegenerateSection}
-					onAddSectionAbove={handleAddSectionAbove}
-					onAddSectionBelow={handleAddSectionBelow}
-					showControls={showControls}
-					enableDragAndDrop={true}
-				/>
+			) : hasSummary ? (
+				<div
+					style={{
+						backgroundColor: currentThemeColors.background,
+						borderRadius: '12px',
+						border: `1px solid ${currentThemeColors.border}`,
+						overflow: 'hidden',
+					}}>
+					{isEditingMarkdown ? (
+						<div style={{ padding: '20px 24px' }}>
+							<textarea
+								ref={textareaRef}
+								value={editedMarkdown}
+								onChange={(e) => {
+									setEditedMarkdown(e.target.value)
+									e.target.style.height = 'auto'
+									e.target.style.height = e.target.scrollHeight + 'px'
+								}}
+								style={{
+									width: '100%',
+									minHeight: '300px',
+									padding: '0',
+									border: 'none',
+									outline: 'none',
+									backgroundColor: 'transparent',
+									color: currentThemeColors.text,
+									fontSize: '15px',
+									lineHeight: '1.7',
+									resize: 'none',
+									fontFamily: 'monospace',
+									boxSizing: 'border-box',
+								}}
+								autoFocus
+							/>
+							<div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${currentThemeColors.border}` }}>
+								<button
+									onClick={handleSaveMarkdown}
+									style={{
+										padding: '8px 16px',
+										border: 'none',
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.button.primary,
+										color: currentThemeColors.button.primaryText,
+										fontSize: '14px',
+										fontWeight: 500,
+										cursor: 'pointer',
+										fontFamily: 'inherit',
+									}}>
+									Save
+								</button>
+								<button
+									onClick={handleCancelEdit}
+									style={{
+										padding: '8px 16px',
+										border: `1px solid ${currentThemeColors.border}`,
+										borderRadius: '6px',
+										backgroundColor: 'transparent',
+										color: currentThemeColors.text,
+										fontSize: '14px',
+										cursor: 'pointer',
+										fontFamily: 'inherit',
+									}}>
+									Cancel
+								</button>
+							</div>
+						</div>
+					) : (
+						<div style={{ position: 'relative' }}>
+							<button
+								onClick={handleEditMarkdown}
+								style={{
+									position: 'absolute',
+									top: '16px',
+									right: '16px',
+									padding: '6px 12px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									fontSize: '13px',
+									cursor: 'pointer',
+									fontFamily: 'inherit',
+									zIndex: 1,
+								}}>
+								Edit
+							</button>
+							<div
+								style={{
+									padding: '20px 24px',
+									lineHeight: '1.7',
+									fontSize: '15px',
+								}}
+								className="markdown-content">
+								<ReactMarkdown>{summaryMarkdown}</ReactMarkdown>
+							</div>
+						</div>
+					)}
+				</div>
 			) : showProcessingMessage ? (
-                <p>⏳ Processing summary, please wait...</p>
-            ) : (
+				<p>⏳ Processing summary, please wait...</p>
+			) : (
 				<p>No summary is available for this meeting.</p>
 			)}
 
-			{hasSections && !isLoading && (
+			{hasSummary && !isLoading && (
 				<FeedbackComponent
 					submittedTypes={submittedFeedback}
 					onFeedbackToggle={handleFeedbackToggle}
@@ -534,17 +540,6 @@ export default function Summary() {
 					)}
 				</div>
 			)}
-
-			<SectionTemplatePicker
-				isOpen={isTemplatePickerOpen}
-				onClose={() => {
-					setIsTemplatePickerOpen(false)
-					setPickerPosition(null)
-				}}
-				onSelectTemplate={handleTemplateSelect}
-				meetingId={mid}
-				position={pickerPosition}
-			/>
 		</div>
 	)
 }

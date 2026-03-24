@@ -40,9 +40,9 @@ from .models import (
     SectionUpdate,
     SectionReorder,
     MeetingTranslatePayload,
+    SummaryUpdate,
 )
 from . import tasks
-from .tasks import parse_markdown_into_sections
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -226,8 +226,6 @@ async def upload_chunk(
             mtg.done = False
             mtg.summary_markdown = None
             
-            # Also delete existing sections
-            db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == meeting_id))
 
 
         if is_final:
@@ -438,10 +436,6 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         # Update context if provided (allows setting to "" or null)
         if payload.context is not None:
             mtg.context = payload.context
-
-        # NEW: Immediately delete existing sections to clear the UI
-        LOGGER.info("Regenerate: Deleting old sections for meeting %s.", mid)
-        db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mid))
 
         # Reset the meeting state to indicate a new summary is needed
         mtg.done = False
@@ -778,7 +772,7 @@ def get_meeting_sections(mid: uuid.UUID):
             LOGGER.info(
                 f"Meeting {mid} has markdown summary but no sections. Backfilling now."
             )
-            new_sections = parse_markdown_into_sections(meeting.summary_markdown, mid)
+            new_sections = tasks.parse_markdown_into_sections(meeting.summary_markdown, mid)
 
             if new_sections:
                 db.add_all(new_sections)
@@ -983,10 +977,23 @@ def regenerate_section_content(section_id: int):
     return {"ok": True, "message": "Section regeneration queued"}
 
 
+@app.put("/api/meetings/{mid}/summary")
+def update_summary(mid: uuid.UUID, body: SummaryUpdate):
+    """Update a meeting's summary markdown directly."""
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        meeting.summary_markdown = body.content
+        db.add(meeting)
+        db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/meetings/{mid}/translate", status_code=202)
 def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
     """
-    Triggers a translation of all meeting sections to a new language.
+    Triggers a translation of the meeting summary to a new language.
     """
     target_language = payload.target_language
     language_mode = payload.language_mode
@@ -996,31 +1003,15 @@ def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
         if not mtg:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        # 1. Update meeting's language settings immediately
         mtg.summary_language_mode = language_mode
         mtg.summary_custom_language = (
             target_language if language_mode == "custom" else None
         )
+        mtg.done = False  # Mark as processing so the frontend polls for completion
         db.add(mtg)
-
-        # 2. Mark all sections as "generating" to trigger UI polling
-        sections = db.exec(
-            select(MeetingSection).where(MeetingSection.meeting_id == mid)
-        ).all()
-        if not sections:
-            # If no sections, nothing to do.
-            db.commit()
-            return {"ok": True, "message": "No sections to translate."}
-
-        for section in sections:
-            section.is_generating = True
-            section.updated_at = dt.datetime.utcnow()
-            db.add(section)
-
         db.commit()
 
-        # 3. Queue the background translation task
-        _executor.submit(tasks.translate_meeting_sections, str(mid), target_language)
+        _executor.submit(tasks.translate_meeting_markdown, str(mid), target_language)
         LOGGER.info(f"Queued translation task for meeting {mid} to {target_language}")
 
     return {"ok": True, "message": "Translation task queued."}
