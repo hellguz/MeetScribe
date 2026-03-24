@@ -1,55 +1,41 @@
-# backend/app/worker.py
-# ─────────────────────────────────────────────────────────────────────────────
+# backend/app/tasks.py
 import logging
 import datetime as dt
 import uuid
+import time
 from pathlib import Path
 import shutil
 import subprocess
-import os
 import sqlite3
 import re
 
-from celery import Celery
-from celery.schedules import crontab
-from celery.signals import worker_ready
 from faster_whisper import WhisperModel
-from groq import BadRequestError, Groq
+from groq import Groq
 import openai
 from sqlmodel import Session, select, func, create_engine, delete
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
-
 from .config import settings
 from .models import Meeting, MeetingChunk, MeetingSection
 
-# Configure Celery
-celery_app = Celery(
-    "worker_tasks",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
-    include=["app.worker"],
+LOGGER = logging.getLogger("meetscribe_tasks")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s][%(module)s.%(funcName)s:%(lineno)d] %(message)s",
 )
 
-celery_app.conf.update(
-    task_track_started=True,
-    broker_connection_retry_on_startup=True,
-    # === Resilience Change: Only acknowledge tasks after they complete successfully ===
-    task_acks_late=True,
-    # === Resilience Change: Add a periodic task to clean up stuck meetings ===
-    beat_schedule={
-        "cleanup-every-15-minutes": {
-            "task": "app.worker.cleanup_stuck_meetings",
-            "schedule": 900.0,  # 15 minutes in seconds
-        },
-        # --- NEW: Nightly database backup task ---
-        "backup-db-midnight": {
-            "task": "app.worker.backup_database",
-            "schedule": crontab(minute=0, hour=0),  # Runs every day at midnight
-        },
-    },
-)
+DetectorFactory.seed = 0
+
+# Module-level executor reference — set by main.py at startup via set_executor().
+# Needed so cleanup_stuck_meetings() can re-queue tasks without a circular import.
+_executor = None
+
+
+def set_executor(executor):
+    global _executor
+    _executor = executor
+
 
 _whisper_model_instance = None
 _db_engine_instance = None
@@ -58,20 +44,10 @@ _groq_client = (
 )
 
 
-LOGGER = logging.getLogger("celery_worker")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s][%(module)s.%(funcName)s:%(lineno)d] %(message)s",
-)
-
-# It's recommended to set a seed for consistent results for short texts
-DetectorFactory.seed = 0
-
-
 def get_db_engine():
     global _db_engine_instance
     if _db_engine_instance is None:
-        LOGGER.info("Initializing DB engine for Celery worker.")
+        LOGGER.info("Initializing DB engine for task worker.")
         _db_engine_instance = create_engine(f"sqlite:///{settings.db_path}", echo=False)
     return _db_engine_instance
 
@@ -80,38 +56,18 @@ def get_whisper_model():
     global _whisper_model_instance
     if _whisper_model_instance is None:
         LOGGER.info(
-            "🔊 Loading Whisper model (%s) in Celery worker…",
+            "🔊 Loading Whisper model (%s)…",
             settings.whisper_model_size,
         )
         _whisper_model_instance = WhisperModel(
             settings.whisper_model_size, device="cpu", compute_type="int8"
         )
-        LOGGER.info("✅ Whisper model loaded in Celery worker.")
+        LOGGER.info("✅ Whisper model loaded.")
     return _whisper_model_instance
 
 
-@worker_ready.connect
-def on_worker_startup(**kwargs):
-    """
-    On worker startup, pre-load the AI model (if not in cloud mode) and
-    trigger a cleanup task to recover any jobs interrupted by a restart.
-    """
-    LOGGER.info("Celery worker ready. Running startup tasks.")
-    if not settings.recognition_in_cloud:
-        # Pre-load the model to have it ready for the first task
-        LOGGER.info("Pre-loading local Whisper model...")
-        get_whisper_model()
-    else:
-        LOGGER.info("Cloud recognition is enabled, skipping local model pre-load.")
-    # === Resilience Change: Queue a janitor task to run immediately on startup ===
-    LOGGER.info("Queueing initial cleanup task for any jobs interrupted by a restart.")
-    cleanup_stuck_meetings.delay()
-
-
 def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
-    """
-    Transcribes an audio chunk using either a cloud API (Groq) or a local model.
-    """
+    """Transcribes an audio chunk using either a cloud API (Groq) or a local model."""
     chunk_path = Path(chunk_path_str)
     try:
         if settings.recognition_in_cloud:
@@ -121,17 +77,8 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                 output_flac_path = chunk_path.with_suffix(".flac")
                 try:
                     command = [
-                        "ffmpeg",
-                        "-i",
-                        str(chunk_path),
-                        "-y",
-                        "-vn",
-                        "-ac",
-                        "1",
-                        "-ar",
-                        "16000",
-                        "-sample_fmt",
-                        "s16",
+                        "ffmpeg", "-i", str(chunk_path), "-y", "-vn",
+                        "-ac", "1", "-ar", "16000", "-sample_fmt", "s16",
                         str(output_flac_path),
                     ]
                     subprocess.run(command, check=True, capture_output=True, text=True)
@@ -143,9 +90,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                     )
                     path_to_transcribe = chunk_path
             else:
-                LOGGER.warning(
-                    "ffmpeg not found. Sending original WebM file to cloud API."
-                )
+                LOGGER.warning("ffmpeg not found. Sending original WebM file to cloud API.")
 
             try:
                 with open(path_to_transcribe, "rb") as audio_file:
@@ -154,9 +99,7 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                         model="whisper-large-v3",
                         response_format="verbose_json",
                     )
-                LOGGER.info(
-                    f"Cloud transcription succeeded for {path_to_transcribe.name}"
-                )
+                LOGGER.info(f"Cloud transcription succeeded for {path_to_transcribe.name}")
                 return resp.text.strip()
             finally:
                 if output_flac_path and output_flac_path.exists():
@@ -173,18 +116,14 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
             )
             return " ".join(s.text for s in segments).strip()
     except Exception as e:
-        LOGGER.error(
-            f"Celery Worker: Failed to transcribe {chunk_path.name}: {e}", exc_info=True
-        )
+        LOGGER.error(f"Failed to transcribe {chunk_path.name}: {e}", exc_info=True)
         return ""
 
 
 def generate_title_for_meeting(summary: str, full_transcript: str) -> str:
-    """Generates a concise, meaningful title from the meeting summary."""
     if not summary or "error" in summary.lower() or "too short" in summary.lower():
         LOGGER.info("Summary is too short or an error, cannot generate title.")
-        return ""  # Return empty string, let the calling function handle it
-
+        return ""
     try:
         title_prompt = f"""
 Analyze the following meeting summary and the full transcript. Your task is to generate a short, dense, and meaningful title for the meeting.
@@ -216,55 +155,29 @@ Based on the content, generate the title now.
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
         return generated_title
     except Exception as e:
-        LOGGER.error(f"Celery Worker: Title generation failed: {e}", exc_info=True)
-        return ""  # Return empty string on failure
+        LOGGER.error(f"Title generation failed: {e}", exc_info=True)
+        return ""
 
 
 def detect_language_local(text_snippet: str) -> str:
-    """Detects language locally from a text snippet."""
     if not text_snippet:
         return "English"
     try:
-        # langdetect uses ISO 639-1 codes (e.g., 'en', 'es')
         lang_code = detect(text_snippet)
-
-        # Expanded map for common languages
         LANG_MAP = {
-            "ar": "Arabic",
-            "cs": "Czech",
-            "da": "Danish",
-            "de": "German",
-            "en": "English",
-            "es": "Spanish",
-            "fi": "Finnish",
-            "fr": "French",
-            "he": "Hebrew",
-            "hi": "Hindi",
-            "hu": "Hungarian",
-            "id": "Indonesian",
-            "it": "Italian",
-            "ja": "Japanese",
-            "ko": "Korean",
-            "nl": "Dutch",
-            "no": "Norwegian",
-            "pl": "Polish",
-            "pt": "Portuguese",
-            "ro": "Romanian",
-            "ru": "Russian",
-            "sk": "Slovak",
-            "sv": "Swedish",
-            "sw": "Swahili",
-            "th": "Thai",
-            "tr": "Turkish",
-            "vi": "Vietnamese",
-            "zh-cn": "Chinese (Simplified)",
-            "zh-tw": "Chinese (Traditional)",
+            "ar": "Arabic", "cs": "Czech", "da": "Danish", "de": "German",
+            "en": "English", "es": "Spanish", "fi": "Finnish", "fr": "French",
+            "he": "Hebrew", "hi": "Hindi", "hu": "Hungarian", "id": "Indonesian",
+            "it": "Italian", "ja": "Japanese", "ko": "Korean", "nl": "Dutch",
+            "no": "Norwegian", "pl": "Polish", "pt": "Portuguese", "ro": "Romanian",
+            "ru": "Russian", "sk": "Slovak", "sv": "Swedish", "sw": "Swahili",
+            "th": "Thai", "tr": "Turkish", "vi": "Vietnamese",
+            "zh-cn": "Chinese (Simplified)", "zh-tw": "Chinese (Traditional)",
         }
         language = LANG_MAP.get(lang_code, "English")
         LOGGER.info(f"Detected language via langdetect: {language} ({lang_code})")
         return language
     except LangDetectException:
-        # This can happen if the text is too short or ambiguous
         LOGGER.warning("Langdetect failed for snippet, defaulting to English.")
         return "English"
 
@@ -282,19 +195,16 @@ def summarise_transcript_in_worker(
         openai.api_key = settings.openai_api_key
 
     try:
-        # Use a larger snippet for more reliable language detection
         transcript_snippet = full_transcript[:2000]
         detected_language = detect_language_local(transcript_snippet)
 
-        # Determine target language based on user's preference
         if summary_language_mode == "custom" and summary_custom_language:
             target_language = summary_custom_language
         elif summary_language_mode == "english":
             target_language = "English"
-        else:  # 'auto' or any other case
+        else:
             target_language = detected_language
 
-        # Stricter and clearer length instructions
         LENGTH_PROMPTS = {
             "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
             "half_page": "The final summary must be **exactly** around 250 words. This word count is a **strict, non-negotiable requirement**.",
@@ -369,14 +279,13 @@ TRANSCRIPT:
         )
         return response.output_text.strip()
     except Exception as e:
-        LOGGER.error(f"Celery Worker: Summary generation failed: {e}", exc_info=True)
+        LOGGER.error(f"Summary generation failed: {e}", exc_info=True)
         return "Error: Summary generation failed."
 
 
 def rebuild_full_transcript(
     db_session: Session, meeting_id_uuid: uuid.UUID
 ) -> tuple[str, int]:
-    """Returns the full transcript text and the total number of chunks used."""
     chunks = db_session.exec(
         select(MeetingChunk.text)
         .where(MeetingChunk.meeting_id == meeting_id_uuid)
@@ -386,30 +295,23 @@ def rebuild_full_transcript(
     transcript_text = " ".join(text for text in chunks if text).strip()
     return transcript_text, len(chunks)
 
+
 def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -> list[MeetingSection]:
-    """
-    Parse a markdown summary and convert it into section objects.
-    Splits on major headers (###, ####) and creates appropriate sections.
-    """
     if not summary_markdown:
         return []
-    
+
     sections = []
-    
-    # Split the content by lines and identify headers
     lines = summary_markdown.split('\n')
     current_section_lines = []
     current_title = ""
     current_header_level = ""
     position = 0
-    
+
     def create_section_from_current():
         nonlocal current_section_lines, current_title, position
         if current_title or current_section_lines:
             content = '\n'.join(current_section_lines).strip()
             title = current_title if current_title else "Meeting Summary"
-            
-            # Determine section type based on title keywords
             title_lower = title.lower()
             if 'summary' in title_lower and position == 0:
                 section_type = "default_summary"
@@ -427,7 +329,6 @@ def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -
                 section_type = "decisions_actions"
             else:
                 section_type = "custom"
-            
             sections.append(MeetingSection(
                 meeting_id=meeting_id,
                 section_type=section_type,
@@ -435,28 +336,20 @@ def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -
                 content=content,
                 position=position
             ))
-            
             current_section_lines = []
             current_title = ""
             position += 1
-    
+
     for line in lines:
-        # Check if this line is a header (### or ####)
         header_match = re.match(r'^(#{3,4})\s+(.+)$', line.strip())
         if header_match:
-            # Save previous section if it exists
             create_section_from_current()
-            # Start new section
             current_header_level = header_match.group(1)
             current_title = header_match.group(2).strip()
         else:
-            # Add to current section content
             current_section_lines.append(line)
-    
-    # Don't forget the last section
     create_section_from_current()
-    
-    # If no sections were created (no headers found), create a single default section
+
     if not sections:
         sections.append(MeetingSection(
             meeting_id=meeting_id,
@@ -465,20 +358,17 @@ def parse_markdown_into_sections(summary_markdown: str, meeting_id: uuid.UUID) -
             content=summary_markdown.strip(),
             position=0
         ))
-    
     return sections
 
 
 def finalize_meeting_processing(db: Session, mtg: Meeting):
-    """Centralized logic to finalize a meeting."""
     LOGGER.info(f"Meeting {mtg.id}: Finalizing. Building transcript and summarizing.")
     final_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
     mtg.transcript_text = final_transcript
 
     if final_transcript:
-        # These fields were added later, so we calculate them here.
         mtg.word_count = len(final_transcript.split())
-        mtg.duration_seconds = num_chunks * 30  # Assuming 30s chunks
+        mtg.duration_seconds = num_chunks * 30
 
         summary_md = summarise_transcript_in_worker(
             final_transcript,
@@ -489,22 +379,16 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
         )
         mtg.summary_markdown = summary_md
 
-        # --- NEW: Section creation logic ---
-        # 1. Delete any old sections to ensure a clean slate
         LOGGER.info(f"Finalize: Deleting old sections for meeting {mtg.id}")
         db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mtg.id))
-        
-        # 2. Parse the new markdown into section objects
-        new_sections = parse_markdown_into_sections(summary_md, mtg.id)
 
-        # 3. Add new sections to the database
+        new_sections = parse_markdown_into_sections(summary_md, mtg.id)
         if new_sections:
             LOGGER.info(f"Finalize: Creating {len(new_sections)} new sections for meeting {mtg.id}")
             db.add_all(new_sections)
         else:
             LOGGER.warning(f"Finalize: No sections were parsed from summary for meeting {mtg.id}")
 
-        # Only generate a title if the current one is still a default placeholder.
         is_default_title = mtg.title.startswith("Recording ") or mtg.title.startswith(
             "Transcription of "
         )
@@ -513,32 +397,21 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             if new_title:
                 mtg.title = new_title
 
-        LOGGER.info(
-            f"✅ Meeting {mtg.id} summarized and titled successfully by worker."
-        )
+        LOGGER.info(f"✅ Meeting {mtg.id} summarized and titled successfully.")
     else:
-        LOGGER.warning(
-            f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary."
-        )
+        LOGGER.warning(f"Meeting {mtg.id}: Transcript text is empty, cannot generate summary.")
         mtg.word_count = 0
         mtg.duration_seconds = 0
-        mtg.summary_markdown = (
-            "Error: Transcript was empty, summary could not be generated."
-        )
+        mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
 
     mtg.done = True
     db.add(mtg)
     db.commit()
 
 
-@celery_app.task(name="app.worker.backup_database")
 def backup_database():
-    """
-    Performs a nightly backup of the SQLite database and enforces a
-    retention policy, keeping the last 30 backups.
-    """
+    """Nightly backup of the SQLite database with 30-file retention."""
     db_path = settings.db_path
-    # Backups will be stored in a 'backups' subdirectory next to the database.
     backup_dir = db_path.parent / "backups"
     retention_count = 30
 
@@ -549,14 +422,11 @@ def backup_database():
         return
 
     LOGGER.info("Starting nightly database backup...")
-
     try:
         timestamp = dt.datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
         backup_filename = f"backup_{timestamp}.sqlite3"
         backup_filepath = backup_dir / backup_filename
 
-        # Use SQLite's online backup API for a safe, non-blocking copy.
-        # Connecting with mode=ro ensures we don't lock the main DB.
         source_conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         backup_conn = sqlite3.connect(backup_filepath)
         with backup_conn:
@@ -566,24 +436,13 @@ def backup_database():
 
         LOGGER.info(f"Backup successful: {backup_filename}")
 
-        # --- Retention Policy ---
-        LOGGER.info(f"Applying retention policy (keeping last {retention_count})...")
-        # Get a list of all backup files, sorted by creation time (newest first).
         all_backups = sorted(
-            [
-                f
-                for f in backup_dir.iterdir()
-                if f.is_file() and f.name.startswith("backup_")
-            ],
+            [f for f in backup_dir.iterdir() if f.is_file() and f.name.startswith("backup_")],
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )
-
         if len(all_backups) > retention_count:
-            # Identify the files that are older than the 30 newest ones.
-            backups_to_delete = all_backups[retention_count:]
-            LOGGER.info(f"Found {len(backups_to_delete)} old backups to delete.")
-            for f in backups_to_delete:
+            for f in all_backups[retention_count:]:
                 f.unlink()
                 LOGGER.info(f"Deleted old backup: {f.name}")
 
@@ -592,22 +451,17 @@ def backup_database():
         LOGGER.error(f"Database backup failed: {e}", exc_info=True)
 
 
-@celery_app.task(name="app.worker.cleanup_stuck_meetings")
 def cleanup_stuck_meetings():
     """
-    Finds meetings that are not done and have been inactive for a while,
-    then re-queues transcription tasks for any chunks that are missing text.
-    Also finalizes meetings that were abandoned mid-recording.
+    Finds stuck/inactive meetings and recovers them.
+    Re-queues transcription tasks via the module-level executor.
     """
     engine = get_db_engine()
     STUCK_THRESHOLD_MINUTES = 15
     INACTIVITY_TIMEOUT_MINUTES = 5
 
     with Session(engine) as db:
-        # 1. Finalize meetings that were abandoned mid-recording and never got a final chunk.
-        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(
-            minutes=INACTIVITY_TIMEOUT_MINUTES
-        )
+        inactivity_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
         inactive_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
@@ -625,13 +479,9 @@ def cleanup_stuck_meetings():
                 if mtg.expected_chunks is None:
                     mtg.expected_chunks = mtg.received_chunks
                 db.add(mtg)
-            db.commit()  # Commit finalization before potentially re-queueing
+            db.commit()
 
-        # 2. Re-queue tasks for finalized meetings that got stuck during transcription.
-        stuck_threshold = dt.datetime.utcnow() - dt.timedelta(
-            minutes=STUCK_THRESHOLD_MINUTES
-        )
-
+        stuck_threshold = dt.datetime.utcnow() - dt.timedelta(minutes=STUCK_THRESHOLD_MINUTES)
         stuck_meetings = db.exec(
             select(Meeting).where(
                 Meeting.done == False,
@@ -643,9 +493,7 @@ def cleanup_stuck_meetings():
         if not stuck_meetings:
             return
 
-        LOGGER.info(
-            f"Janitor: Found {len(stuck_meetings)} potentially stuck finalized meetings."
-        )
+        LOGGER.info(f"Janitor: Found {len(stuck_meetings)} potentially stuck finalized meetings.")
 
         for mtg in stuck_meetings:
             unprocessed_chunks = db.exec(
@@ -656,15 +504,12 @@ def cleanup_stuck_meetings():
 
             if not unprocessed_chunks:
                 LOGGER.info(
-                    f"Janitor: Meeting {mtg.id} has no unprocessed chunks, but isn't 'done'. Re-triggering finalization."
+                    f"Janitor: Meeting {mtg.id} has no unprocessed chunks but isn't done. Re-triggering finalization."
                 )
-                # This can happen if the finalization task itself failed.
                 finalize_meeting_processing(db, mtg)
                 continue
 
-            LOGGER.warning(
-                f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s)."
-            )
+            LOGGER.warning(f"Meeting {mtg.id} is stuck. Re-queueing {len(unprocessed_chunks)} chunk(s).")
             mtg.last_activity = dt.datetime.utcnow()
             db.add(mtg)
             db.commit()
@@ -672,109 +517,107 @@ def cleanup_stuck_meetings():
             for chunk in unprocessed_chunks:
                 chunk_path = Path(chunk.path)
                 if chunk_path.exists():
-                    process_transcription_and_summary.delay(
-                        meeting_id_str=str(mtg.id),
-                        chunk_index=chunk.chunk_index,
-                        chunk_path_str=str(chunk_path.resolve()),
-                    )
+                    if _executor:
+                        _executor.submit(
+                            process_transcription_and_summary,
+                            str(mtg.id),
+                            chunk.chunk_index,
+                            str(chunk_path.resolve()),
+                        )
+                    else:
+                        LOGGER.error("Janitor: executor not set, cannot re-queue chunk.")
                 else:
                     LOGGER.error(
-                        f"Janitor: Chunk path {chunk.path} for meeting {mtg.id}, chunk {chunk.index} does not exist. Cannot re-queue."
+                        f"Janitor: Chunk path {chunk.path} does not exist. Cannot re-queue."
                     )
 
 
-@celery_app.task(
-    name="app.worker.process_transcription_and_summary",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
-)
 def process_transcription_and_summary(
-    self, meeting_id_str: str, chunk_index: int, chunk_path_str: str
+    meeting_id_str: str, chunk_index: int, chunk_path_str: str
 ):
     engine = get_db_engine()
     meeting_id_uuid = uuid.UUID(meeting_id_str)
-    try:
-        chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
-        with Session(engine) as db:
-            mc = db.exec(
-                select(MeetingChunk).where(
-                    MeetingChunk.meeting_id == meeting_id_uuid,
-                    MeetingChunk.chunk_index == chunk_index,
-                )
-            ).first()
-            if not mc:
-                LOGGER.error(
-                    f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}."
-                )
-                return
-            mc.text = chunk_text
-            db.add(mc)
-            db.commit()
 
-            mtg = db.get(Meeting, meeting_id_uuid)
-            if not mtg:
-                LOGGER.error(
-                    f"Meeting {meeting_id_str}: object not found after transcribing chunk."
-                )
-                return
-
-            transcribed_count = (
-                db.scalar(
-                    select(func.count(MeetingChunk.id)).where(
+    for attempt in range(3):
+        try:
+            chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
+            with Session(engine) as db:
+                mc = db.exec(
+                    select(MeetingChunk).where(
                         MeetingChunk.meeting_id == meeting_id_uuid,
-                        MeetingChunk.text.is_not(None),
+                        MeetingChunk.chunk_index == chunk_index,
                     )
+                ).first()
+                if not mc:
+                    LOGGER.error(
+                        f"MeetingChunk not found for meeting {meeting_id_str}, chunk {chunk_index}."
+                    )
+                    return
+                mc.text = chunk_text
+                db.add(mc)
+                db.commit()
+
+                mtg = db.get(Meeting, meeting_id_uuid)
+                if not mtg:
+                    LOGGER.error(
+                        f"Meeting {meeting_id_str}: object not found after transcribing chunk."
+                    )
+                    return
+
+                transcribed_count = (
+                    db.scalar(
+                        select(func.count(MeetingChunk.id)).where(
+                            MeetingChunk.meeting_id == meeting_id_uuid,
+                            MeetingChunk.text.is_not(None),
+                        )
+                    )
+                    or 0
                 )
-                or 0
+                effective_expected = (
+                    mtg.expected_chunks if mtg.expected_chunks is not None else mtg.received_chunks
+                )
+                if (
+                    not mtg.done
+                    and mtg.final_received
+                    and effective_expected > 0
+                    and transcribed_count >= effective_expected
+                ):
+                    finalize_meeting_processing(db, mtg)
+            return  # success
+        except Exception as exc:
+            LOGGER.error(
+                f"Error processing task for {meeting_id_str}, chunk {chunk_index} (attempt {attempt + 1}): {exc}",
+                exc_info=True,
             )
-
-            effective_expected = (
-                mtg.expected_chunks
-                if mtg.expected_chunks is not None
-                else mtg.received_chunks
-            )
-
-            if (
-                not mtg.done
-                and mtg.final_received
-                and effective_expected > 0
-                and transcribed_count >= effective_expected
-            ):
-                finalize_meeting_processing(db, mtg)
-    except Exception as exc:
-        LOGGER.error(
-            f"Error processing task for {meeting_id_str}, chunk {chunk_index}: {exc}",
-            exc_info=True,
-        )
-        self.retry(exc=exc)
+            if attempt < 2:
+                time.sleep(60)
 
 
-@celery_app.task(
-    name="app.worker.generate_summary_only",
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    default_retry_delay=60,
-)
-def generate_summary_only(self, meeting_id_str: str):
+def generate_summary_only(meeting_id_str: str):
     engine = get_db_engine()
     meeting_id = uuid.UUID(meeting_id_str)
-    with Session(engine) as db:
-        mtg = db.get(Meeting, meeting_id)
-        if not mtg:
-            LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
-            return
 
-        if mtg.done:
-            LOGGER.info(
-                "Meeting %s already summarized. Aborting regen.", meeting_id_str
+    for attempt in range(3):
+        try:
+            with Session(engine) as db:
+                mtg = db.get(Meeting, meeting_id)
+                if not mtg:
+                    LOGGER.error("Meeting %s not found for summary regen.", meeting_id_str)
+                    return
+                if mtg.done:
+                    LOGGER.info("Meeting %s already summarized. Aborting regen.", meeting_id_str)
+                    return
+                LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
+                finalize_meeting_processing(db, mtg)
+                LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+            return  # success
+        except Exception as exc:
+            LOGGER.error(
+                f"Error regenerating summary for {meeting_id_str} (attempt {attempt + 1}): {exc}",
+                exc_info=True,
             )
-            return
-
-        LOGGER.info("♻️  Regenerating summary for meeting %s", meeting_id_str)
-        finalize_meeting_processing(db, mtg)
-        LOGGER.info("✅ Summary regenerated for meeting %s", meeting_id_str)
+            if attempt < 2:
+                time.sleep(60)
 
 
 def generate_section_content_for_type(
@@ -792,20 +635,16 @@ def generate_section_content_for_type(
     if not openai.api_key:
         openai.api_key = settings.openai_api_key
 
-    # Length adjustments based on summary length setting
     LENGTH_ADJUSTMENTS = {
         "quar_page": "Keep very short: 1-2 brief paragraphs maximum",
-        "half_page": "Keep short: 2-3 paragraphs maximum", 
+        "half_page": "Keep short: 2-3 paragraphs maximum",
         "one_page": "Keep moderate: 3-4 paragraphs maximum",
         "two_pages": "Can be longer: 4-6 paragraphs maximum",
         "auto": "Keep concise: 2-3 paragraphs maximum"
     }
     length_instruction = LENGTH_ADJUSTMENTS.get(summary_length, LENGTH_ADJUSTMENTS["auto"])
-
-    # Prepare meeting metadata for more human context
     duration_text = f"{duration_minutes} minutes" if duration_minutes > 0 else "unknown duration"
-    time_context = f"Started at {meeting_started_at}, lasting {duration_text}" if meeting_started_at else f"Duration: {duration_text}"
-    
+
     SECTION_PROMPTS = {
         "timeline": {
             "system": f"Create readable chronological overviews in {target_language}. Work efficiently.",
@@ -875,7 +714,6 @@ Transcript: {transcript[:3000]}""",
     }
 
     if section_type not in SECTION_PROMPTS:
-        # Handle AI-generated or custom section types
         prompt = f"""Create content for a section titled "{section_title}" from this {duration_text} meeting.
 
 REQUIREMENTS:
@@ -897,15 +735,11 @@ Transcript: {transcript[:3000]}"""
             )
             return response.output_text.strip()
         except Exception as e:
-            LOGGER.error(
-                f"Generic section content generation failed for {section_type}: {e}",
-                exc_info=True,
-            )
+            LOGGER.error(f"Generic section content generation failed for {section_type}: {e}", exc_info=True)
             return f"Error generating content for {section_type}: {str(e)}"
 
     try:
         prompt_config = SECTION_PROMPTS[section_type]
-
         response = openai.responses.create(
             model="gpt-5-mini-2025-08-07",
             input=f"""{prompt_config["system"]}
@@ -913,127 +747,106 @@ Transcript: {transcript[:3000]}"""
 {prompt_config["prompt"]}""",
             reasoning={"effort": "minimal"},
         )
-
         return response.output_text.strip()
     except Exception as e:
-        LOGGER.error(
-            f"Section content generation failed for {section_type}: {e}", exc_info=True
-        )
+        LOGGER.error(f"Section content generation failed for {section_type}: {e}", exc_info=True)
         return f"Error generating content for {section_type}: {str(e)}"
 
 
-@celery_app.task(
-    name="app.worker.generate_section_content",
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    default_retry_delay=60,
-)
-def generate_section_content(self, section_id_str: str, meeting_id_str: str):
-    """Generate AI content for a specific section."""
+def generate_section_content(section_id_str: str, meeting_id_str: str):
+    """Generate AI content for a specific section. Retries up to 3 times."""
     engine = get_db_engine()
     section_id = int(section_id_str)
     meeting_id = uuid.UUID(meeting_id_str)
 
-    try:
-        with Session(engine) as db:
-            section = db.get(MeetingSection, section_id)
-            if not section:
-                LOGGER.error(f"Section {section_id} not found")
-                return
-
-            meeting = db.get(Meeting, meeting_id)
-            if not meeting:
-                LOGGER.error(f"Meeting {meeting_id} not found")
-                return
-
-            # Get transcript text
-            transcript = meeting.transcript_text
-            if not transcript:
-                # Try to build from chunks
-                transcript, _ = rebuild_full_transcript(db, meeting_id)
-
-            if not transcript:
-                section.content = (
-                    "Error: No transcript available for content generation"
-                )
-                section.is_generating = False
-                db.add(section)
-                db.commit()
-                return
-
-            LOGGER.info(
-                f"Generating content for section {section_id} ({section.section_type})"
-            )
-
-            # Determine target language based on meeting settings
-            if meeting.summary_language_mode == "custom" and meeting.summary_custom_language:
-                target_language = meeting.summary_custom_language
-            elif meeting.summary_language_mode == "english":
-                target_language = "English"
-            else:  # 'auto' or any other case
-                # Use detected language from transcript
-                transcript_snippet = transcript[:2000] if transcript else ""
-                target_language = detect_language_local(transcript_snippet)
-
-            # Prepare meeting metadata for enhanced content generation
-            duration_minutes = (meeting.duration_seconds or 0) // 60
-            meeting_started_at = meeting.started_at.strftime("%Y-%m-%d %H:%M") if meeting.started_at else ""
-            
-            # Generate content
-            content = generate_section_content_for_type(
-                section.section_type,
-                transcript,
-                meeting.context,
-                meeting.title,
-                section.title,
-                meeting.summary_length,
-                target_language,
-                duration_minutes,
-                meeting_started_at,
-            )
-
-            # Update section
-            section.content = content
-            section.is_generating = False
-            section.updated_at = dt.datetime.utcnow()
-            db.add(section)
-            db.commit()
-
-            LOGGER.info(f"✅ Generated content for section {section_id}")
-
-    except Exception as exc:
-        LOGGER.error(
-            f"Error generating section content {section_id}: {exc}", exc_info=True
-        )
-
-        # Mark as failed
+    for attempt in range(3):
         try:
             with Session(engine) as db:
                 section = db.get(MeetingSection, section_id)
-                if section:
-                    section.content = f"Error generating content: {str(exc)}"
+                if not section:
+                    LOGGER.error(f"Section {section_id} not found")
+                    return
+
+                meeting = db.get(Meeting, meeting_id)
+                if not meeting:
+                    LOGGER.error(f"Meeting {meeting_id} not found")
+                    return
+
+                transcript = meeting.transcript_text
+                if not transcript:
+                    transcript, _ = rebuild_full_transcript(db, meeting_id)
+
+                if not transcript:
+                    section.content = "Error: No transcript available for content generation"
                     section.is_generating = False
-                    section.updated_at = dt.datetime.utcnow()
                     db.add(section)
                     db.commit()
-        except:
-            pass
+                    return
 
-        self.retry(exc=exc)
+                LOGGER.info(f"Generating content for section {section_id} ({section.section_type})")
+
+                if meeting.summary_language_mode == "custom" and meeting.summary_custom_language:
+                    target_language = meeting.summary_custom_language
+                elif meeting.summary_language_mode == "english":
+                    target_language = "English"
+                else:
+                    transcript_snippet = transcript[:2000] if transcript else ""
+                    target_language = detect_language_local(transcript_snippet)
+
+                duration_minutes = (meeting.duration_seconds or 0) // 60
+                meeting_started_at = (
+                    meeting.started_at.strftime("%Y-%m-%d %H:%M") if meeting.started_at else ""
+                )
+
+                content = generate_section_content_for_type(
+                    section.section_type,
+                    transcript,
+                    meeting.context,
+                    meeting.title,
+                    section.title,
+                    meeting.summary_length,
+                    target_language,
+                    duration_minutes,
+                    meeting_started_at,
+                )
+
+                section.content = content
+                section.is_generating = False
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+                db.commit()
+                LOGGER.info(f"✅ Generated content for section {section_id}")
+            return  # success
+        except Exception as exc:
+            LOGGER.error(
+                f"Error generating section content {section_id} (attempt {attempt + 1}): {exc}",
+                exc_info=True,
+            )
+            if attempt < 2:
+                time.sleep(60)
+
+    # All 3 attempts failed — mark the section as errored so UI recovers
+    try:
+        with Session(get_db_engine()) as db:
+            section = db.get(MeetingSection, section_id)
+            if section:
+                section.content = "Error generating content after 3 attempts."
+                section.is_generating = False
+                section.updated_at = dt.datetime.utcnow()
+                db.add(section)
+                db.commit()
+    except Exception:
+        pass
 
 
 def translate_text(text: str, target_language: str, context: str | None) -> str:
-    """Translates a block of text using GPT-5-mini."""
     if not text or not text.strip():
         return text
-
     context_prompt = ""
     if context and context.strip():
         context_prompt = (
             f"Use this context for consistent terminology: <context>{context}</context>"
         )
-
     try:
         response = openai.responses.create(
             model="gpt-5-mini-2025-08-07",
@@ -1049,61 +862,59 @@ Only return the translated text.
         )
         return response.output_text.strip()
     except Exception as e:
-        LOGGER.error(f"Celery Worker: Text translation failed: {e}", exc_info=True)
+        LOGGER.error(f"Text translation failed: {e}", exc_info=True)
         return f"Error: Translation to {target_language} failed."
 
 
-@celery_app.task(
-    name="app.worker.translate_meeting_sections",
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    default_retry_delay=120,
-)
-def translate_meeting_sections(self, meeting_id_str: str, target_language: str):
+def translate_meeting_sections(meeting_id_str: str, target_language: str):
     """Translates all sections of a meeting to a new language."""
     engine = get_db_engine()
     meeting_id = uuid.UUID(meeting_id_str)
-    LOGGER.info(f"Starting translation for meeting {meeting_id} to {target_language}")
 
-    with Session(engine) as db:
-        meeting = db.get(Meeting, meeting_id)
-        if not meeting:
-            LOGGER.error(f"Meeting {meeting_id} not found for translation.")
-            return
+    for attempt in range(3):
+        try:
+            LOGGER.info(f"Starting translation for meeting {meeting_id} to {target_language}")
+            with Session(engine) as db:
+                meeting = db.get(Meeting, meeting_id)
+                if not meeting:
+                    LOGGER.error(f"Meeting {meeting_id} not found for translation.")
+                    return
 
-        sections = db.exec(
-            select(MeetingSection).where(MeetingSection.meeting_id == meeting_id)
-        ).all()
-        if not sections:
-            LOGGER.warning(f"No sections found to translate for meeting {meeting_id}.")
-            return
+                sections = db.exec(
+                    select(MeetingSection).where(MeetingSection.meeting_id == meeting_id)
+                ).all()
+                if not sections:
+                    LOGGER.warning(f"No sections found to translate for meeting {meeting_id}.")
+                    return
 
-        for section in sections:
-            try:
-                # Translate title
-                if section.title:
-                    section.title = translate_text(
-                        section.title, target_language, meeting.context
-                    )
+                for section in sections:
+                    try:
+                        if section.title:
+                            section.title = translate_text(
+                                section.title, target_language, meeting.context
+                            )
+                        if section.content:
+                            section.content = translate_text(
+                                section.content, target_language, meeting.context
+                            )
+                        section.is_generating = False
+                        section.updated_at = dt.datetime.utcnow()
+                        db.add(section)
+                    except Exception as e:
+                        LOGGER.error(
+                            f"Failed to translate section {section.id} for meeting {meeting_id}: {e}"
+                        )
+                        section.content = f"Error during translation: {e}"
+                        section.is_generating = False
+                        db.add(section)
 
-                # Translate content
-                if section.content:
-                    section.content = translate_text(
-                        section.content, target_language, meeting.context
-                    )
-
-                section.is_generating = False  # Mark as done
-                section.updated_at = dt.datetime.utcnow()
-                db.add(section)
-
-            except Exception as e:
-                LOGGER.error(
-                    f"Failed to translate section {section.id} for meeting {meeting_id}: {e}"
-                )
-                section.content = f"Error during translation: {e}"
-                section.is_generating = False
-                db.add(section)
-        
-        db.commit()
-        LOGGER.info(f"✅ Translation complete for meeting {meeting_id}")
+                db.commit()
+                LOGGER.info(f"✅ Translation complete for meeting {meeting_id}")
+            return  # success
+        except Exception as exc:
+            LOGGER.error(
+                f"Translation failed for {meeting_id_str} (attempt {attempt + 1}): {exc}",
+                exc_info=True,
+            )
+            if attempt < 2:
+                time.sleep(60)

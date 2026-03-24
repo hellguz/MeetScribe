@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(BASE_DIR.parent / ".env"), extra="ignore")
 
     secret_key: str
     openai_api_key: str
@@ -20,9 +20,7 @@ class Settings(BaseSettings):
 
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
 
-    # Celery / Redis
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/0"
+    worker_threads: int = 4
 
 
 @lru_cache

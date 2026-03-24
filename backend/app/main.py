@@ -9,6 +9,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import openai
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
@@ -36,12 +40,8 @@ from .models import (
     SectionReorder,
     MeetingTranslatePayload,
 )
-from .worker import (
-    process_transcription_and_summary,
-    generate_summary_only,
-    translate_meeting_sections,
-    parse_markdown_into_sections,
-)
+from . import tasks
+from .tasks import parse_markdown_into_sections
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -61,7 +61,40 @@ SQLModel.metadata.create_all(engine)
 AUDIO_DIR = Path("data/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="MeetScribe MVP")
+_executor = ThreadPoolExecutor(max_workers=settings.worker_threads)
+_scheduler = BackgroundScheduler()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    tasks.set_executor(_executor)
+
+    # Pre-load Whisper model if running locally (avoids cold-start on first request)
+    if not settings.recognition_in_cloud:
+        LOGGER.info("Pre-loading local Whisper model...")
+        _executor.submit(tasks.get_whisper_model)
+
+    # Run cleanup once immediately on startup to recover any interrupted jobs
+    LOGGER.info("Running initial cleanup on startup...")
+    _executor.submit(tasks.cleanup_stuck_meetings)
+
+    # Schedule periodic tasks
+    _scheduler.add_job(tasks.cleanup_stuck_meetings, "interval", minutes=15, id="cleanup")
+    _scheduler.add_job(tasks.backup_database, "cron", hour=0, minute=0, id="backup")
+    _scheduler.start()
+    LOGGER.info("APScheduler started.")
+
+    yield
+
+    # --- Shutdown ---
+    LOGGER.info("Shutting down scheduler and executor...")
+    _scheduler.shutdown(wait=False)
+    _executor.shutdown(wait=True)
+    LOGGER.info("Shutdown complete.")
+
+
+app = FastAPI(title="MeetScribe MVP", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -204,10 +237,11 @@ async def upload_chunk(
         db.add(mtg)
         db.commit()
 
-    process_transcription_and_summary.delay(
-        meeting_id_str=str(meeting_id),
-        chunk_index=chunk_index,
-        chunk_path_str=str(chunk_path.resolve()),
+    _executor.submit(
+        tasks.process_transcription_and_summary,
+        str(meeting_id),
+        chunk_index,
+        str(chunk_path.resolve()),
     )
     return {"ok": True, "skipped": False}
 
@@ -271,7 +305,7 @@ def get_meeting(mid: uuid.UUID):
             and mtg.expected_chunks
             and transcribed_count >= mtg.expected_chunks
         ):
-            generate_summary_only.delay(str(mid))
+            _executor.submit(tasks.generate_summary_only, str(mid))
             mtg.summary_task_queued = True
             db.add(mtg)
             db.commit()
@@ -768,8 +802,7 @@ def create_section(mid: uuid.UUID, body: SectionCreate):
         
         # Queue AI generation for template sections and AI-generated sections
         if needs_ai_generation:
-            from .worker import generate_section_content
-            generate_section_content.delay(str(new_section.id), str(mid))
+            _executor.submit(tasks.generate_section_content, str(new_section.id), str(mid))
         
         return new_section
 
@@ -904,8 +937,7 @@ def regenerate_section_content(section_id: int):
         db.commit()
         
         # Queue AI generation
-        from .worker import generate_section_content
-        generate_section_content.delay(str(section_id), str(section.meeting_id))
+        _executor.submit(tasks.generate_section_content, str(section_id), str(section.meeting_id))
         
     return {"ok": True, "message": "Section regeneration queued"}
 
@@ -947,7 +979,7 @@ def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
         db.commit()
 
         # 3. Queue the background translation task
-        translate_meeting_sections.delay(str(mid), target_language)
+        _executor.submit(tasks.translate_meeting_sections, str(mid), target_language)
         LOGGER.info(f"Queued translation task for meeting {mid} to {target_language}")
 
     return {"ok": True, "message": "Translation task queued."}
