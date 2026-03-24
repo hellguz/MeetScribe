@@ -243,4 +243,4 @@ class SummaryUpdate(SQLModel):
     Payload for updating a meeting's summary markdown directly.
     """
 
-    content: str
+    content: str = Field(max_length=500_000)

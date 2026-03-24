@@ -767,7 +767,8 @@ def get_meeting_sections(mid: uuid.UUID):
             .order_by(MeetingSection.position)
         ).all()
 
-        # Backfill logic for old meetings without sections
+        # TODO: This backfill path is dead code — the sections UI was removed.
+        # It can be deleted once the MeetingSection table is dropped in a future migration.
         if not sections and meeting.summary_markdown:
             LOGGER.info(
                 f"Meeting {mid} has markdown summary but no sections. Backfilling now."
