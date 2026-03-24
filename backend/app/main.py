@@ -1036,7 +1036,7 @@ def generate_ai_templates(mid: uuid.UUID):
         # Use GPT-5-mini for contextual template generation
         try:
             response = openai.responses.create(
-                model="gpt-5-mini-2025-08-07",
+                model=tasks.SUMMARY_MODEL,
                 input=f"""Analyze this meeting content and suggest 4-6 highly relevant section templates.
 
 MEETING DETAILS:
@@ -1074,7 +1074,7 @@ EXAMPLES:
 🌍|Stakeholder Impact|How different groups will be affected by proposed changes
 
 Focus on what would be MOST useful for the people involved in or affected by this meeting.""",
-                reasoning={"effort": "minimal"}
+                reasoning=tasks.SUMMARY_REASONING
             )
             
             ai_response = response.output_text.strip()

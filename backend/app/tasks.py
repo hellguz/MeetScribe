@@ -27,6 +27,9 @@ logging.basicConfig(
 
 DetectorFactory.seed = 0
 
+SUMMARY_MODEL = "gpt-5.4"
+SUMMARY_REASONING = {"effort": "none"}
+
 # Module-level executor reference — set by main.py at startup via set_executor().
 # Needed so cleanup_stuck_meetings() can re-queue tasks without a circular import.
 _executor = None
@@ -145,11 +148,11 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 Based on the content, generate the title now.
 """
         response = openai.responses.create(
-            model="gpt-5-mini-2025-08-07",
+            model=SUMMARY_MODEL,
             input=f"""Create a concise meeting title efficiently. Follow instructions precisely with minimal reasoning.
 
 {title_prompt}""",
-            reasoning={"effort": "minimal"},
+            reasoning=SUMMARY_REASONING,
         )
         generated_title = response.output_text.strip().strip('"')
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
@@ -273,9 +276,9 @@ TRANSCRIPT:
 {full_transcript}"""
 
         response = openai.responses.create(
-            model="gpt-5-mini-2025-08-07",
+            model=SUMMARY_MODEL,
             input=full_prompt,
-            reasoning={"effort": "minimal"},
+            reasoning=SUMMARY_REASONING,
         )
         return response.output_text.strip()
     except Exception as e:
@@ -717,11 +720,11 @@ Transcript: {transcript[:3000]}"""
 
         try:
             response = openai.responses.create(
-                model="gpt-5-mini-2025-08-07",
+                model=SUMMARY_MODEL,
                 input=f"""Create helpful section content efficiently. Work with minimal reasoning, following instructions precisely.
 
 {prompt}""",
-                reasoning={"effort": "minimal"},
+                reasoning=SUMMARY_REASONING,
             )
             return response.output_text.strip()
         except Exception as e:
@@ -731,11 +734,11 @@ Transcript: {transcript[:3000]}"""
     try:
         prompt_config = SECTION_PROMPTS[section_type]
         response = openai.responses.create(
-            model="gpt-5-mini-2025-08-07",
+            model=SUMMARY_MODEL,
             input=f"""{prompt_config["system"]}
 
 {prompt_config["prompt"]}""",
-            reasoning={"effort": "minimal"},
+            reasoning=SUMMARY_REASONING,
         )
         return response.output_text.strip()
     except Exception as e:
@@ -839,7 +842,7 @@ def translate_text(text: str, target_language: str, context: str | None) -> str:
         )
     try:
         response = openai.responses.create(
-            model="gpt-5-mini-2025-08-07",
+            model=SUMMARY_MODEL,
             input=f"""Translate the following text into {target_language}.
 Maintain original formatting (like markdown headers and lists).
 {context_prompt}
@@ -848,7 +851,7 @@ Only return the translated text.
 <text_to_translate>
 {text}
 </text_to_translate>""",
-            reasoning={"effort": "minimal"},
+            reasoning=SUMMARY_REASONING,
         )
         return response.output_text.strip()
     except Exception as e:
