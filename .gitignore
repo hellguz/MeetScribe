@@ -51,3 +51,5 @@ Thumbs.db
 /.gpt/*.txt
 
 /backend/celerybeat-schedule
+
+.claude
