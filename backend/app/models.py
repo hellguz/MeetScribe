@@ -236,3 +236,11 @@ class SectionReorder(SQLModel):
     """
 
     sections: List[dict]  # List of {id: int, position: int}
+
+
+class SummaryUpdate(SQLModel):
+    """
+    Payload for updating a meeting's summary markdown directly.
+    """
+
+    content: str = Field(max_length=500_000)

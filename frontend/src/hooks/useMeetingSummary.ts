@@ -12,6 +12,7 @@ interface UseMeetingSummaryProps {
 
 export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseMeetingSummaryProps) => {
     const [transcript, setTranscript] = useState<string | null>(null);
+    const [summaryMarkdown, setSummaryMarkdown] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -53,6 +54,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             setContext(data.context || '');
             const trn = data.transcript_text || null;
             setTranscript(trn);
+            setSummaryMarkdown(data.summary_markdown || null);
             setSubmittedFeedback(data.feedback || []);
             setMeetingTimezone(data.timezone || null);
 
@@ -165,6 +167,22 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         }
     }, [mid, context, currentMeetingLength, languageState]);
 
+    const handleSummaryUpdate = useCallback(async (content: string) => {
+        if (!mid) return;
+        setSummaryMarkdown(content); // Optimistic update
+        try {
+            const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/summary`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content }),
+            });
+            if (!res.ok) throw new Error('Failed to update summary');
+        } catch (err) {
+            console.error(err);
+            fetchMeetingData(false); // Revert on error
+        }
+    }, [mid, fetchMeetingData]);
+
     const handleTitleUpdate = useCallback(async (newTitle: string) => {
         if (!mid || !newTitle || newTitle === meetingTitle) return;
         try {
@@ -209,6 +227,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 
     return {
         transcript,
+        summaryMarkdown,
         isLoading,
         isProcessing,
         error,
@@ -222,6 +241,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
         handleFeedbackToggle,
         handleSuggestionSubmit,
         handleRegenerate,
+        handleSummaryUpdate,
         handleTitleUpdate,
         loadedFromCache,
     };

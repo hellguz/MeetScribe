@@ -1,41 +1,34 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { marked } from 'marked'
+import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
-import SectionTemplatePicker from '../components/SectionTemplatePicker'
-import DraggableSectionList from '../components/DraggableSectionList'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
-import { useSections } from '../hooks/useSections'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
-import { SectionTemplate } from '../types'
+
+marked.setOptions({ breaks: false })
+
+const turndown = new TurndownService({ headingStyle: 'atx', hr: '---', bulletListMarker: '-' })
+// Strip span tags (browsers add them while editing) but keep their text content
+turndown.addRule('spans', { filter: 'span', replacement: (content) => content })
 
 const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
 	if (!isoString) return null
-
 	try {
 		const date = new Date(isoString)
-		const minutes = date.getMinutes()
-		const roundedMinutes = Math.round(minutes)
-		date.setMinutes(roundedMinutes, 0, 0)
-
-		const options: Intl.DateTimeFormatOptions = {
-			day: 'numeric',
-			month: 'long',
-			year: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: false,
+		date.setMinutes(Math.round(date.getMinutes()), 0, 0)
+		return new Intl.DateTimeFormat('en-GB', {
+			day: 'numeric', month: 'long', year: 'numeric',
+			hour: '2-digit', minute: '2-digit', hour12: false,
 			timeZone: timeZone || undefined,
-		}
-
-		return new Intl.DateTimeFormat('en-GB', options).format(date)
-	} catch (error) {
-		console.error('Error formatting date:', error)
+		}).format(date)
+	} catch {
 		return 'Invalid Date'
 	}
 }
@@ -49,6 +42,7 @@ export default function Summary() {
 
 	const {
 		transcript,
+		summaryMarkdown,
 		isLoading,
 		isProcessing,
 		error,
@@ -62,21 +56,10 @@ export default function Summary() {
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
+		handleSummaryUpdate,
 		handleTitleUpdate,
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
-
-	const {
-		sections,
-		isLoading: sectionsLoading,
-		error: sectionsError,
-		fetchSections,
-		createSection,
-		updateSection,
-		deleteSection,
-		reorderSections,
-		regenerateSection
-	} = useSections({ meetingId: mid, isProcessing })
 
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [editedTitle, setEditedTitle] = useState('')
@@ -84,30 +67,96 @@ export default function Summary() {
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-	const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false)
-	const [addSectionPosition, setAddSectionPosition] = useState<number>(0)
-	const [pickerPosition, setPickerPosition] = useState<{x: number, y: number} | null>(null)
+
+	// Rich-text inline editor state
+	const editorRef = useRef<HTMLDivElement>(null)
+	const [isEditing, setIsEditing] = useState(false)
+	const isEditingRef = useRef(false)        // sync ref for effects/callbacks
+	const cancelClickedRef = useRef(false)
 
 	useEffect(() => {
-		if (context !== null && editedContext === null) {
-			setEditedContext(context)
-		}
+		if (context !== null && editedContext === null) setEditedContext(context)
 	}, [context, editedContext])
 
 	useEffect(() => {
-		return () => {
-			if (copyTimeoutRef.current) {
-				clearTimeout(copyTimeoutRef.current)
-			}
-		}
+		return () => { if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current) }
 	}, [])
 
-	const fullSummaryText = useMemo(() => {
-		if (!sections || sections.length === 0) return '';
-		return sections
-			.map(s => `### ${s.title}\n\n${s.content || ''}`)
-			.join('\n\n---\n\n');
-	}, [sections]);
+	// Set editor innerHTML and strip the first element's top margin so it aligns with the buttons
+	const setEditorHtml = useCallback((md: string) => {
+		if (!editorRef.current) return
+		editorRef.current.innerHTML = marked.parse(md || '') as string
+		const first = editorRef.current.firstElementChild as HTMLElement | null
+		if (first) first.style.marginTop = '0'
+	}, [])
+
+	// Sync markdown → HTML into the editor div whenever it changes, but never while the user is editing
+	useEffect(() => {
+		if (!editorRef.current || isEditingRef.current) return
+		setEditorHtml(summaryMarkdown || '')
+	}, [summaryMarkdown, setEditorHtml])
+
+	const enterEditMode = useCallback((e?: React.MouseEvent) => {
+		if (isEditingRef.current) return
+
+		// Capture exact click coordinates before React re-renders (double-click selects a word — we don't want that)
+		const clickX = e?.clientX
+		const clickY = e?.clientY
+
+		isEditingRef.current = true
+		setIsEditing(true)
+
+		setTimeout(() => {
+			if (!editorRef.current) return
+			editorRef.current.focus({ preventScroll: true })
+
+			// Place cursor at the exact pixel position of the click, not at a word boundary
+			const sel = window.getSelection()
+			sel?.removeAllRanges()
+			if (clickX !== undefined && clickY !== undefined) {
+				let range: Range | null = null
+				if (document.caretRangeFromPoint) {
+					range = document.caretRangeFromPoint(clickX, clickY)
+				} else if ((document as any).caretPositionFromPoint) {
+					const pos = (document as any).caretPositionFromPoint(clickX, clickY)
+					if (pos) {
+						range = document.createRange()
+						range.setStart(pos.offsetNode, pos.offset)
+						range.collapse(true)
+					}
+				}
+				if (range) sel?.addRange(range)
+			}
+		}, 0)
+	}, [])
+
+	const doSave = useCallback(async () => {
+		if (!editorRef.current) return
+		isEditingRef.current = false
+		cancelClickedRef.current = false
+		setIsEditing(false)
+
+		const html = editorRef.current.innerHTML
+		const md = turndown.turndown(html).trim()
+		if (md !== (summaryMarkdown || '').trim()) {
+			await handleSummaryUpdate(md)
+		}
+	}, [summaryMarkdown, handleSummaryUpdate])
+
+	const doCancel = useCallback(() => {
+		if (!editorRef.current) return
+		isEditingRef.current = false
+		cancelClickedRef.current = false
+		setIsEditing(false)
+		// Restore original content
+		setEditorHtml(summaryMarkdown || '')
+		editorRef.current.blur()
+	}, [summaryMarkdown, setEditorHtml])
+
+	const handleEditorBlur = useCallback(() => {
+		if (cancelClickedRef.current) return
+		doSave()
+	}, [doSave])
 
 	const handleTitleUpdateConfirm = useCallback(async () => {
 		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
@@ -116,113 +165,29 @@ export default function Summary() {
 		setIsEditingTitle(false)
 	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
-
 	const handleContextUpdateConfirm = () => {
-		if (editedContext !== context) {
-			handleRegenerate({ newContext: editedContext })
-		}
+		if (editedContext !== context) handleRegenerate({ newContext: editedContext })
 	}
 
-	const handleAddSection = useCallback((position: number, event?: React.MouseEvent) => {
-		setAddSectionPosition(position)
-		if (event) {
-			const rect = event.currentTarget.getBoundingClientRect()
-			setPickerPosition({
-				x: rect.right + 8,
-				y: rect.top
-			})
-		}
-		setIsTemplatePickerOpen(true)
-	}, [])
-
-	const handleAddSectionAbove = useCallback((position: number, event?: React.MouseEvent) => {
-		handleAddSection(position, event)
-	}, [handleAddSection])
-
-	const handleAddSectionBelow = useCallback((position: number, event?: React.MouseEvent) => {
-		handleAddSection(position + 1, event)
-	}, [handleAddSection])
-
-	const handleTemplateSelect = useCallback(async (template: SectionTemplate) => {
-		// Preserve scroll position
-		const scrollPosition = window.scrollY
-		
-		try {
-			await createSection(template, addSectionPosition)
-			
-			// Restore scroll position after a brief delay to allow re-render
-			setTimeout(() => {
-				window.scrollTo(0, scrollPosition)
-			}, 0)
-		} catch (error) {
-			console.error('Error adding section:', error)
-		}
-	}, [createSection, addSectionPosition])
-
-	const handleUpdateTitle = useCallback(async (sectionId: number, title: string) => {
-		try {
-			await updateSection(sectionId, { title })
-		} catch (error) {
-			console.error('Error updating title:', error)
-		}
-	}, [updateSection])
-
-	const handleUpdateContent = useCallback(async (sectionId: number, content: string) => {
-		try {
-			await updateSection(sectionId, { content })
-		} catch (error) {
-			console.error('Error updating content:', error)
-		}
-	}, [updateSection])
-
-	const handleDeleteSection = useCallback(async (sectionId: number) => {
-		if (!confirm('Are you sure you want to delete this section?')) return
-		
-		try {
-			await deleteSection(sectionId)
-		} catch (error) {
-			console.error('Error deleting section:', error)
-		}
-	}, [deleteSection])
-
-	const handleRegenerateSection = useCallback(async (sectionId: number) => {
-		try {
-			await regenerateSection(sectionId)
-		} catch (error) {
-			console.error('Error regenerating section:', error)
-		}
-	}, [regenerateSection])
-
-
 	const handleCopy = async (format: 'text' | 'markdown') => {
-		if (!meetingTitle || !fullSummaryText) return
-
+		if (!meetingTitle || !summaryMarkdown) return
 		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
 		let textToCopy = ''
-
 		if (format === 'markdown') {
-			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${fullSummaryText}`
+			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summaryMarkdown}`
 		} else {
-			const plainSummary = fullSummaryText
-				.replace(/^---\s*$/gm, '')
-				.replace(/####\s/g, '')
-				.replace(/###\s/g, '')
-				.replace(/\*\*(.*?)\*\*/g, '$1')
-				.replace(/_(.*?)_/g, '$1')
-				.replace(/-\s/g, '• ')
-				.replace(/\[(.*?)\]\(.*?\)/g, '$1')
-				.trim()
-			textToCopy = `${meetingTitle}\n${formattedDate}\n\n${plainSummary}`
+			const plain = summaryMarkdown
+				.replace(/^---\s*$/gm, '').replace(/#{1,6}\s/g, '')
+				.replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1')
+				.replace(/-\s/g, '• ').replace(/\[(.*?)\]\(.*?\)/g, '$1').trim()
+			textToCopy = `${meetingTitle}\n${formattedDate}\n\n${plain}`
 		}
-
 		try {
 			await navigator.clipboard.writeText(textToCopy)
 			setCopyStatus(format === 'markdown' ? 'copied_md' : 'copied')
-
 			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
 			copyTimeoutRef.current = setTimeout(() => setCopyStatus('idle'), 5000)
-		} catch (err) {
-			console.error('Failed to copy text: ', err)
+		} catch {
 			alert('Could not copy to clipboard.')
 		}
 	}
@@ -231,115 +196,61 @@ export default function Summary() {
 		if (!mid) return
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
-
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
-
 		try {
-			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
+			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					target_language: targetLanguage,
-					language_mode: newState.mode,
-				}),
+				body: JSON.stringify({ target_language: targetLanguage, language_mode: newState.mode }),
 			})
-			if (!response.ok) {
-				throw new Error('Failed to start translation.')
-			}
-			// Fetch sections once to get the `is_generating` flags, which will trigger polling in useSections
-			fetchSections()
-		} catch (err) {
-			console.error('Translation error:', err)
+			if (!res.ok) throw new Error()
+		} catch {
 			alert('Could not start translation.')
 		}
 	}
 
-	const handleLengthChangeWithWarning = (newLength: SummaryLength) => {
-		const hasCustomizations = sections && sections.length > 0
-		if (hasCustomizations) {
-			if (
-				!window.confirm(
-					'Changing the summary length will discard all current sections, including custom content and edits, and generate a new summary from the original transcript. Are you sure?'
-				)
-			) {
-				return // Abort if user cancels
-			}
-		}
-		handleRegenerate({ newLength })
-	}
-
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
-	const hasSections = !sectionsLoading && sections.length > 0
-	const showControls = hasSections && !isProcessing && !sectionsLoading
-	
-	const displayLoading = (isLoading && !loadedFromCache) || sectionsLoading;
-    const displayError = error || sectionsError;
-    const showProcessingMessage = (isProcessing || isRegenerating) && !hasSections;
+	const hasSummary = !!summaryMarkdown && !isProcessing
+	const displayLoading = isLoading && !loadedFromCache
+	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
 
 	const copyButtonStyle: React.CSSProperties = {
-		padding: '8px 16px',
-		border: 'none',
-		backgroundColor: 'transparent',
-		color: currentThemeColors.text,
-		cursor: 'pointer',
-		fontSize: '14px',
-		fontWeight: 500,
-		transition: 'background-color 0.2s ease',
-		fontFamily: 'inherit',
+		padding: '8px 16px', border: 'none', backgroundColor: 'transparent',
+		color: currentThemeColors.text, cursor: 'pointer', fontSize: '14px',
+		fontWeight: 500, transition: 'background-color 0.2s ease', fontFamily: 'inherit',
 	}
 
 	return (
 		<div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
 			<ThemeToggle />
 
+			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-				<button
-					onClick={() => navigate('/record')}
-					style={{
-						background: 'none',
-						border: 'none',
-						cursor: 'pointer',
-						color: currentThemeColors.secondaryText,
-						fontSize: '15px',
-						fontFamily: 'inherit',
-					}}>
+				<button onClick={() => navigate('/record')} style={{
+					background: 'none', border: 'none', cursor: 'pointer',
+					color: currentThemeColors.secondaryText, fontSize: '15px', fontFamily: 'inherit',
+				}}>
 					← Back to Recordings
 				</button>
 
-				{hasSections && !isProcessing && (
+				{hasSummary && !isProcessing && (
 					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
 						{copyStatus !== 'idle' && (
-							<span
-								style={{
-									color: currentThemeColors.secondaryText,
-									fontSize: '14px',
-									transition: 'opacity 0.5s ease-in-out',
-									opacity: 1,
-								}}>
-								Copied! ✨
-							</span>
+							<span style={{ color: currentThemeColors.secondaryText, fontSize: '14px' }}>Copied! ✨</span>
 						)}
-						
-						<div
-							style={{
-								display: 'flex',
-								borderRadius: '6px',
-								overflow: 'hidden',
-								border: `1px solid ${currentThemeColors.border}`,
-								backgroundColor: currentThemeColors.backgroundSecondary,
-							}}>
-							<button
-								onClick={() => handleCopy('text')}
-								style={copyButtonStyle}
+						<div style={{
+							display: 'flex', borderRadius: '6px', overflow: 'hidden',
+							border: `1px solid ${currentThemeColors.border}`,
+							backgroundColor: currentThemeColors.backgroundSecondary,
+						}}>
+							<button onClick={() => handleCopy('text')} style={copyButtonStyle}
 								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 								Copy Text
 							</button>
 							<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
-							<button
-								onClick={() => handleCopy('markdown')}
-								style={copyButtonStyle}
+							<button onClick={() => handleCopy('markdown')} style={copyButtonStyle}
 								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 								Copy Markdown
@@ -349,18 +260,13 @@ export default function Summary() {
 				)}
 			</div>
 
-			<div
-				style={{
-					backgroundColor: currentThemeColors.background,
-					padding: '16px',
-					borderRadius: '12px',
-					border: `1px solid ${currentThemeColors.border}`,
-					marginBottom: '24px',
-				}}>
+			{/* Title + settings card */}
+			<div style={{
+				backgroundColor: currentThemeColors.background, padding: '16px',
+				borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '24px',
+			}}>
 				{isEditingTitle ? (
-					<input
-						type="text"
-						value={editedTitle}
+					<input type="text" value={editedTitle}
 						onChange={(e) => setEditedTitle(e.target.value)}
 						onBlur={handleTitleUpdateConfirm}
 						onKeyDown={(e) => {
@@ -368,93 +274,57 @@ export default function Summary() {
 							if (e.key === 'Escape') setIsEditingTitle(false)
 						}}
 						style={{
-							fontSize: '1.7em',
-							fontWeight: '600',
-							width: '100%',
+							fontSize: '1.7em', fontWeight: '600', width: '100%',
 							border: `1px solid ${currentThemeColors.input.border}`,
-							borderRadius: '6px',
-							backgroundColor: currentThemeColors.input.background,
-							color: currentThemeColors.input.text,
-							fontFamily: 'inherit',
+							borderRadius: '6px', backgroundColor: currentThemeColors.input.background,
+							color: currentThemeColors.input.text, fontFamily: 'inherit',
 						}}
 						autoFocus
 					/>
 				) : (
-					<h1
-						onClick={() => {
-							setEditedTitle(meetingTitle || '')
-							setIsEditingTitle(true)
-						}}
-						style={{
-							cursor: 'pointer',
-							fontSize: '1.7em',
-							margin: 0,
-							fontFamily: 'inherit',
-							fontWeight: 600,
-							lineHeight: 1.2,
-						}}>
+					<h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true) }}
+						style={{ cursor: 'pointer', fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2 }}>
 						{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
 					</h1>
 				)}
 
 				{formattedDate && (
-					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
+					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
+						{formattedDate}
+					</p>
 				)}
 
-				{(hasSections || isProcessing) && (
+				{(hasSummary || isProcessing) && (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-						<div
-							style={{
-								display: 'flex',
-								flexDirection: 'row',
-								gap: '10px',
-								justifyContent: 'space-between',
-								alignItems: 'center',
-							}}>
-							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={handleLengthChangeWithWarning} />
+						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
+							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })} />
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
-
 						<div>
 							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
 								Context
 							</label>
-							<textarea
-								id="context-editor"
-								value={editedContext ?? ''}
-								onChange={(e) => setEditedContext(e.target.value)}
+							<textarea id="context-editor" value={editedContext ?? ''} onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
 								disabled={isRegenerating || isProcessing}
 								style={{
-									width: '100%',
-									minHeight: '60px',
-									padding: '10px 12px',
-									borderRadius: '8px',
+									width: '100%', minHeight: '60px', padding: '10px 12px', borderRadius: '8px',
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
-									color: currentThemeColors.input.text,
-									fontSize: '14px',
-									resize: 'vertical',
-									boxSizing: 'border-box',
+									color: currentThemeColors.input.text, fontSize: '14px',
+									resize: 'vertical', boxSizing: 'border-box',
 									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
-								<button
-									onClick={handleContextUpdateConfirm}
-									disabled={isRegenerating || isProcessing}
+								<button onClick={handleContextUpdateConfirm} disabled={isRegenerating || isProcessing}
 									style={{
-										marginTop: '12px',
-										padding: '8px 16px',
-										border: 'none',
-										borderRadius: '8px',
+										marginTop: '12px', padding: '8px 16px', border: 'none', borderRadius: '8px',
 										backgroundColor: currentThemeColors.button.primary,
 										color: currentThemeColors.button.primaryText,
-										fontSize: '14px',
-										fontWeight: '500',
+										fontSize: '14px', fontWeight: '500',
 										cursor: (isRegenerating || isProcessing) ? 'not-allowed' : 'pointer',
-										opacity: (isRegenerating || isProcessing) ? 0.6 : 1,
-										transition: 'all 0.2s ease',
+										opacity: (isRegenerating || isProcessing) ? 0.6 : 1, transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate Summary
 								</button>
@@ -464,31 +334,100 @@ export default function Summary() {
 				)}
 			</div>
 
-			{/* Main Content Area */}
+			{/* Summary */}
 			{displayLoading ? (
 				<p>Loading summary...</p>
-			) : displayError ? (
-				<p style={{ color: currentThemeColors.button.danger }}>Error: {displayError}</p>
-			) : hasSections ? (
-				<DraggableSectionList
-					sections={sections}
-					onReorder={reorderSections}
-					onUpdateTitle={handleUpdateTitle}
-					onUpdateContent={handleUpdateContent}
-					onDeleteSection={handleDeleteSection}
-					onRegenerateSection={handleRegenerateSection}
-					onAddSectionAbove={handleAddSectionAbove}
-					onAddSectionBelow={handleAddSectionBelow}
-					showControls={showControls}
-					enableDragAndDrop={true}
-				/>
+			) : error ? (
+				<p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>
+			) : hasSummary ? (
+				<div style={{
+					backgroundColor: currentThemeColors.background,
+					borderRadius: '12px',
+					border: `1px solid ${currentThemeColors.border}`,
+					position: 'relative',
+					boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
+					transition: 'box-shadow 0.15s ease',
+				}}>
+					{/* Edit / Save+Cancel — absolutely positioned so they don't affect content layout */}
+					<div style={{ position: 'absolute', top: '20px', right: '24px', display: 'flex', gap: '6px', zIndex: 1 }}>
+						{isEditing ? (
+							<>
+								<button
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={doSave}
+									style={{
+										padding: '6px 12px', border: 'none', borderRadius: '6px',
+										backgroundColor: currentThemeColors.button.primary,
+										color: currentThemeColors.button.primaryText,
+										fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+									}}>
+									Save
+								</button>
+								<button
+									onMouseDown={() => { cancelClickedRef.current = true }}
+									onClick={doCancel}
+									style={{
+										padding: '6px 12px',
+										border: `1px solid ${currentThemeColors.border}`,
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.background,
+										color: currentThemeColors.text,
+										fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+									}}>
+									Cancel
+								</button>
+							</>
+						) : (
+							<button
+								onClick={() => enterEditMode()}
+								style={{
+									padding: '6px 12px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+								}}>
+								Edit
+							</button>
+						)}
+					</div>
+
+					{/*
+					  * The actual editable content.
+					  * innerHTML is controlled via ref (not React), so React's reconciliation
+					  * never overwrites the user's edits. contentEditable is toggled on double-click.
+					  */}
+					<div
+						ref={editorRef}
+						contentEditable={isEditing}
+						suppressContentEditableWarning
+						onDoubleClick={!isEditing ? (e) => enterEditMode(e) : undefined}
+						onBlur={handleEditorBlur}
+						onKeyDown={(e) => {
+							if (e.key === 'Escape') {
+								cancelClickedRef.current = true
+								doCancel()
+							}
+						}}
+						style={{
+							padding: '20px 24px',
+							lineHeight: '1.7',
+							fontSize: '15px',
+							outline: 'none',
+							cursor: isEditing ? 'text' : 'default',
+							minHeight: '100px',
+						}}
+						className="markdown-content"
+					/>
+				</div>
 			) : showProcessingMessage ? (
-                <p>⏳ Processing summary, please wait...</p>
-            ) : (
+				<p>⏳ Processing summary, please wait...</p>
+			) : (
 				<p>No summary is available for this meeting.</p>
 			)}
 
-			{hasSections && !isLoading && (
+			{hasSummary && !isLoading && (
 				<FeedbackComponent
 					submittedTypes={submittedFeedback}
 					onFeedbackToggle={handleFeedbackToggle}
@@ -498,53 +437,27 @@ export default function Summary() {
 			)}
 
 			{transcript && (
-				<div
-					style={{
-						marginTop: '32px',
-						backgroundColor: currentThemeColors.background,
-						padding: '16px 24px',
-						borderRadius: '12px',
-						border: `1px solid ${currentThemeColors.border}`,
-					}}>
-					<h4
-						onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
+				<div style={{
+					marginTop: '32px', backgroundColor: currentThemeColors.background,
+					padding: '16px 24px', borderRadius: '12px',
+					border: `1px solid ${currentThemeColors.border}`,
+				}}>
+					<h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
 						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center' }}>
-						<span
-							style={{
-								display: 'inline-block',
-								transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
-								transition: 'transform 0.2s',
-								marginRight: '8px',
-							}}>
-							▶
-						</span>{' '}
+						<span style={{
+							display: 'inline-block',
+							transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
+							transition: 'transform 0.2s', marginRight: '8px',
+						}}>▶</span>{' '}
 						🎤 Transcript
 					</h4>
 					{isTranscriptVisible && (
-						<pre
-							style={{
-								marginTop: '16px',
-								whiteSpace: 'pre-wrap',
-								color: currentThemeColors.text,
-								fontSize: '14px',
-								lineHeight: '1.6',
-							}}>
+						<pre style={{ marginTop: '16px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>
 							{transcript}
 						</pre>
 					)}
 				</div>
 			)}
-
-			<SectionTemplatePicker
-				isOpen={isTemplatePickerOpen}
-				onClose={() => {
-					setIsTemplatePickerOpen(false)
-					setPickerPosition(null)
-				}}
-				onSelectTemplate={handleTemplateSelect}
-				meetingId={mid}
-				position={pickerPosition}
-			/>
 		</div>
 	)
 }
