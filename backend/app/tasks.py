@@ -28,7 +28,7 @@ logging.basicConfig(
 DetectorFactory.seed = 0
 
 SUMMARY_MODEL = "gpt-5.4"
-SUMMARY_REASONING = {"effort": "none"}
+SUMMARY_REASONING = {"effort": "low"}
 
 # Module-level executor reference — set by main.py at startup via set_executor().
 # Needed so cleanup_stuck_meetings() can re-queue tasks without a circular import.
@@ -185,6 +185,90 @@ def detect_language_local(text_snippet: str) -> str:
         return "English"
 
 
+def _summarise_essence(full_transcript: str, target_language: str, context_section: str) -> str:
+    """Essence mode: high-density structured summary — distill, don't reconstruct."""
+    prompt = f"""You are an expert meeting analyst. Distill this transcript into a dense, scannable summary in **{target_language}**.
+{context_section}
+## Core rules
+
+1. **DISTILL, don't reconstruct.** Compress every point to its essence — one sentence per item. Cut all filler, pleasantries, repetition, and process chatter. The summary should be roughly 500–800 words total.
+2. **Structure follows content.** Do NOT apply a fixed template. A funding review, a sprint, a legal debrief, and a sales call each need different sections. Pick only what's relevant.
+3. **Every word earns its place.** If a sentence doesn't add information a non-attendee needs, delete it. Prefer bullet lists and bold key terms over prose paragraphs.
+4. **Preserve specifics.** Never paraphrase away a number, name, date, deadline, or condition — but state each one once, in one sentence.
+
+## Internal analysis (do NOT output this)
+
+Before writing, identify:
+- Meeting type (grant review, sprint, client call, board meeting, 1:1, incident debrief, etc.)
+- Primary outcome (most important thing decided)
+- Who are the key people and what are their roles
+
+## Available sections (pick only what applies — this is a menu, not a checklist)
+
+- Participants
+- Overall outcome / verdict
+- Mandatory conditions / requirements
+- Additional recommendations (non-mandatory)
+- Key decisions
+- Timeline & deadlines
+- Budget & financial details
+- Action items (always include if any exist)
+- Process / next steps
+- Open questions
+
+## Output format (STRICT — follow exactly)
+
+```markdown
+# [Meeting Title] — [Meeting Type]
+**[Primary outcome]** · **[Key tag]** · [Org/context]
+
+> [3–4 sentence executive summary: who met, about what, primary outcome, what happens next. Keep it brief.]
+
+---
+
+## Participants
+
+- **Name** — Role / affiliation
+- **Name** — Role / affiliation
+
+---
+
+## [Section Name]
+
+[Content using bullets, numbered lists, or a brief paragraph. ONE sentence per point. Use bold for names, figures, dates, key terms.]
+
+---
+
+## Action Items
+
+- **[Owner]** — [Task in one sentence] — *[Deadline]*
+- **[Owner]** — [Task in one sentence]
+```
+
+**Critical formatting rules:**
+- Use `## Section Name` for sections, `---` between them
+- Use `> blockquote` ONLY for the executive summary (3–4 sentences max)
+- ONE sentence per bullet point — no multi-sentence bullets
+- For numbered requirements/conditions: `1. **Name:** one-sentence description`
+- For financial items: use a bullet list with bold category labels, one sentence each
+- For timeline: use bold dates with ` — ` separator: `**~4 weeks** — first revision due`
+- Do NOT use `###`, `####`, or `#####` headings
+- Do NOT write prose paragraphs longer than 2 sentences
+- Do NOT include preamble — start directly with the `#` title
+- The entire output MUST be in **{target_language}**
+
+TRANSCRIPT:
+---
+{full_transcript}"""
+
+    response = openai.responses.create(
+        model=SUMMARY_MODEL,
+        input=prompt,
+        reasoning=SUMMARY_REASONING,
+    )
+    return response.output_text.strip()
+
+
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
@@ -208,15 +292,6 @@ def summarise_transcript_in_worker(
         else:
             target_language = detected_language
 
-        LENGTH_PROMPTS = {
-            "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
-            "half_page": "The final summary must be **exactly** around 250 words. This word count is a **strict, non-negotiable requirement**.",
-            "one_page": "The final summary must be **exactly** around 500 words. This word count is a **strict, non-negotiable requirement**.",
-            "two_pages": "The final summary must be **exactly** around 1000 words. This word count is a **strict, non-negotiable requirement**.",
-            "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
-        }
-        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
-
         context_section = ""
         if context and context.strip():
             context_section = f"""
@@ -227,6 +302,17 @@ This is critical context provided by the user. You MUST use it as a source of tr
 ---
 </user_provided_context>
 """
+
+        if summary_length == "essence":
+            return _summarise_essence(full_transcript, target_language, context_section)
+
+        LENGTH_PROMPTS = {
+            "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
+            "one_page": "The final summary must be **exactly** around 500 words. This word count is a **strict, non-negotiable requirement**.",
+            "two_pages": "The final summary must be **exactly** around 1000 words. This word count is a **strict, non-negotiable requirement**.",
+            "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
+        }
+        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
 
         system_prompt = f"""
 You are 'Scribe', an expert AI analyst. Work efficiently with minimal reasoning - follow instructions precisely to create an insightful, well-structured summary.

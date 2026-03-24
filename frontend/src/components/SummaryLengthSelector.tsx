@@ -12,7 +12,7 @@ interface SummaryLengthSelectorProps {
 const options: { label: string; value: SummaryLength }[] = [
 	{ label: 'Auto', value: 'auto' },
 	{ label: '¼ Page', value: 'quar_page' },
-	{ label: '½ Page', value: 'half_page' },
+	{ label: 'Essence', value: 'essence' },
 	{ label: '1 Page', value: 'one_page' },
 	{ label: '2 Pages', value: 'two_pages' },
 ]

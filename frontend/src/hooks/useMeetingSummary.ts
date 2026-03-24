@@ -59,7 +59,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             setMeetingTimezone(data.timezone || null);
 
             const lengthValue = data.summary_length || 'auto';
-            if (['auto', 'quar_page', 'half_page', 'one_page', 'two_pages'].includes(lengthValue)) {
+            if (['auto', 'quar_page', 'essence', 'one_page', 'two_pages'].includes(lengthValue)) {
                 setCurrentMeetingLength(lengthValue as SummaryLength);
             }
 

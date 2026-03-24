@@ -108,7 +108,7 @@ def is_valid_summary_length(length_str: str | None) -> bool:
     """Validates the summary_length parameter."""
     if length_str is None:
         return True
-    return length_str in ["auto", "quar_page", "half_page", "one_page", "two_pages"]
+    return length_str in ["auto", "quar_page", "essence", "one_page", "two_pages"]
 
 
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
@@ -675,7 +675,7 @@ def get_dashboard_stats():
             "auto":      "Auto",
             "medium":    "Auto",
             "quar_page": "Quarter Page",
-            "half_page": "Half Page",
+            "essence":   "Essence",
             "one_page":  "One Page",
             "two_pages": "Two Pages",
         }
