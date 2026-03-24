@@ -9,7 +9,6 @@ export interface StatSet {
 export interface InterestingFacts {
     avg_summary_words: number;
     busiest_hour: string;
-    most_active_day: string;
 }
 
 export interface Feedback {
@@ -43,6 +42,8 @@ export interface DashboardStats {
     feature_suggestions: FeatureSuggestion[];
     meetings_with_feedback: MeetingWithFeedback[];
     interesting_facts: InterestingFacts;
+    length_distribution: { [key: string]: number };
+    language_distribution: { [key: string]: number };
 }
 
 export interface MeetingSection {
