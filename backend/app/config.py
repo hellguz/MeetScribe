@@ -20,9 +20,7 @@ class Settings(BaseSettings):
 
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
 
-    # Celery / Redis
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/0"
+    worker_threads: int = 4
 
 
 @lru_cache

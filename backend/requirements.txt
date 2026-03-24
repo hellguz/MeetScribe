@@ -13,9 +13,9 @@ faster-whisper==1.1.1
 openai>=1.58.0               # Latest version with responses API and GPT-5 support
 httpx                        # Latest httpx for new OpenAI features
 
-# Celery & Redis
-celery==5.4.0
-redis==5.0.7
+# Background scheduling
+apscheduler~=3.10
+
 sqlalchemy>=1.4 # Already a dependency of sqlmodel, but good to be explicit for func.count
 
 groq==0.26.0
