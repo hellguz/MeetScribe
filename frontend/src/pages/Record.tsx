@@ -108,19 +108,6 @@ export default function Record() {
 		setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent))
 	}, [])
 
-	useEffect(() => {
-		if (isPaused) {
-			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
-			animationFrameRef.current = null
-			if (canvasRef.current) {
-				const ctx = canvasRef.current.getContext('2d')
-				if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
-			}
-		} else if (isRecording) {
-			drawWaveform()
-		}
-	}, [isPaused, isRecording, drawWaveform, animationFrameRef])
-
 	const drawWaveform = useCallback(() => {
 		if (!analyserRef.current || !canvasRef.current) return
 		const canvas = canvasRef.current
@@ -153,6 +140,19 @@ export default function Record() {
 
 		animationFrameRef.current = requestAnimationFrame(drawWaveform)
 	}, [theme, analyserRef, animationFrameRef])
+
+	useEffect(() => {
+		if (isPaused) {
+			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+			animationFrameRef.current = null
+			if (canvasRef.current) {
+				const ctx = canvasRef.current.getContext('2d')
+				if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+			}
+		} else if (isRecording) {
+			drawWaveform()
+		}
+	}, [isPaused, isRecording, drawWaveform, animationFrameRef])
 
 	const handleStart = () => {
 		if (audioSource === 'file') {
