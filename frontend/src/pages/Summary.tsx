@@ -221,20 +221,20 @@ export default function Summary() {
 	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
 
 	const copyButtonStyle: React.CSSProperties = {
-		padding: '8px 16px', border: 'none', backgroundColor: 'transparent',
-		color: currentThemeColors.text, cursor: 'pointer', fontSize: '14px',
+		padding: '5px 12px', border: 'none', backgroundColor: 'transparent',
+		color: currentThemeColors.text, cursor: 'pointer', fontSize: '13px',
 		fontWeight: 500, transition: 'background-color 0.2s ease', fontFamily: 'inherit',
 	}
 
 	return (
-		<div style={{ maxWidth: 800, margin: '0 auto', padding: 24, color: currentThemeColors.text }}>
+		<div style={{ maxWidth: 800, margin: '0 auto', padding: '12px 24px 24px', color: currentThemeColors.text }}>
 			<ThemeToggle />
 
 			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
 				<button onClick={() => navigate('/record')} style={{
 					background: 'none', border: 'none', cursor: 'pointer',
-					color: currentThemeColors.secondaryText, fontSize: '15px', fontFamily: 'inherit',
+					color: currentThemeColors.secondaryText, fontSize: '13px', fontFamily: 'inherit',
 				}}>
 					← Back to Recordings
 				</button>
@@ -267,11 +267,11 @@ export default function Summary() {
 
 			{/* Settings card */}
 			{(hasSummary || isProcessing) && (
-			<div style={{
-				backgroundColor: currentThemeColors.background, padding: '10px 12px',
-				borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '12px',
-			}}>
-				<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+				<div style={{
+					backgroundColor: currentThemeColors.background, padding: '10px 12px',
+					borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '12px',
+				}}>
+					<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })} />
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
@@ -284,7 +284,7 @@ export default function Summary() {
 									width: '100%', minHeight: '32px', padding: '5px 8px', borderRadius: '6px',
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
-									color: currentThemeColors.input.text, fontSize: '13px',
+									color: currentThemeColors.input.text, fontSize: '13px', fontFamily: 'inherit',
 									resize: 'vertical', boxSizing: 'border-box',
 									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
 								}}
@@ -304,7 +304,7 @@ export default function Summary() {
 							)}
 						</div>
 					</div>
-			</div>
+				</div>
 			)}
 
 			{/* Summary */}
@@ -321,99 +321,99 @@ export default function Summary() {
 					transition: 'box-shadow 0.15s ease',
 				}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}
-				<div onBlur={handleContainerBlur}>
-					{/* Title row */}
-					<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '20px 24px 0 24px' }}>
-						<div style={{ flex: 1, marginRight: '12px' }}>
-							<h1
-								ref={titleRef}
-								contentEditable={isEditing}
-								suppressContentEditableWarning
-								onDoubleClick={!isEditing ? enterEditMode : undefined}
-								onKeyDown={(e) => { if (e.key === 'Escape') { cancelClickedRef.current = true; doCancel() } }}
-								style={{ fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
-							>
-								{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
-							</h1>
-							{formattedDate && (
-								<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
-									{formattedDate}
-								</p>
-							)}
-						</div>
-						{/* Edit / Save+Cancel */}
-						<div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-							{isEditing ? (
-								<>
+					<div onBlur={handleContainerBlur}>
+						{/* Title row */}
+						<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '20px 24px 0 24px' }}>
+							<div style={{ flex: 1, marginRight: '12px' }}>
+								<h1
+									ref={titleRef}
+									contentEditable={isEditing}
+									suppressContentEditableWarning
+									onDoubleClick={!isEditing ? enterEditMode : undefined}
+									onKeyDown={(e) => { if (e.key === 'Escape') { cancelClickedRef.current = true; doCancel() } }}
+									style={{ fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
+								>
+									{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
+								</h1>
+								{formattedDate && (
+									<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
+										{formattedDate}
+									</p>
+								)}
+							</div>
+							{/* Edit / Save+Cancel */}
+							<div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+								{isEditing ? (
+									<>
+										<button
+											onMouseDown={(e) => e.preventDefault()}
+											onClick={doSave}
+											style={{
+												padding: '6px 12px', border: 'none', borderRadius: '6px',
+												backgroundColor: currentThemeColors.button.primary,
+												color: currentThemeColors.button.primaryText,
+												fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+											}}>
+											Save
+										</button>
+										<button
+											onMouseDown={() => { cancelClickedRef.current = true }}
+											onClick={doCancel}
+											style={{
+												padding: '6px 12px',
+												border: `1px solid ${currentThemeColors.border}`,
+												borderRadius: '6px',
+												backgroundColor: currentThemeColors.background,
+												color: currentThemeColors.text,
+												fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+											}}>
+											Cancel
+										</button>
+									</>
+								) : (
 									<button
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={doSave}
-										style={{
-											padding: '6px 12px', border: 'none', borderRadius: '6px',
-											backgroundColor: currentThemeColors.button.primary,
-											color: currentThemeColors.button.primaryText,
-											fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
-										}}>
-										Save
-									</button>
-									<button
-										onMouseDown={() => { cancelClickedRef.current = true }}
-										onClick={doCancel}
+										onClick={() => enterEditMode()}
 										style={{
 											padding: '6px 12px',
 											border: `1px solid ${currentThemeColors.border}`,
 											borderRadius: '6px',
-											backgroundColor: currentThemeColors.background,
-											color: currentThemeColors.text,
+											backgroundColor: currentThemeColors.backgroundSecondary,
+											color: currentThemeColors.secondaryText,
 											fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
 										}}>
-										Cancel
+										Edit
 									</button>
-								</>
-							) : (
-								<button
-									onClick={() => enterEditMode()}
-									style={{
-										padding: '6px 12px',
-										border: `1px solid ${currentThemeColors.border}`,
-										borderRadius: '6px',
-										backgroundColor: currentThemeColors.backgroundSecondary,
-										color: currentThemeColors.secondaryText,
-										fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
-									}}>
-									Edit
-								</button>
-							)}
+								)}
+							</div>
 						</div>
-					</div>
 
-					{/*
+						{/*
 					  * The actual editable content.
 					  * innerHTML is controlled via ref (not React), so React's reconciliation
 					  * never overwrites the user's edits. contentEditable is toggled on double-click.
 					  */}
-					<div
-						ref={editorRef}
-						contentEditable={isEditing}
-						suppressContentEditableWarning
-						onDoubleClick={!isEditing ? (e) => enterEditMode(e) : undefined}
-						onKeyDown={(e) => {
-							if (e.key === 'Escape') {
-								cancelClickedRef.current = true
-								doCancel()
-							}
-						}}
-						style={{
-							padding: '20px 24px',
-							lineHeight: '1.7',
-							fontSize: '15px',
-							outline: 'none',
-							cursor: isEditing ? 'text' : 'default',
-							minHeight: '100px',
-						}}
-						className="markdown-content"
-					/>
-				</div>
+						<div
+							ref={editorRef}
+							contentEditable={isEditing}
+							suppressContentEditableWarning
+							onDoubleClick={!isEditing ? (e) => enterEditMode(e) : undefined}
+							onKeyDown={(e) => {
+								if (e.key === 'Escape') {
+									cancelClickedRef.current = true
+									doCancel()
+								}
+							}}
+							style={{
+								padding: '20px 24px',
+								lineHeight: '1.7',
+								fontSize: '15px',
+								outline: 'none',
+								cursor: isEditing ? 'text' : 'default',
+								minHeight: '100px',
+							}}
+							className="markdown-content"
+						/>
+					</div>
 				</div>
 			) : showProcessingMessage ? (
 				<p>⏳ Processing summary, please wait...</p>
