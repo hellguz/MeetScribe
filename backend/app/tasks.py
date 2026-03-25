@@ -11,7 +11,7 @@ import re
 
 from faster_whisper import WhisperModel
 from groq import Groq
-import openai
+import anthropic
 from sqlmodel import Session, select, func, create_engine
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
@@ -27,8 +27,7 @@ logging.basicConfig(
 
 DetectorFactory.seed = 0
 
-SUMMARY_MODEL = "gpt-5.4"
-SUMMARY_REASONING = {"effort": "low"}
+SUMMARY_MODEL = "claude-sonnet-4-6"
 
 # Module-level executor reference — set by main.py at startup via set_executor().
 # Needed so cleanup_stuck_meetings() can re-queue tasks without a circular import.
@@ -45,6 +44,7 @@ _db_engine_instance = None
 _groq_client = (
     Groq(api_key=settings.groq_api_key) if settings.recognition_in_cloud else None
 )
+_anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
 def get_db_engine():
@@ -147,14 +147,14 @@ Analyze the following meeting summary and the full transcript. Your task is to g
 
 Based on the content, generate the title now.
 """
-        response = openai.responses.create(
+        response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
-            input=f"""Create a concise meeting title efficiently. Follow instructions precisely with minimal reasoning.
+            max_tokens=256,
+            messages=[{"role": "user", "content": f"""Create a concise meeting title efficiently. Follow instructions precisely.
 
-{title_prompt}""",
-            reasoning=SUMMARY_REASONING,
+{title_prompt}"""}],
         )
-        generated_title = response.output_text.strip().strip('"')
+        generated_title = response.content[0].text.strip().strip('"')
         LOGGER.info(f"Generated meeting title: '{generated_title}'")
         return generated_title
     except Exception as e:
@@ -209,7 +209,11 @@ def _summarise_essence(full_transcript: str, target_language: str, context_secti
 
 ### [Section name]
 
-1. **[Item]:** One extremely short phrase/sentence if needed (use numbered list for ranked/sequential items)
+A paragraph of text if needed to explain the theme, but keep it very brief. No filler.
+
+### [Section name]
+
+1. **[Item]:** One extremely short phrase/sentence if needed
 2. **[Item]:** One extremely short phrase/sentence if needed
 
 ### [Section name]
@@ -228,7 +232,7 @@ Very brief paragraphs of text only if it adds critical info beyond the bullet po
 - One phrase/sentence per item, no sub-bullets
 - Blockquote for exec summary only — no other prose
 - `###` headers only
-- Use `## Topic 1: [Topic name]` headers to break into major sections if absolutely sure (i.e. multiple unrelated projects), but avoid if possible
+- Use `## Topic 1: [Topic name]` headers to break into major sections if absolutely sure (i.e. multiple unrelated projects), but avoid if possible. If needed, add a quoteblock under the header to explain the section in 1-2 sentences.
 - No preamble, no trailing note, no "Here is the summary"
 - Entire output in **{target_language}**
 
@@ -236,12 +240,12 @@ TRANSCRIPT:
 ---
 {full_transcript}"""
 
-    response = openai.responses.create(
+    response = _anthropic_client.messages.create(
         model=SUMMARY_MODEL,
-        input=prompt,
-        reasoning=SUMMARY_REASONING,
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
     )
-    return response.output_text.strip()
+    return response.content[0].text.strip()
 
 
 def summarise_transcript_in_worker(
@@ -253,9 +257,6 @@ def summarise_transcript_in_worker(
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
-    if not openai.api_key:
-        openai.api_key = settings.openai_api_key
-
     try:
         transcript_snippet = full_transcript[:2000]
         detected_language = detect_language_local(transcript_snippet)
@@ -336,12 +337,12 @@ TRANSCRIPT:
 ---
 {full_transcript}"""
 
-        response = openai.responses.create(
+        response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
-            input=full_prompt,
-            reasoning=SUMMARY_REASONING,
+            max_tokens=8096,
+            messages=[{"role": "user", "content": full_prompt}],
         )
-        return response.output_text.strip()
+        return response.content[0].text.strip()
     except Exception as e:
         LOGGER.error(f"Summary generation failed: {e}", exc_info=True)
         return "Error: Summary generation failed."
@@ -618,19 +619,19 @@ def translate_text(text: str, target_language: str, context: str | None) -> str:
             f"Use this context for consistent terminology: <context>{context}</context>"
         )
     try:
-        response = openai.responses.create(
+        response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
-            input=f"""Translate the following text into {target_language}.
+            max_tokens=8096,
+            messages=[{"role": "user", "content": f"""Translate the following text into {target_language}.
 Maintain original formatting (like markdown headers and lists).
 {context_prompt}
 Only return the translated text.
 
 <text_to_translate>
 {text}
-</text_to_translate>""",
-            reasoning=SUMMARY_REASONING,
+</text_to_translate>"""}],
         )
-        return response.output_text.strip()
+        return response.content[0].text.strip()
     except Exception as e:
         LOGGER.error(f"Text translation failed: {e}", exc_info=True)
         return f"Error: Translation to {target_language} failed."

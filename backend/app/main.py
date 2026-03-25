@@ -9,7 +9,6 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import openai
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -45,8 +44,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-
-openai.api_key = settings.openai_api_key
 
 # Ensure database directory exists before creating engine
 db_path = Path(settings.db_path)

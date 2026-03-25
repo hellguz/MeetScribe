@@ -10,9 +10,8 @@ python-multipart==0.0.9
 faster-whisper==1.1.1
 requests
 
-# OpenAI & deps
-openai>=1.58.0               # Latest version with responses API and GPT-5 support
-httpx                        # Latest httpx for new OpenAI features
+# Anthropic
+anthropic>=0.40.0
 
 # Background scheduling
 apscheduler~=3.10
