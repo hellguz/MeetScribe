@@ -151,6 +151,7 @@ Based on the content, generate the title now.
         response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
             max_tokens=256,
+            output_config={"effort": "low"},
             messages=[{"role": "user", "content": f"""Create a concise meeting title efficiently. Follow instructions precisely.
 
 {title_prompt}"""}],
@@ -241,6 +242,7 @@ Critical context from the user — use as source of truth for names, projects, a
         response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
             max_tokens=8096,
+            output_config={"effort": "low"},
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text.strip()
@@ -525,6 +527,7 @@ def translate_text(text: str, target_language: str, context: str | None) -> str:
         response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
             max_tokens=8096,
+            output_config={"effort": "low"},
             messages=[{"role": "user", "content": f"""Translate the following text into {target_language}.
 Maintain original formatting (like markdown headers and lists).
 {context_prompt}
