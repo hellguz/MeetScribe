@@ -7,7 +7,7 @@
 
 ## Overview
 
-Add a pause/resume button to the live recording UI. When paused, no new audio chunks are captured or uploaded, but live transcript polling continues uninterrupted. A heartbeat keeps the backend meeting alive during the pause so the janitor does not auto-finalize it. If the tab is closed or connection drops while paused, the janitor naturally finalizes the meeting after 5 minutes of inactivity — producing a summary from whatever was recorded.
+Add a pause/resume button to the live recording UI. When paused, no new audio chunks are captured or uploaded, but live transcript polling continues uninterrupted. A heartbeat keeps the backend meeting alive during the pause so the janitor does not auto-finalize it. If the tab is closed or connection drops while paused, the janitor naturally finalizes the meeting within ~20 minutes (5-minute inactivity threshold + up to 15-minute scheduler cadence) — producing a summary from whatever was recorded.
 
 ---
 
@@ -17,7 +17,7 @@ Add a pause/resume button to the live recording UI. When paused, no new audio ch
 - Timer freezes while paused and resumes accurately (does not count paused time).
 - Live transcript polling continues at normal cadence (3s) while paused.
 - A 2-hour pause does not trigger backend auto-finalization.
-- If the page closes or connection drops (paused or not), the meeting is recovered and summarized within ~5 minutes via the existing janitor.
+- If the page closes or connection drops (paused or not), the meeting is recovered and summarized within ~20 minutes via the existing janitor (5-min inactivity threshold + up to 15-min scheduler cadence).
 - No changes to the backend data model or database migrations.
 
 ---
@@ -44,7 +44,7 @@ This resets the 5-minute inactivity clock, preventing the janitor from auto-fina
 - `pausedDurationRef: MutableRefObject<number>` — accumulated milliseconds spent paused, used for accurate timer
 - `pausedAtRef: MutableRefObject<number | null>` — timestamp when current pause started
 - `chunkTimerRef: MutableRefObject<NodeJS.Timeout | null>` — holds the active 30s chunk-rotation timeout so it can be cancelled on pause
-- `heartbeatIntervalRef: MutableRefObject<NodeJS.Timeout | null>` — 2-minute heartbeat interval, active only while paused
+- `heartbeatIntervalRef: MutableRefObject<NodeJS.Timeout | null>` — 90-second heartbeat interval, active only while paused (90s × 3 = 4.5 min < 5-min threshold, giving a genuine 1-missed-heartbeat buffer)
 
 **`createAndStartRecorder` changes:**
 - After `recorder.start()`, store the `setTimeout(..., CHUNK_DURATION_MS)` handle in `chunkTimerRef` instead of leaving it anonymous.
@@ -55,7 +55,7 @@ This resets the 5-minute inactivity clock, preventing the janitor from auto-fina
 3. Record `pausedAtRef.current = Date.now()`
 4. `clearInterval(timerRef.current)` — freeze the displayed timer
 5. `clearTimeout(chunkTimerRef.current)` — cancel the pending 30s chunk rotation
-6. Start `heartbeatIntervalRef`: every 2 minutes, `POST /api/meetings/{id}/heartbeat`
+6. Start `heartbeatIntervalRef`: every 90 seconds, `POST /api/meetings/{id}/heartbeat`
 
 **`resumeRecording()`:**
 1. `mediaRef.current.resume()` — audio capture resumes on the same recorder
@@ -63,7 +63,7 @@ This resets the 5-minute inactivity clock, preventing the janitor from auto-fina
 3. Clear `pausedAtRef.current`
 4. Set `isPaused = false` / `isPausedRef.current = false`
 5. `clearInterval(heartbeatIntervalRef.current)` — stop heartbeat
-6. Restart `timerRef` — timer now accounts for paused duration via `startTimeRef` offset
+6. Restart `timerRef` — timer now accounts for paused duration via `startTimeRef` offset. **Do not reset `startTimeRef`** — it must remain the original recording-start timestamp. The formula works precisely because `pausedDurationRef` is subtracted from the fixed `startTimeRef`.
 7. Restart a fresh `chunkTimerRef` timeout for `CHUNK_DURATION_MS` — when it fires, `recorder.stop()` triggers the normal `onstop` → `createAndStartRecorder` cycle
 
 **Timer accuracy:**
@@ -105,9 +105,9 @@ User clicks Pause
   → isPaused = true
   → timerRef cleared                 # timer freezes
   → chunkTimerRef cleared            # no chunk rotation
-  → heartbeat starts (2 min interval)
+  → heartbeat starts (90s interval)
     → POST /heartbeat                 # updates last_activity
-    → repeat every 2 min
+    → repeat every 90s
 
 User clicks Resume
   → mediaRef.current.resume()        # audio resumes on same recorder
@@ -120,8 +120,8 @@ User clicks Resume
 Tab closed while paused
   → heartbeat stops
   → no more chunk uploads
-  → backend janitor fires after 5 min
-  → meeting finalized, summary generated
+  → backend janitor finalizes within ~20 min
+  → summary generated
 ```
 
 ---
@@ -130,11 +130,11 @@ Tab closed while paused
 
 | Scenario | Handling |
 |---|---|
-| User pauses then immediately stops | `stopRecording` clears heartbeat and chunk timer, uploads final empty blob as normal |
+| User pauses then immediately stops | `stopRecording` must call `.stop()` if `state === 'paused'` (not just `'recording'`) — call `.stop()` whenever `state !== 'inactive'`. Heartbeat and chunk timer cleared. Final empty blob uploaded as normal. |
 | MediaRecorder already stopped when pause called | Guard: only call `.pause()` if `mediaRef.current.state === 'recording'` |
-| Heartbeat request fails (network blip) | Silently ignored — a single missed heartbeat within a 2-min window is fine; the 5-min janitor threshold gives 2+ misses of buffer |
+| Heartbeat request fails (network blip) | Silently ignored — with 90s interval and 5-min threshold, 1 missed heartbeat is safe (next fires at 3 min, still under threshold) |
 | Resume called when not paused | Guard: only resume if `isPausedRef.current === true` |
-| Page reload while paused | State lost; heartbeat stops; janitor finalizes in ~5 min |
+| Page reload while paused | State lost; heartbeat stops; janitor finalizes within ~20 min |
 | System audio source (screen share) | No changes needed — `mediaRef.current` is the same regardless of source |
 
 ---
