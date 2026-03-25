@@ -12,6 +12,16 @@ body {
 
 /* Additional global styles can go here */
 
+/* ── Summary title ───────────────────────────────────────────────────────── */
+
+.summary-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 1.4em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
 /* ── Markdown content rendering ─────────────────────────────────────────── */
 
 .markdown-content h1,

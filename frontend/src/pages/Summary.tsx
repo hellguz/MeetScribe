@@ -331,7 +331,7 @@ export default function Summary() {
 									suppressContentEditableWarning
 									onDoubleClick={!isEditing ? enterEditMode : undefined}
 									onKeyDown={(e) => { if (e.key === 'Escape') { cancelClickedRef.current = true; doCancel() } }}
-									style={{ fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
+									className="summary-title" style={{ margin: 0, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
 								>
 									{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
 								</h1>
