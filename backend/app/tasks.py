@@ -18,6 +18,7 @@ from langdetect.lang_detect_exception import LangDetectException
 
 from .config import settings
 from .models import Meeting, MeetingChunk
+from . import prompts as P
 
 LOGGER = logging.getLogger("meetscribe_tasks")
 logging.basicConfig(
@@ -185,81 +186,19 @@ def detect_language_local(text_snippet: str) -> str:
         return "English"
 
 
-def _summarise_essence(full_transcript: str, target_language: str, context_section: str) -> str:
-    """Essence mode: ruthless selection."""
-    prompt = f"""You are a ruthless meeting editor. Your job is NOT to capture everything — it is to pick the most important facts from this transcript and discard everything else. Break all facts into clear sections. Think about overall structure and clarity first. It should be easy to read - organize info in engaging way. Output in **{target_language}**.
-{context_section}
-
-## Output format
-
-```
-
-## [Meeting Short Title — one line]
-#### [Context / org / project / meeting type, if useful]
-
-> [2–3 sentences only: who met, the key result, what happens next. No filler. This is the TL;DR for a non-attendee. Start with the most critical info, not the chronological order.]
-
-### [Participants - optional, only if participants introduced themselves]
-- **[Name]:** [Role/Title] 
-
-### [Section name]
-
-- **[Extremely short point formulation]:** One extremely short phrase/sentence if needed — include names, numbers, dates.
-- **[Extremely short point formulation]:** One extremely short phrase/sentence if needed — include names, numbers, dates.
-
-### [Section name]
-
-A paragraph of text if needed to explain the theme, but keep it very brief. No filler.
-
-### [Section name]
-
-1. **[Item]:** One extremely short phrase/sentence if needed
-2. **[Item]:** One extremely short phrase/sentence if needed
-
-### [Section name]
-
-Very brief paragraphs of text only if it adds critical info beyond the bullet points. No filler.
-
-### [Action items]
- 
-- **[Owner]** — What they must do — *[Deadline]*
-- **[Owner]** — What they must do
-```
-
-## Hard limits — no exceptions
-
-- **max one screen of text** — combine or drop if you'd exceed this
-- One phrase/sentence per item, no sub-bullets
-- Blockquote for exec summary only — no other prose
-- `###` headers only
-- Use `## Topic 1: [Topic name]` headers to break into major sections if absolutely sure (i.e. multiple unrelated projects), but avoid if possible. If needed, add a quoteblock under the header to explain the section in 1-2 sentences.
-- No preamble, no trailing note, no "Here is the summary"
-- Entire output in **{target_language}**
-
-TRANSCRIPT:
----
-{full_transcript}"""
-
-    response = _anthropic_client.messages.create(
-        model=SUMMARY_MODEL,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
-
-
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
     summary_language_mode: str | None,
     summary_custom_language: str | None,
     context: str | None,
+    meeting_date: str | None = None,
+    duration_seconds: int | None = None,
 ) -> str:
     if not full_transcript or len(full_transcript.strip().split()) < 25:
         return "Recording is too brief to generate a meaningful summary."
     try:
-        transcript_snippet = full_transcript[:2000]
-        detected_language = detect_language_local(transcript_snippet)
+        detected_language = detect_language_local(full_transcript[:2000])
 
         if summary_language_mode == "custom" and summary_custom_language:
             target_language = summary_custom_language
@@ -272,75 +211,38 @@ def summarise_transcript_in_worker(
         if context and context.strip():
             context_section = f"""
 <user_provided_context>
-This is critical context provided by the user. You MUST use it as a source of truth for the spelling of names, projects, and specific technical terms. Refer to this context to ensure accuracy. Do not contradict it.
+Critical context from the user — use as source of truth for names, projects, and technical terms.
 ---
 {context}
 ---
 </user_provided_context>
 """
 
-        if summary_length == "essence":
-            return _summarise_essence(full_transcript, target_language, context_section)
+        # Map legacy / unknown modes to narrative
+        mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
 
-        LENGTH_PROMPTS = {
-            "quar_page": "The final summary must be **exactly** around 125 words. This word count is a **strict, non-negotiable requirement**.",
-            "one_page": "The final summary must be **exactly** around 500 words. This word count is a **strict, non-negotiable requirement**.",
-            "two_pages": "The final summary must be **exactly** around 1000 words. This word count is a **strict, non-negotiable requirement**.",
-            "auto": "Use your expert judgment to determine the appropriate length for the summary based on the transcript's content. The goal is to be as helpful as possible to a non-attendee.",
+        date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
+        duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
+
+        template_map = {
+            "briefing": P.BRIEFING,
+            "essence": P.ESSENCE,
+            "narrative": P.NARRATIVE,
+            "minutes": P.MINUTES,
         }
-        length_instruction = LENGTH_PROMPTS.get(summary_length, LENGTH_PROMPTS["auto"])
-
-        system_prompt = f"""
-You are 'Scribe', an expert AI analyst. Work efficiently with minimal reasoning - follow instructions precisely to create an insightful, well-structured summary.
-{context_section}
-**Core Philosophy:**
-- **Balance:** Find the perfect balance between detail and conciseness. The summary should be a true distillation, not a verbose reconstruction, but it must contain all critical information for a non-attendee.
-- **Readability:** The output must be easy to read. Use well-structured paragraphs to explain concepts and bullet points for lists (like feedback, action items, or key takeaways). This creates a varied and engaging format.
-
-<thinking_steps>
-**1. Internal Analysis (Do Not Output This Section)**
-- **Confirm Language:** The user wants the summary in **{target_language}**. Your entire output MUST be in **{target_language}**. This is the most important rule.
-- **Identify Key Themes:** Deconstruct the transcript into its main thematic parts or topics of discussion.
-- **Assess Content Type for Each Theme:** For each theme, determine if it's primarily a presentation of an idea, a collaborative discussion, a critique/feedback session, or a monologue. This will inform how you structure the summary for that section.
-</thinking_steps>
-
-<output_rules>
-**2. Final Output Generation**
-- Your response MUST BE ONLY the Markdown summary. DO NOT include a title or date at the top.
-- **WORD COUNT:** {length_instruction} You must strictly adhere to this constraint. Do not deviate.
-- **HEADINGS:** Use `####` for the initial overview and `###` for subsequent thematic sections. Headings should be descriptive and concise. **DO NOT** start headings with prefixes like "Theme:", "Topic:", or "Summary:".
----
-#### Overview
-Write an insightful overview paragraph (3-5 sentences). It should set the scene, describe the main purpose of the conversation, and touch upon the key conclusions or outcomes. Start the paragraph directly, without any prefix.
-
-*(...Generate thematic sections below this point, each starting with a `###` heading...)*
-
----
-#### Key Decisions & Action Items
-- This section is mandatory unless there were absolutely no decisions or actions.
-- List all firm decisions made and all actionable next steps. This section should use bullet points.
-- **Format:** `- **[Topic/Owner]:** [Detailed description of the action or decision, including necessary context].`
-</output_rules>
-
-<thematic_body_instructions>
-After the 'Overview' section, create a `###` heading for each major theme you identified.
-- Under each heading, write a clear paragraph summarizing the main points of discussion for that theme. Explain the core arguments, proposals, and conclusions. **Start the paragraph directly, without any prefix.**
-- **Add Feedback (ONLY if critique is present):** If a theme consists of clear feedback or a critique session, add a sub-section titled `**Discussion:**`. In this sub-section, use a detailed bulleted list to present every specific piece of feedback or discussion centering around the current section. **This is crucial for design reviews.**
-- **For Simple Topics or Lists:** If a theme is just a list of ideas or a very simple point, feel free to use bullet points directly under the heading instead of a full paragraph to keep the summary concise and scannable.
-</thematic_body_instructions>
-"""
-        full_prompt = f"""{system_prompt}
-
-Please summarize the following transcript. CRITICALLY IMPORTANT: Strictly follow all instructions, especially the language ({target_language}) and the word count rule: {length_instruction}
-
-TRANSCRIPT:
----
-{full_transcript}"""
+        prompt = template_map[mode].format(
+            target_language=target_language,
+            context_section=context_section,
+            full_transcript=full_transcript,
+            voice_caveat=P.VOICE_CAVEAT,
+            date=date_str,
+            duration=duration_str,
+        )
 
         response = _anthropic_client.messages.create(
             model=SUMMARY_MODEL,
             max_tokens=8096,
-            messages=[{"role": "user", "content": full_prompt}],
+            messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text.strip()
     except Exception as e:
@@ -376,6 +278,8 @@ def finalize_meeting_processing(db: Session, mtg: Meeting):
             mtg.summary_language_mode,
             mtg.summary_custom_language,
             mtg.context,
+            meeting_date=mtg.started_at.strftime("%Y-%m-%d") if mtg.started_at else None,
+            duration_seconds=num_chunks * 30,
         )
         mtg.summary_markdown = summary_md
 

@@ -21,7 +21,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
     const [meetingTimezone, setMeetingTimezone] = useState<string | null>(null);
     const [context, setContext] = useState<string | null>(null);
     const [loadedFromCache, setLoadedFromCache] = useState(false);
-    const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('auto');
+    const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('narrative');
     const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([]);
     const [isRegenerating, setIsRegenerating] = useState(false);
 
@@ -59,7 +59,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
             setMeetingTimezone(data.timezone || null);
 
             const lengthValue = data.summary_length || 'auto';
-            if (['auto', 'quar_page', 'essence', 'one_page', 'two_pages'].includes(lengthValue)) {
+            if (['briefing', 'essence', 'narrative', 'minutes'].includes(lengthValue)) {
                 setCurrentMeetingLength(lengthValue as SummaryLength);
             }
 

@@ -10,11 +10,10 @@ interface SummaryLengthSelectorProps {
 }
 
 const options: { label: string; value: SummaryLength }[] = [
-	{ label: 'Auto', value: 'auto' },
-	{ label: '¼ Page', value: 'quar_page' },
-	{ label: 'Essence', value: 'essence' },
-	{ label: '1 Page', value: 'one_page' },
-	{ label: '2 Pages', value: 'two_pages' },
+	{ label: '⚡ Briefing', value: 'briefing' },
+	{ label: '✦ Essence', value: 'essence' },
+	{ label: '📄 Narrative', value: 'narrative' },
+	{ label: '📋 Minutes', value: 'minutes' },
 ]
 
 const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, disabled = false, onSelect }) => {
