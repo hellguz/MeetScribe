@@ -28,7 +28,7 @@ class Meeting(SQLModel, table=True):
     word_count: int | None = None
     duration_seconds: int | None = None
     user_agent: str | None = None
-    summary_length: str = Field(default="auto")
+    summary_length: str = Field(default="narrative")
     summary_language_mode: str = Field(default="auto")
     summary_custom_language: str | None = None
     context: str | None = None

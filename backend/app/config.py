@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(BASE_DIR.parent / ".env"), extra="ignore")
 
     secret_key: str
-    openai_api_key: str
+    anthropic_api_key: str
     groq_api_key: str
 
     recognition_in_cloud: bool

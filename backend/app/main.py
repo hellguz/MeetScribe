@@ -9,7 +9,6 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import openai
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -45,8 +44,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-
-openai.api_key = settings.openai_api_key
 
 # Ensure database directory exists before creating engine
 db_path = Path(settings.db_path)
@@ -104,11 +101,13 @@ app.add_middleware(
 INACTIVITY_TIMEOUT_SECONDS = 120
 
 
+VALID_SUMMARY_MODES = {"briefing", "essence", "narrative", "minutes"}
+
 def is_valid_summary_length(length_str: str | None) -> bool:
     """Validates the summary_length parameter."""
     if length_str is None:
         return True
-    return length_str in ["auto", "quar_page", "half_page", "one_page", "two_pages"]
+    return length_str in VALID_SUMMARY_MODES
 
 
 def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
@@ -145,7 +144,7 @@ def create_meeting(body: MeetingCreate, request: Request):
         
         # Set defaults if not provided by client
         if body.summary_length is None:
-            mtg_data["summary_length"] = "auto"
+            mtg_data["summary_length"] = "narrative"
         if body.summary_language_mode is None:
             mtg_data["summary_language_mode"] = "auto"
 
@@ -422,7 +421,7 @@ def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
         if payload.summary_length and is_valid_summary_length(payload.summary_length):
             mtg.summary_length = payload.summary_length
         elif not mtg.summary_length:
-            mtg.summary_length = "auto"
+            mtg.summary_length = "narrative"
         
         # Update language settings if provided
         if payload.summary_language_mode:
@@ -672,12 +671,12 @@ def get_dashboard_stats():
 
         # --- Summary Length Distribution ---
         LENGTH_LABELS = {
-            "auto":      "Auto",
-            "medium":    "Auto",
-            "quar_page": "Quarter Page",
-            "half_page": "Half Page",
-            "one_page":  "One Page",
-            "two_pages": "Two Pages",
+            "briefing":  "Briefing",
+            "essence":   "Essence",
+            "narrative": "Narrative",
+            "minutes":   "Minutes",
+            # legacy fallback
+            "auto":      "Narrative",
         }
         length_rows = db.exec(
             select(Meeting.summary_length, func.count(Meeting.id))

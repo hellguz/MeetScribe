@@ -190,9 +190,9 @@ export default function Record() {
 	}
 
 	return (
-		<div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+		<div style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<ThemeToggle />
-			<h1 style={{ textAlign: 'center', marginBottom: '16px', color: currentThemeColors.text, fontFamily: 'Jost, serif' }}>🎙️ MeetScribe</h1>
+			<h1 style={{ textAlign: 'center', marginBottom: '8px', color: currentThemeColors.text, fontFamily: 'Jost, serif' }}>🎙️ MeetScribe</h1>
 
 			{!isUiLocked && (
 				<>
@@ -209,7 +209,7 @@ export default function Record() {
 						theme={currentThemeColors}
 					/>
 					{audioSource === 'file' && (
-						<div style={{ marginBottom: '24px' }}>
+						<div style={{ marginBottom: '12px' }}>
 							<FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
 						</div>
 					)}
@@ -217,7 +217,7 @@ export default function Record() {
 			)}
 
 			{isRecording && (
-				<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
+				<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '10px' }}>
 					<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', fontFamily: 'Jost, serif' }}>
 						<SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={false} />
 						<LanguageSelector onSelectionChange={handleLanguageChange} disabled={false} />
@@ -228,15 +228,15 @@ export default function Record() {
 						placeholder="Live context: Add names, projects, or terms for the AI..."
 						style={{
 							width: '100%',
-							padding: '10px 12px',
+							padding: '5px 8px',
 							borderRadius: '8px',
 							border: `1px solid ${currentThemeColors.input.border}`,
 							backgroundColor: currentThemeColors.input.background,
 							color: currentThemeColors.input.text,
 							fontFamily: 'inherit',
-							fontSize: '14px',
+							fontSize: '13px',
 							resize: 'vertical',
-							minHeight: '40px',
+							minHeight: '32px',
 							boxSizing: 'border-box',
 						}}
 						rows={2}

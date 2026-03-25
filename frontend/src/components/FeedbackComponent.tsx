@@ -83,22 +83,18 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 	return (
 		<div
 			style={{
-				padding: '16px',
-				margin: '24px 0',
+				padding: '10px 12px',
+				margin: '12px 0',
 				backgroundColor: 'transparent',
 				border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
 			}}>
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '24px' }}>
-				<p style={{ margin: '0 0 12px 0', fontWeight: '500', fontSize: '15px', color: currentThemeColors.text }}>
-					Was this summary helpful?
-				</p>
-				{showChipConfirmation && (
-					<div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px' }}>Thanks! ✨</div>
-				)}
+			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '20px' }}>
+				<p style={{ margin: '0 0 12px 0', fontWeight: '500', fontSize: '13px', color: currentThemeColors.text }}>Was this summary helpful?</p>
+				{showChipConfirmation && <div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px' }}>Thanks! ✨</div>}
 			</div>
 
-			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
 				{feedbackOptions.map((opt) => {
 					const colorSet = chipColors[opt.color]
 					const isSelected = submittedTypes.includes(opt.type)
@@ -107,13 +103,13 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 							key={opt.type}
 							onClick={() => handleTypeToggle(opt.type)}
 							style={{
-								padding: '6px 12px',
+								padding: '4px 10px',
 								border: `1.5px solid ${colorSet.border}`,
 								borderRadius: '16px',
 								backgroundColor: isSelected ? colorSet.selectedBg : 'transparent',
 								color: isSelected ? currentThemeColors.text : colorSet.border,
 								fontWeight: '500',
-								fontSize: '14px',
+								fontSize: '13px',
 								cursor: 'pointer',
 								transition: 'background-color 0.2s ease, color 0.2s ease',
 							}}
@@ -129,7 +125,7 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 				})}
 			</div>
 
-            <form onSubmit={handleSuggestionSubmit} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '16px' }}>
+			<form onSubmit={handleSuggestionSubmit} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
 				<input
 					type="text"
 					value={suggestion}
@@ -137,40 +133,38 @@ const FeedbackComponent: React.FC<FeedbackComponentProps> = ({ submittedTypes, o
 					placeholder="Have a feature suggestion or other comment?"
 					style={{
 						flexGrow: 1,
-						padding: '8px 12px',
+						padding: '5px 8px',
 						border: `1px solid ${currentThemeColors.input.border}`,
 						borderRadius: '8px',
 						backgroundColor: currentThemeColors.input.background,
 						color: currentThemeColors.text,
-						fontSize: '14px',
+						fontSize: '13px',
 					}}
 				/>
-                {isSuggestionSubmitted ? (
-                    <div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '14px', flexShrink: 0 }}>
-                        Thanks for your suggestion!
-                    </div>
-                ) : (
-                    suggestion.trim() && (
-                        <button
-                            type="submit"
-                            style={{
-                                flexShrink: 0,
-                                padding: '8px 16px',
-                                border: 'none',
-                                borderRadius: '8px',
-                                backgroundColor: currentThemeColors.button.primary,
-                                color: currentThemeColors.button.primaryText,
-                                fontSize: '14px',
-                                fontWeight: '500',
-                                cursor: isSubmittingSuggestion ? 'not-allowed' : 'pointer',
-                                transition: 'background-color 0.2s, opacity 0.2s',
-                                opacity: isSubmittingSuggestion ? 0.6 : 1,
-                            }}
-                            disabled={isSubmittingSuggestion}>
-                            {isSubmittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
-                        </button>
-                    )
-                )}
+				{isSuggestionSubmitted ? (
+					<div style={{ color: currentThemeColors.text, fontWeight: 500, fontSize: '13px', flexShrink: 0 }}>Thanks for your suggestion!</div>
+				) : (
+					suggestion.trim() && (
+						<button
+							type="submit"
+							style={{
+								flexShrink: 0,
+								padding: '5px 12px',
+								border: 'none',
+								borderRadius: '8px',
+								backgroundColor: currentThemeColors.button.primary,
+								color: currentThemeColors.button.primaryText,
+								fontSize: '13px',
+								fontWeight: '500',
+								cursor: isSubmittingSuggestion ? 'not-allowed' : 'pointer',
+								transition: 'background-color 0.2s, opacity 0.2s',
+								opacity: isSubmittingSuggestion ? 0.6 : 1,
+							}}
+							disabled={isSubmittingSuggestion}>
+							{isSubmittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
+						</button>
+					)
+				)}
 			</form>
 		</div>
 	)

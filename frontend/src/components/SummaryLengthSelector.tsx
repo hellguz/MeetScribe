@@ -10,11 +10,10 @@ interface SummaryLengthSelectorProps {
 }
 
 const options: { label: string; value: SummaryLength }[] = [
-	{ label: 'Auto', value: 'auto' },
-	{ label: '¼ Page', value: 'quar_page' },
-	{ label: '½ Page', value: 'half_page' },
-	{ label: '1 Page', value: 'one_page' },
-	{ label: '2 Pages', value: 'two_pages' },
+	{ label: 'Essence', value: 'essence' },
+	{ label: 'Briefing', value: 'briefing' },
+	{ label: 'Narrative', value: 'narrative' },
+	{ label: 'Minutes', value: 'minutes' },
 ]
 
 const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, disabled = false, onSelect }) => {
@@ -55,10 +54,10 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 					disabled={disabled}
 					style={{
 						width: '100%',
-						padding: '8px 10px',
-						borderRadius: '6px',
+						padding: '4px 8px',
+						borderRadius: '4px',
 						border: `1px solid ${currentThemeColors.border}`,
-						fontSize: '14px',
+						fontSize: '13px',
 						backgroundColor: currentThemeColors.body,
 						color: currentThemeColors.text,
 						opacity: disabled ? 0.6 : 1,
@@ -93,7 +92,7 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 								key={option.value}
 								onClick={() => handleSelect(option.value)}
 								style={{
-									padding: '10px 12px',
+									padding: '6px 10px',
 									cursor: 'pointer',
 									fontWeight: value === option.value ? 'bold' : 'normal',
 									fontFamily: 'inherit',
@@ -116,7 +115,7 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 				backgroundColor: currentThemeColors.body,
 				border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
-				padding: '4px',
+				padding: '3px',
 				width: 'fit-content',
 				opacity: disabled ? 0.6 : 1,
 				cursor: disabled ? 'not-allowed' : 'default',
@@ -130,16 +129,16 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 						onClick={() => handleSelect(option.value)}
 						disabled={disabled}
 						style={{
-							padding: '6px 14px',
+							padding: '3px 10px',
 							border: 'none',
-							borderRadius: '6px',
+							borderRadius: '4px',
 							backgroundColor: isActive ? currentThemeColors.backgroundSecondary : 'transparent',
 							color: currentThemeColors.text,
 							cursor: disabled ? 'not-allowed' : 'pointer',
 							fontWeight: isActive ? 'bold' : 'normal',
 							transition: 'all 0.2s ease',
-							fontSize: '14px',
-							height: '32px',
+							fontSize: '13px',
+							height: '24px',
 							boxSizing: 'border-box',
 							display: 'flex',
 							alignItems: 'center',

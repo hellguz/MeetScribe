@@ -94,10 +94,10 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 					disabled={disabled}
 					style={{
 						width: '100%',
-						padding: '8px 10px',
-						borderRadius: '6px',
+						padding: '4px 8px',
+						borderRadius: '4px',
 						border: `1px solid ${currentThemeColors.border}`,
-						fontSize: '14px',
+						fontSize: '13px',
 						backgroundColor: currentThemeColors.body,
 						color: currentThemeColors.text,
 						opacity: disabled ? 0.6 : 1,
@@ -131,14 +131,14 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 						}}>
 						<div
 							onClick={() => handleSelection('auto')}
-							style={{ padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit' }}
+							style={{ padding: '6px 10px', cursor: 'pointer', fontFamily: 'inherit' }}
 							onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}
 							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 							Auto-Detect
 						</div>
 						<div
 							onClick={() => handleSelection('english')}
-							style={{ padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit' }}
+							style={{ padding: '6px 10px', cursor: 'pointer', fontFamily: 'inherit' }}
 							onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}
 							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 							English
@@ -149,7 +149,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 								key={lang}
 								onClick={() => handleSelection('custom', lang)}
 								style={{
-									padding: '10px 12px',
+									padding: '6px 10px',
 									cursor: 'pointer',
 									fontWeight: languageState.mode === 'custom' && languageState.lastCustomLanguage === lang ? 'bold' : 'normal',
 									fontFamily: 'inherit',
@@ -175,7 +175,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 				backgroundColor: currentThemeColors.body,
 				border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
-				padding: '4px',
+				padding: '3px',
 				width: 'fit-content',
 				opacity: disabled ? 0.6 : 1,
 				cursor: disabled ? 'not-allowed' : 'default',
@@ -240,7 +240,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 								key={lang}
 								onClick={() => handleSelection('custom', lang)}
 								style={{
-									padding: '8px 16px',
+									padding: '5px 12px',
 									cursor: 'pointer',
 									whiteSpace: 'nowrap',
 									color: currentThemeColors.text,
@@ -262,13 +262,13 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({ disabled = false, o
 }
 
 const desktopButtonStyle: React.CSSProperties = {
-	padding: '6px 14px',
+	padding: '3px 10px',
 	border: 'none',
-	borderRadius: '6px',
+	borderRadius: '4px',
 	cursor: 'pointer',
 	transition: 'all 0.2s ease',
-	fontSize: '14px',
-	height: '32px',
+	fontSize: '13px',
+	height: '24px',
 	boxSizing: 'border-box',
 	display: 'flex',
 	alignItems: 'center',

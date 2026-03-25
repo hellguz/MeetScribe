@@ -1,13 +1,162 @@
 body {
-  font-family: 'Inter', sans-serif;
-  font-weight: 400;
-  font-feature-settings: 'ss01' on, 'ss02' on, 'ss03' on;
-  /* General reset and body styles */
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+	font-family: 'Inter', sans-serif;
+	font-weight: 380;
+	font-feature-settings:
+		'ss01' on,
+		'ss02' on,
+		'ss03' on;
+	/* General reset and body styles */
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 /* Additional global styles can go here */
+
+/* ── Summary title ───────────────────────────────────────────────────────── */
+
+.summary-title {
+	font-family: 'Lora', Georgia, serif;
+	font-size: 1.4em;
+	font-weight: 700;
+	line-height: 1.2;
+	letter-spacing: -0.01em;
+}
+
+/* ── Markdown content rendering ─────────────────────────────────────────── */
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+	font-family: inherit;
+	line-height: 1.25;
+}
+
+/* Top-level heading (## Title) */
+.markdown-content h2 {
+	font-size: 1.15em;
+	font-weight: 650;
+	letter-spacing: 0.01em;
+	margin: 1.8em 0 0.5em;
+	text-transform: uppercase;
+	opacity: 0.9;
+}
+
+/* Section headings (### Topic) */
+.markdown-content h3 {
+	font-size: 1.05em;
+	font-weight: 550;
+	letter-spacing: 0.01em;
+	margin: 1.8em 0 0.5em;
+	text-transform: uppercase;
+	opacity: 0.7;
+}
+
+/* Subtitle / context line (#### Project — Team) */
+.markdown-content h4 {
+	font-size: 0.88em;
+	font-weight: 500;
+	margin: 0.2em 0 0.8em;
+	opacity: 0.6;
+}
+
+.markdown-content p {
+	margin: 0 0 0.65em;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+	margin: 0.2em 0 0.65em;
+	padding-left: 1.4em;
+}
+
+.markdown-content li {
+	margin-bottom: 0.25em;
+}
+
+.markdown-content li p {
+	margin: 0;
+}
+
+/* Tables */
+.markdown-content table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 0.6em 0 0.9em;
+	font-size: 0.92em;
+}
+
+.markdown-content th,
+.markdown-content td {
+	border: 1px solid rgba(0, 0, 0, 0.1);
+	padding: 5px 10px;
+	text-align: left;
+	vertical-align: top;
+}
+
+.markdown-content th {
+	font-weight: 600;
+	background: rgba(0, 0, 0, 0.04);
+}
+
+/* Blockquote (TL;DR / Bottom line) */
+.markdown-content blockquote {
+	border-left: 3px solid #969ca8;
+	margin: 0.5em 0 0.8em;
+	padding: 8px 14px;
+	background: rgba(91, 116, 142, 0.06);
+	border-radius: 0 6px 6px 0;
+}
+
+.markdown-content blockquote p {
+	margin: 0;
+}
+
+.markdown-content hr {
+	border: none;
+	border-top: 1px solid rgba(0, 0, 0, 0.1);
+	margin: 12px 0;
+}
+
+/* Inline code */
+.markdown-content code {
+	font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+	font-size: 0.82em;
+	background: rgba(0, 0, 0, 0.06);
+	border-radius: 4px;
+	padding: 1px 5px;
+	letter-spacing: -0.01em;
+}
+
+/* Code blocks */
+.markdown-content pre {
+	background: rgba(0, 0, 0, 0.05);
+	border-radius: 8px;
+	padding: 12px 16px;
+	overflow-x: auto;
+	margin: 0.5em 0 0.9em;
+}
+
+.markdown-content pre code {
+	background: none;
+	padding: 0;
+	font-size: 0.85em;
+	border-radius: 0;
+}
+
+/* Bold — slightly tighter tracking for Inter */
+.markdown-content strong {
+	font-weight: 550;
+	letter-spacing: -0.01em;
+}
+
+/* Italic */
+.markdown-content em {
+	font-style: italic;
+	opacity: 0.85;
+}
