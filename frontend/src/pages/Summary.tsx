@@ -239,30 +239,6 @@ export default function Summary() {
 					← Back to Recordings
 				</button>
 
-				{hasSummary && !isProcessing && (
-					<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-						{copyStatus !== 'idle' && (
-							<span style={{ color: currentThemeColors.secondaryText, fontSize: '14px' }}>Copied! ✨</span>
-						)}
-						<div style={{
-							display: 'flex', borderRadius: '6px', overflow: 'hidden',
-							border: `1px solid ${currentThemeColors.border}`,
-							backgroundColor: currentThemeColors.backgroundSecondary,
-						}}>
-							<button onClick={() => handleCopy('text')} style={copyButtonStyle}
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								Copy Text
-							</button>
-							<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
-							<button onClick={() => handleCopy('markdown')} style={copyButtonStyle}
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								Copy Markdown
-							</button>
-						</div>
-					</div>
-				)}
 			</div>
 
 			{/* Settings card */}
@@ -371,18 +347,40 @@ export default function Summary() {
 										</button>
 									</>
 								) : (
-									<button
-										onClick={() => enterEditMode()}
-										style={{
-											padding: '6px 12px',
+									<>
+										{copyStatus !== 'idle' && (
+											<span style={{ color: currentThemeColors.secondaryText, fontSize: '12px' }}>Copied!</span>
+										)}
+										<div style={{
+											display: 'flex', borderRadius: '6px', overflow: 'hidden',
 											border: `1px solid ${currentThemeColors.border}`,
-											borderRadius: '6px',
 											backgroundColor: currentThemeColors.backgroundSecondary,
-											color: currentThemeColors.secondaryText,
-											fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
 										}}>
-										Edit
-									</button>
+											<button onClick={() => handleCopy('text')} style={copyButtonStyle}
+												onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+												onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+												Copy Text
+											</button>
+											<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+											<button onClick={() => handleCopy('markdown')} style={copyButtonStyle}
+												onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+												onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+												Copy MD
+											</button>
+										</div>
+										<button
+											onClick={() => enterEditMode()}
+											style={{
+												padding: '6px 12px',
+												border: `1px solid ${currentThemeColors.border}`,
+												borderRadius: '6px',
+												backgroundColor: currentThemeColors.backgroundSecondary,
+												color: currentThemeColors.secondaryText,
+												fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+											}}>
+											Edit
+										</button>
+									</>
 								)}
 							</div>
 						</div>
