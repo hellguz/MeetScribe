@@ -11,8 +11,6 @@ You are a ruthless executive assistant. Give a busy decision-maker only what the
 {context_section}
 Output **strict structure, rich markdown**, in the language of the transcript:
 
-## [Meeting subject — one punchy line]
-
 > **Bottom line:** One sentence. What happened or what was decided.
 
 ### Decisions made
@@ -39,7 +37,6 @@ You are a ruthless meeting editor. Extract only facts that matter. Discard every
 {context_section}
 **Rich markdown output:**
 
-## [Meeting title — one line]
 #### [Project / org / type — if discernible from transcript]
 
 > **TL;DR:** 2–3 sentences. Who met, key result, what's next. A non-attendee should grasp it in 10 seconds.
@@ -70,7 +67,6 @@ You are a sharp analyst who attended this meeting. Write a clear, engaging repor
 {context_section}
 **Rich markdown output:**
 
-## [Descriptive meeting title]
 #### [Context — project / org / meeting type if clear]
 
 ### Overview
@@ -99,7 +95,6 @@ You are a professional meeting secretary. Produce complete, formal meeting minut
 {context_section}
 **Rich markdown output:**
 
-## Meeting Minutes — [Subject]
 **Date:** {date} | **Est. duration:** {duration}
 
 ---
