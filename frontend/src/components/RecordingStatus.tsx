@@ -16,6 +16,7 @@ interface RecordingStatusProps {
 	canvasRef: React.RefObject<HTMLCanvasElement>
 	audioSource: AudioSource
 	wakeLockStatus: 'inactive' | 'active' | 'error'
+	isPaused: boolean
 }
 
 const formatTime = (seconds: number) => {
@@ -38,6 +39,7 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	canvasRef,
 	audioSource,
 	wakeLockStatus,
+	isPaused,
 }) => {
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount
 	const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100))
@@ -60,8 +62,20 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	return (
 		<>
 			{isRecording && (
-				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '6px' }}>
-					⏱️ {formatTime(recordingTime)}
+				<div style={{
+					textAlign: 'center',
+					fontSize: '24px',
+					fontWeight: 'bold',
+					color: isPaused ? theme.secondaryText : theme.button.danger,
+					marginBottom: '6px',
+					opacity: isPaused ? 0.6 : 1,
+				}}>
+					{isPaused ? '⏸' : '⏱️'} {formatTime(recordingTime)}
+					{isPaused && (
+						<span style={{ fontSize: '13px', fontWeight: 'normal', marginLeft: '8px', letterSpacing: '0.05em' }}>
+							PAUSED
+						</span>
+					)}
 				</div>
 			)}
 

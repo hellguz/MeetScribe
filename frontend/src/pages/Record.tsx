@@ -39,6 +39,9 @@ export default function Record() {
 		setSelectedFile,
 		startLiveRecording,
 		stopRecording,
+		isPaused,
+		pauseRecording,
+		resumeRecording,
 		startFileProcessing,
 		transcriptionSpeedLabel,
 		analyserRef,
@@ -104,6 +107,19 @@ export default function Record() {
 	useEffect(() => {
 		setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent))
 	}, [])
+
+	useEffect(() => {
+		if (isPaused) {
+			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+			animationFrameRef.current = null
+			if (canvasRef.current) {
+				const ctx = canvasRef.current.getContext('2d')
+				if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+			}
+		} else if (isRecording) {
+			drawWaveform()
+		}
+	}, [isPaused, isRecording, drawWaveform, animationFrameRef])
 
 	const drawWaveform = useCallback(() => {
 		if (!analyserRef.current || !canvasRef.current) return
@@ -258,6 +274,7 @@ export default function Record() {
 				canvasRef={canvasRef}
 				audioSource={audioSource}
 				wakeLockStatus={wakeLockStatus}
+				isPaused={isPaused}
 			/>
 
 			<div style={{ textAlign: 'center', marginTop: isRecording ? '24px' : '0' }}>
@@ -279,20 +296,38 @@ export default function Record() {
 						{audioSource === 'file' ? '📄 Start Transcription' : '🎙️ Start Recording'}
 					</button>
 				) : (
-					<button
-						onClick={handleStop}
-						style={{
-							padding: '16px 32px',
-							fontSize: '18px',
-							fontWeight: 'bold',
-							border: 'none',
-							borderRadius: '8px',
-							cursor: 'pointer',
-							backgroundColor: currentThemeColors.button.danger,
-							color: currentThemeColors.button.dangerText,
-						}}>
-						⏹️ Stop & Summarize
-					</button>
+					<div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+						{isRecording && (
+							<button
+								onClick={isPaused ? resumeRecording : pauseRecording}
+								style={{
+									padding: '16px 24px',
+									fontSize: '18px',
+									fontWeight: 'bold',
+									border: 'none',
+									borderRadius: '8px',
+									cursor: 'pointer',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.text,
+								}}>
+								{isPaused ? '▶️ Resume' : '⏸️ Pause'}
+							</button>
+						)}
+						<button
+							onClick={handleStop}
+							style={{
+								padding: '16px 32px',
+								fontSize: '18px',
+								fontWeight: 'bold',
+								border: 'none',
+								borderRadius: '8px',
+								cursor: 'pointer',
+								backgroundColor: currentThemeColors.button.danger,
+								color: currentThemeColors.button.dangerText,
+							}}>
+							⏹️ Stop & Summarize
+						</button>
+					</div>
 				)}
 			</div>
 
