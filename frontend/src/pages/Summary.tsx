@@ -24,8 +24,12 @@ const formatMeetingDate = (isoString?: string, timeZone?: string | null): string
 		const date = new Date(isoString)
 		date.setMinutes(Math.round(date.getMinutes()), 0, 0)
 		return new Intl.DateTimeFormat('en-GB', {
-			day: 'numeric', month: 'long', year: 'numeric',
-			hour: '2-digit', minute: '2-digit', hour12: false,
+			day: 'numeric',
+			month: 'long',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: false,
 			timeZone: timeZone || undefined,
 		}).format(date)
 	} catch {
@@ -72,7 +76,7 @@ export default function Summary() {
 	const titleRef = useRef<HTMLHeadingElement>(null)
 	const editorRef = useRef<HTMLDivElement>(null)
 	const [isEditing, setIsEditing] = useState(false)
-	const isEditingRef = useRef(false)        // sync ref for effects/callbacks
+	const isEditingRef = useRef(false) // sync ref for effects/callbacks
 	const cancelClickedRef = useRef(false)
 
 	useEffect(() => {
@@ -80,7 +84,9 @@ export default function Summary() {
 	}, [context, editedContext])
 
 	useEffect(() => {
-		return () => { if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current) }
+		return () => {
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
+		}
 	}, [])
 
 	// Set editor innerHTML and strip the first element's top margin so it aligns with the buttons
@@ -166,11 +172,14 @@ export default function Summary() {
 	}, [summaryMarkdown, setEditorHtml, meetingTitle])
 
 	// Save when focus leaves the entire editable area (title + body)
-	const handleContainerBlur = useCallback((e: React.FocusEvent) => {
-		if (cancelClickedRef.current) return
-		if (e.currentTarget.contains(e.relatedTarget as Node)) return
-		doSave()
-	}, [doSave])
+	const handleContainerBlur = useCallback(
+		(e: React.FocusEvent) => {
+			if (cancelClickedRef.current) return
+			if (e.currentTarget.contains(e.relatedTarget as Node)) return
+			doSave()
+		},
+		[doSave],
+	)
 
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) handleRegenerate({ newContext: editedContext })
@@ -184,9 +193,13 @@ export default function Summary() {
 			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summaryMarkdown}`
 		} else {
 			const plain = summaryMarkdown
-				.replace(/^---\s*$/gm, '').replace(/#{1,6}\s/g, '')
-				.replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1')
-				.replace(/-\s/g, '• ').replace(/\[(.*?)\]\(.*?\)/g, '$1').trim()
+				.replace(/^---\s*$/gm, '')
+				.replace(/#{1,6}\s/g, '')
+				.replace(/\*\*(.*?)\*\*/g, '$1')
+				.replace(/_(.*?)_/g, '$1')
+				.replace(/-\s/g, '• ')
+				.replace(/\[(.*?)\]\(.*?\)/g, '$1')
+				.trim()
 			textToCopy = `${meetingTitle}\n${formattedDate}\n\n${plain}`
 		}
 		try {
@@ -223,9 +236,15 @@ export default function Summary() {
 	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
 
 	const copyButtonStyle: React.CSSProperties = {
-		padding: '5px 7px', border: 'none', backgroundColor: 'transparent',
-		color: currentThemeColors.text, cursor: 'pointer', lineHeight: 1,
-		display: 'flex', alignItems: 'center', justifyContent: 'center',
+		padding: '5px 7px',
+		border: 'none',
+		backgroundColor: 'transparent',
+		color: currentThemeColors.text,
+		cursor: 'pointer',
+		lineHeight: 1,
+		display: 'flex',
+		alignItems: 'center',
+		justifyContent: 'center',
 		transition: 'background-color 0.2s ease',
 	}
 
@@ -235,47 +254,72 @@ export default function Summary() {
 
 			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-				<button onClick={() => navigate('/record')} style={{
-					background: 'none', border: 'none', cursor: 'pointer',
-					color: currentThemeColors.secondaryText, fontSize: '13px', fontFamily: 'inherit',
-				}}>
+				<button
+					onClick={() => navigate('/record')}
+					style={{
+						background: 'none',
+						border: 'none',
+						cursor: 'pointer',
+						color: currentThemeColors.secondaryText,
+						fontSize: '13px',
+						fontFamily: 'inherit',
+					}}>
 					← Back to Recordings
 				</button>
 				{hasSummary && !isProcessing && (
 					<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-						{copyStatus !== 'idle' && (
-							<span style={{ color: currentThemeColors.secondaryText, fontSize: '11px', opacity: 0.7 }}>Copied!</span>
-						)}
-						<div style={{
-							display: 'flex', borderRadius: '6px', overflow: 'hidden',
-							border: `1px solid ${currentThemeColors.border}`,
-							backgroundColor: currentThemeColors.backgroundSecondary,
-						}}>
-							<button onClick={() => handleCopy('text')} style={copyButtonStyle} title='Copy as plain text'
+						{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '11px', opacity: 0.7 }}>Copied!</span>}
+						<div
+							style={{
+								display: 'flex',
+								borderRadius: '6px',
+								overflow: 'hidden',
+								border: `1px solid ${currentThemeColors.border}`,
+								backgroundColor: currentThemeColors.backgroundSecondary,
+							}}>
+							<button
+								onClick={() => handleCopy('text')}
+								style={copyButtonStyle}
+								title="Copy as plain text"
 								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><rect x='9' y='9' width='13' height='13' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<rect x="9" y="9" width="13" height="13" rx="2" />
+									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+								</svg>
 							</button>
 							<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
-							<button onClick={() => handleCopy('markdown')} style={copyButtonStyle} title='Copy as Markdown'
+							<button
+								onClick={() => handleCopy('markdown')}
+								style={copyButtonStyle}
+								title="Copy as Markdown"
 								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><polyline points='16 18 22 12 16 6'/><polyline points='8 6 2 12 8 18'/></svg>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<polyline points="16 18 22 12 16 6" />
+									<polyline points="8 6 2 12 8 18" />
+								</svg>
 							</button>
 						</div>
 						<button
 							onClick={() => enterEditMode()}
-							title='Edit summary'
+							title="Edit summary"
 							style={{
 								padding: '5px 7px',
 								border: `1px solid ${currentThemeColors.border}`,
 								borderRadius: '6px',
 								backgroundColor: currentThemeColors.backgroundSecondary,
 								color: currentThemeColors.secondaryText,
-								cursor: 'pointer', display: 'flex', alignItems: 'center', lineHeight: 1,
+								cursor: 'pointer',
+								display: 'flex',
+								alignItems: 'center',
+								lineHeight: 1,
 								transition: 'background-color 0.2s ease',
 							}}>
-							<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><path d='M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7'/><path d='M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'/></svg>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+							</svg>
 						</button>
 					</div>
 				)}
@@ -283,37 +327,60 @@ export default function Summary() {
 
 			{/* Settings card */}
 			{(hasSummary || isProcessing) && (
-				<div style={{
-					padding: '10px 12px',
-					borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '12px',
-				}}>
+				<div
+					style={{
+						padding: '10px 12px',
+						borderRadius: '12px',
+						border: `1px solid ${currentThemeColors.border}`,
+						marginBottom: '12px',
+					}}>
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
-							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })} />
+							<SummaryLengthSelector
+								value={currentMeetingLength}
+								disabled={isRegenerating || isProcessing}
+								onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })}
+							/>
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 						<div>
-							<textarea id="context-editor" value={editedContext ?? ''} onChange={(e) => setEditedContext(e.target.value)}
+							<textarea
+								id="context-editor"
+								value={editedContext ?? ''}
+								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Context: participant names, project codes, key terms..."
 								disabled={isRegenerating || isProcessing}
 								style={{
-									width: '100%', minHeight: '32px', padding: '5px 8px', borderRadius: '6px',
+									width: '100%',
+									minHeight: '32px',
+									padding: '5px 8px',
+									borderRadius: '6px',
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
-									color: currentThemeColors.input.text, fontSize: '13px', fontFamily: 'inherit',
-									resize: 'vertical', boxSizing: 'border-box',
-									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
+									color: currentThemeColors.input.text,
+									fontSize: '13px',
+									fontFamily: 'inherit',
+									resize: 'vertical',
+									boxSizing: 'border-box',
+									opacity: isRegenerating || isProcessing ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
-								<button onClick={handleContextUpdateConfirm} disabled={isRegenerating || isProcessing}
+								<button
+									onClick={handleContextUpdateConfirm}
+									disabled={isRegenerating || isProcessing}
 									style={{
-										marginTop: '6px', padding: '5px 12px', border: 'none', borderRadius: '6px',
+										marginTop: '6px',
+										padding: '5px 12px',
+										border: 'none',
+										borderRadius: '6px',
 										backgroundColor: currentThemeColors.button.primary,
 										color: currentThemeColors.button.primaryText,
-										fontSize: '13px', fontWeight: '500',
-										cursor: (isRegenerating || isProcessing) ? 'not-allowed' : 'pointer',
-										opacity: (isRegenerating || isProcessing) ? 0.6 : 1, transition: 'all 0.2s ease',
+										fontSize: '13px',
+										fontWeight: '500',
+										cursor: isRegenerating || isProcessing ? 'not-allowed' : 'pointer',
+										opacity: isRegenerating || isProcessing ? 0.6 : 1,
+										transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate
 								</button>
@@ -329,13 +396,14 @@ export default function Summary() {
 			) : error ? (
 				<p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>
 			) : hasSummary ? (
-				<div style={{
-					backgroundColor: currentThemeColors.background,
-					borderRadius: '12px',
-					border: `1px solid ${currentThemeColors.border}`,
-					boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
-					transition: 'box-shadow 0.15s ease',
-				}}>
+				<div
+					style={{
+						backgroundColor: currentThemeColors.background,
+						borderRadius: '12px',
+						border: `1px solid ${currentThemeColors.border}`,
+						boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
+						transition: 'box-shadow 0.15s ease',
+					}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}
 					<div onBlur={handleContainerBlur}>
 						{/* Title row */}
@@ -346,15 +414,18 @@ export default function Summary() {
 									contentEditable={isEditing}
 									suppressContentEditableWarning
 									onDoubleClick={!isEditing ? enterEditMode : undefined}
-									onKeyDown={(e) => { if (e.key === 'Escape') { cancelClickedRef.current = true; doCancel() } }}
-									className="summary-title" style={{ margin: 0, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
-								>
+									onKeyDown={(e) => {
+										if (e.key === 'Escape') {
+											cancelClickedRef.current = true
+											doCancel()
+										}
+									}}
+									className="summary-title"
+									style={{ margin: 0, outline: 'none', cursor: isEditing ? 'text' : 'default' }}>
 									{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
 								</h1>
 								{formattedDate && (
-									<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
-										{formattedDate}
-									</p>
+									<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
 								)}
 							</div>
 							{/* Edit / Save+Cancel */}
@@ -365,15 +436,22 @@ export default function Summary() {
 											onMouseDown={(e) => e.preventDefault()}
 											onClick={doSave}
 											style={{
-												padding: '6px 12px', border: 'none', borderRadius: '6px',
+												padding: '6px 12px',
+												border: 'none',
+												borderRadius: '6px',
 												backgroundColor: currentThemeColors.button.primary,
 												color: currentThemeColors.button.primaryText,
-												fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+												fontSize: '13px',
+												fontWeight: 500,
+												cursor: 'pointer',
+												fontFamily: 'inherit',
 											}}>
 											Save
 										</button>
 										<button
-											onMouseDown={() => { cancelClickedRef.current = true }}
+											onMouseDown={() => {
+												cancelClickedRef.current = true
+											}}
 											onClick={doCancel}
 											style={{
 												padding: '6px 12px',
@@ -381,7 +459,9 @@ export default function Summary() {
 												borderRadius: '6px',
 												backgroundColor: currentThemeColors.background,
 												color: currentThemeColors.text,
-												fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+												fontSize: '13px',
+												cursor: 'pointer',
+												fontFamily: 'inherit',
 											}}>
 											Cancel
 										</button>
@@ -391,10 +471,10 @@ export default function Summary() {
 						</div>
 
 						{/*
-					  * The actual editable content.
-					  * innerHTML is controlled via ref (not React), so React's reconciliation
-					  * never overwrites the user's edits. contentEditable is toggled on double-click.
-					  */}
+						 * The actual editable content.
+						 * innerHTML is controlled via ref (not React), so React's reconciliation
+						 * never overwrites the user's edits. contentEditable is toggled on double-click.
+						 */}
 						<div
 							ref={editorRef}
 							contentEditable={isEditing}
@@ -434,19 +514,27 @@ export default function Summary() {
 			)}
 
 			{transcript && (
-				<div style={{
-					marginTop: '32px', backgroundColor: currentThemeColors.background,
-					padding: '16px 24px', borderRadius: '12px',
-					border: `1px solid ${currentThemeColors.border}`,
-				}}>
-					<h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
+				<div
+					style={{
+						marginTop: '32px',
+						backgroundColor: currentThemeColors.background,
+						padding: '16px 24px',
+						borderRadius: '12px',
+						border: `1px solid ${currentThemeColors.border}`,
+					}}>
+					<h4
+						onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
 						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
 						<span style={{ display: 'flex', alignItems: 'center' }}>
-							<span style={{
-								display: 'inline-block',
-								transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
-								transition: 'transform 0.2s', marginRight: '8px',
-							}}>▶</span>{' '}
+							<span
+								style={{
+									display: 'inline-block',
+									transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
+									transition: 'transform 0.2s',
+									marginRight: '8px',
+								}}>
+								▶
+							</span>{' '}
 							🎤 Transcript
 						</span>
 						<button
@@ -458,24 +546,33 @@ export default function Summary() {
 									transcriptCopyTimerRef.current = setTimeout(() => setTranscriptCopied(false), 3000)
 								})
 							}}
-							title='Copy transcript'
+							title="Copy transcript"
 							style={{
-								padding: '3px 7px', border: `1px solid ${currentThemeColors.border}`,
-								borderRadius: '6px', backgroundColor: currentThemeColors.backgroundSecondary,
-								color: currentThemeColors.secondaryText, cursor: 'pointer',
-								display: 'flex', alignItems: 'center', gap: '4px',
-								fontSize: '11px', lineHeight: 1, fontFamily: 'inherit',
+								padding: '3px 7px',
+								border: `1px solid ${currentThemeColors.border}`,
+								borderRadius: '6px',
+								backgroundColor: currentThemeColors.backgroundSecondary,
+								color: currentThemeColors.secondaryText,
+								cursor: 'pointer',
+								display: 'flex',
+								alignItems: 'center',
+								gap: '4px',
+								fontSize: '11px',
+								lineHeight: 1,
+								fontFamily: 'inherit',
 							}}>
-							{transcriptCopied
-								? <span>Copied!</span>
-								: <svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><rect x='9' y='9' width='13' height='13' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg>
-							}
+							{transcriptCopied ? (
+								<span>Copied!</span>
+							) : (
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<rect x="9" y="9" width="13" height="13" rx="2" />
+									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+								</svg>
+							)}
 						</button>
 					</h4>
 					{isTranscriptVisible && (
-						<pre style={{ marginTop: '16px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>
-							{transcript}
-						</pre>
+						<pre style={{ marginTop: '16px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>{transcript}</pre>
 					)}
 				</div>
 			)}

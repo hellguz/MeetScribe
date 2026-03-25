@@ -66,7 +66,7 @@ export function saveMeeting(meta: MeetingMeta) {
 
 /** Removes a meeting from local history. */
 export function removeMeeting(id: string) {
-    let list = readRaw();
-    list = list.filter(m => m.id !== id);
-    writeRaw(list);
+	let list = readRaw()
+	list = list.filter((m) => m.id !== id)
+	writeRaw(list)
 }

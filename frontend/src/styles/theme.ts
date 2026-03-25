@@ -1,8 +1,8 @@
-import '@fontsource/inter';
+import '@fontsource/inter'
 
 export interface AppTheme {
-	fontFamily: string;
-	fontFeatureSettings: string;
+	fontFamily: string
+	fontFeatureSettings: string
 	body: string
 	text: string
 	secondaryText: string
