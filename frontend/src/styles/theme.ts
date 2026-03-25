@@ -62,29 +62,29 @@ export const lightTheme: AppTheme = {
 export const darkTheme: AppTheme = {
 	fontFamily: "'Inter', sans-serif",
 	fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
-	body: '#18181b', // Monochrome dark (Tailwind zinc-900)
-	text: '#f3f4f6', // Light gray for primary text (Tailwind gray-100)
-	secondaryText: '#9ca3af', // Medium gray for secondary text (Tailwind gray-400)
-	background: '#27272a', // Monochrome dark (Tailwind zinc-800)
-	backgroundSecondary: '#3f3f46', // Monochrome dark (Tailwind zinc-700)
-	border: '#52525b', // Monochrome dark (Tailwind zinc-600)
+	body: '#121315', // Deep blue-black — easier on eyes than flat zinc
+	text: '#dde1e7', // Soft cool white — reduces harshness vs pure white
+	secondaryText: '#8b94a3', // Muted blue-gray
+	background: '#181a1d', // Card surfaces — subtle elevation from body
+	backgroundSecondary: '#1c2128', // Inputs and secondary surfaces
+	border: '#2d333b', // Understated dark border
 	button: {
-		primary: '#22c55e', // Green (Tailwind green-500)
+		primary: '#22c55e', // Green
 		primaryText: '#FFFFFF',
-		secondary: '#52525b', // Monochrome dark (Tailwind zinc-600)
-		secondaryText: '#f3f4f6',
-		danger: '#ef4444', // Red (Tailwind red-500)
+		secondary: '#2d333b', // Ghost dark button
+		secondaryText: '#dde1e7',
+		danger: '#f85149', // Slightly warmer red
 		dangerText: '#FFFFFF',
 	},
 	input: {
-		background: '#3f3f46', // Monochrome dark (Tailwind zinc-700)
-		text: '#f3f4f6',
-		border: '#52525b', // Monochrome dark (Tailwind zinc-600)
-		placeholder: '#a1a1aa', // Monochrome gray (Tailwind zinc-400)
+		background: '#1c2128',
+		text: '#dde1e7',
+		border: '#444c56', // Slightly more visible input border
+		placeholder: '#8b94a3',
 	},
 	listItem: {
-		background: '#27272a', // Monochrome dark (Tailwind zinc-800)
-		hoverBackground: '#3f3f46', // Monochrome dark (Tailwind zinc-700)
+		background: '#161b22',
+		hoverBackground: '#1c2128',
 	},
 }
 

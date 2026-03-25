@@ -161,6 +161,40 @@ body {
 	opacity: 0.85;
 }
 
+/* ── Dark mode markdown overrides ───────────────────────────────────────── */
+
+[data-theme='dark'] .markdown-content th,
+[data-theme='dark'] .markdown-content td {
+	border-color: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme='dark'] .markdown-content th {
+	background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme='dark'] .markdown-content blockquote {
+	border-left-color: #6093e0;
+	background: rgba(31, 111, 235, 0.07);
+}
+
+[data-theme='dark'] .markdown-content hr {
+	border-top-color: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme='dark'] .markdown-content code {
+	background: rgba(74, 186, 241, 0.082);
+	color: #63b6ff;
+}
+
+[data-theme='dark'] .markdown-content pre {
+	background: #0d1117;
+	border: 1px solid #2d333b;
+}
+
+[data-theme='dark'] .markdown-content pre code {
+	color: #adbac7;
+}
+
 /* ── Recording page animations ─────────────────────────────────────────── */
 
 @keyframes pausedPulse {
