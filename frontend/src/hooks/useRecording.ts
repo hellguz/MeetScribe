@@ -320,8 +320,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			timerRef.current = setInterval(() => {
 				setRecordingTime(Math.floor((Date.now() - startTimeRef.current - pausedDurationRef.current) / 1000))
 			}, 1000)
+			const recorderAtResume = mediaRef.current
 			chunkTimerRef.current = setTimeout(() => {
-				if (mediaRef.current && mediaRef.current.state === 'recording') mediaRef.current.stop()
+				if (recorderAtResume && recorderAtResume.state === 'recording') recorderAtResume.stop()
 			}, CHUNK_DURATION_MS)
 		}
 	}, [])

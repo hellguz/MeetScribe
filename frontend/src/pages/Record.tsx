@@ -297,7 +297,7 @@ export default function Record() {
 					</button>
 				) : (
 					<div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-						{isRecording && (
+						{isRecording && audioSource !== 'file' && (
 							<button
 								onClick={isPaused ? resumeRecording : pauseRecording}
 								style={{
