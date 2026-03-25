@@ -234,7 +234,6 @@ Critical context from the user — use as source of truth for names, projects, a
             target_language=target_language,
             context_section=context_section,
             full_transcript=full_transcript,
-            voice_caveat=P.VOICE_CAVEAT,
             date=date_str,
             duration=duration_str,
         )

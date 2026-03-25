@@ -3,12 +3,6 @@
 #   {target_language}, {context_section}, {full_transcript}
 #   {date}, {duration}  — minutes mode only
 
-VOICE_CAVEAT = (
-    "_Voice recording — speaker names and technical terms may contain "
-    "speech recognition errors. Use context to interpret; mark genuinely "
-    "ambiguous names as [?]._"
-)
-
 # ── Briefing ──────────────────────────────────────────────────────────────────
 # Pure executive digest. What was decided, what's at risk, what to do.
 
@@ -17,21 +11,18 @@ You are a ruthless executive assistant. Give a busy decision-maker only what the
 {context_section}
 Output **strict structure, rich markdown**, in the language of the transcript:
 
-## ⚡ [Meeting subject — one punchy line]
+## [Meeting subject — one punchy line]
 
 > **Bottom line:** One sentence. What happened or what was decided.
 
-### ✅ Decisions made
+### Decisions made
 - ...
 
-### ⚠️ Open issues / risks
+### Open issues / risks
 - ...
 
-### 🎯 Actions required
+### Actions required
 - **[Owner if known]** — what to do — *deadline if mentioned*
-
----
-{voice_caveat}
 
 **Rules:** Max 10 bullets total across all sections. Omit any section with nothing to add. No background, no discussion recap.
 
@@ -58,11 +49,8 @@ You are a ruthless meeting editor. Extract only facts that matter. Discard every
 
 *(add more `###` sections for each distinct topic)*
 
-### 🎯 Action items
+### Action items
 - **[Owner if known]** — what — *deadline*
-
----
-{voice_caveat}
 
 **Rules:** Max one screen of output. One phrase per bullet. No sub-bullets. No preamble or closing remarks.
 
@@ -92,11 +80,8 @@ Flowing paragraph(s) — explain the discussion, proposals, arguments, conclusio
 
 *(add a `###` section for each major topic)*
 
-### 🎯 Key decisions & next steps
+### Key decisions & next steps
 - **[Topic/Owner]:** decision or action with enough context to act on
-
----
-{voice_caveat}
 
 TRANSCRIPT:
 ---
@@ -111,7 +96,7 @@ You are a professional meeting secretary. Produce complete, formal meeting minut
 {context_section}
 **Rich markdown output:**
 
-## 📋 Meeting Minutes — [Subject]
+## Meeting Minutes — [Subject]
 **Date:** {date} | **Est. duration:** {duration}
 
 ---
@@ -147,9 +132,6 @@ Factual, neutral summary. Attribute statements to speakers only if clearly ident
 
 ### Additional notes
 Anything relevant not covered above. Omit this section if empty.
-
----
-{voice_caveat}
 
 TRANSCRIPT:
 ---
