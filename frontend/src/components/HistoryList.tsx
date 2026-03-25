@@ -40,16 +40,15 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 	}
 
 	return (
-		<div style={{ marginTop: '40px', marginBottom: '40px' }}>
-			<h2 style={{ margin: '24px 0 12px 0', fontSize: 16, textAlign: 'center', color: currentThemeColors.text }}>Previous Meetings</h2>
+		<div style={{ marginTop: '40px', marginBottom: '20px' }}>
+			<h2 style={{ margin: '12px 0 12px 0', fontSize: 16, textAlign: 'center', color: currentThemeColors.text }}>Previous Meetings</h2>
 			<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: `1px solid ${currentThemeColors.border}`, borderRadius: '8px' }}>
 				{history.map((m, index) => (
 					<li
 						key={m.id}
 						style={{
-							padding: '12px 16px',
+							padding: '12px 12px',
 							borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
-							backgroundColor: index % 2 === 0 ? currentThemeColors.listItem.background : currentThemeColors.body,
 							color: currentThemeColors.text,
 						}}
 						onMouseEnter={() => setHoveredMeetingId(m.id)}

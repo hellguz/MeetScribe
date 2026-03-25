@@ -516,13 +516,13 @@ export default function Summary() {
 			{transcript && (
 				<div
 					style={{
-						marginTop: '32px',
+						marginTop: '12px',
 						backgroundColor: currentThemeColors.background,
-						padding: '16px 24px',
+						padding: '10px 14px',
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 					}}>
-					<h4
+					<h5
 						onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
 						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
 						<span style={{ display: 'flex', alignItems: 'center' }}>
@@ -570,9 +570,9 @@ export default function Summary() {
 								</svg>
 							)}
 						</button>
-					</h4>
+					</h5>
 					{isTranscriptVisible && (
-						<pre style={{ marginTop: '16px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>{transcript}</pre>
+						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>{transcript}</pre>
 					)}
 				</div>
 			)}

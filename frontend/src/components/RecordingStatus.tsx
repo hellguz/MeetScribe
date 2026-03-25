@@ -60,22 +60,22 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	return (
 		<>
 			{isRecording && (
-				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '16px' }}>
+				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '6px' }}>
 					⏱️ {formatTime(recordingTime)}
 				</div>
 			)}
 
 			{(isUiLocked || localChunksCount > 0) && (
-				<div style={{ marginBottom: '24px' }}>
+				<div style={{ marginBottom: '12px' }}>
 					<div
 						style={{
 							width: '100%',
-							height: '20px',
+							height: '10px',
 							backgroundColor: theme.backgroundSecondary,
-							borderRadius: '10px',
+							borderRadius: '5px',
 							overflow: 'hidden',
 							position: 'relative',
-							marginBottom: '8px',
+							marginBottom: '4px',
 						}}>
 						<div
 							style={{
@@ -116,8 +116,8 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 			{liveTranscript && (
 				<div
 					style={{
-						marginBottom: '24px',
-						padding: '16px',
+						marginBottom: '12px',
+						padding: '10px',
 						backgroundColor: theme.background,
 						borderRadius: '8px',
 						border: `1px solid ${theme.border}`,
@@ -125,7 +125,7 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 						overflowY: 'auto',
 						color: theme.text,
 					}}>
-					<div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.text, marginBottom: '8px' }}>🎤 Live transcript</div>
+					<div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.text, marginBottom: '6px' }}>🎤 Live transcript</div>
 					<div style={{ fontSize: '14px', lineHeight: '1.5' }}>{liveTranscript}</div>
 				</div>
 			)}
@@ -134,8 +134,8 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 				style={{
 					position: 'relative',
 					textAlign: 'center',
-					marginBottom: '24px',
-					padding: '16px',
+					marginBottom: '12px',
+					padding: '10px',
 					backgroundColor: isUiLocked ? theme.backgroundSecondary : theme.background,
 					border: `2px solid ${isRecording ? theme.button.danger : isProcessing ? theme.secondaryText : theme.button.primary}`,
 					borderRadius: '8px',
@@ -149,7 +149,7 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 						fontSize: '18px',
 						fontWeight: 'bold',
 						color: isRecording ? theme.button.danger : isProcessing ? theme.secondaryText : theme.button.primary,
-						marginBottom: '8px',
+						marginBottom: '4px',
 					}}>
 					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready'}
 				</div>
