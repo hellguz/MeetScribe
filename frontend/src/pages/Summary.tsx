@@ -260,42 +260,13 @@ export default function Summary() {
 				)}
 			</div>
 
-			{/* Title + settings card */}
+			{/* Settings card */}
+			{(hasSummary || isProcessing) && (
 			<div style={{
 				backgroundColor: currentThemeColors.background, padding: '16px',
 				borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '24px',
 			}}>
-				{isEditingTitle ? (
-					<input type="text" value={editedTitle}
-						onChange={(e) => setEditedTitle(e.target.value)}
-						onBlur={handleTitleUpdateConfirm}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter') handleTitleUpdateConfirm()
-							if (e.key === 'Escape') setIsEditingTitle(false)
-						}}
-						style={{
-							fontSize: '1.7em', fontWeight: '600', width: '100%',
-							border: `1px solid ${currentThemeColors.input.border}`,
-							borderRadius: '6px', backgroundColor: currentThemeColors.input.background,
-							color: currentThemeColors.input.text, fontFamily: 'inherit',
-						}}
-						autoFocus
-					/>
-				) : (
-					<h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true) }}
-						style={{ cursor: 'pointer', fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2 }}>
-						{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
-					</h1>
-				)}
-
-				{formattedDate && (
-					<p style={{ margin: '8px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
-						{formattedDate}
-					</p>
-				)}
-
-				{(hasSummary || isProcessing) && (
-					<div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+				<div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })} />
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
@@ -331,8 +302,8 @@ export default function Summary() {
 							)}
 						</div>
 					</div>
-				)}
 			</div>
+			)}
 
 			{/* Summary */}
 			{displayLoading ? (
@@ -344,53 +315,84 @@ export default function Summary() {
 					backgroundColor: currentThemeColors.background,
 					borderRadius: '12px',
 					border: `1px solid ${currentThemeColors.border}`,
-					position: 'relative',
 					boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
 					transition: 'box-shadow 0.15s ease',
 				}}>
-					{/* Edit / Save+Cancel — absolutely positioned so they don't affect content layout */}
-					<div style={{ position: 'absolute', top: '20px', right: '24px', display: 'flex', gap: '6px', zIndex: 1 }}>
-						{isEditing ? (
-							<>
-								<button
-									onMouseDown={(e) => e.preventDefault()}
-									onClick={doSave}
+					{/* Title row */}
+					<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '20px 24px 0 24px' }}>
+						<div style={{ flex: 1, marginRight: '12px' }}>
+							{isEditingTitle ? (
+								<input type="text" value={editedTitle}
+									onChange={(e) => setEditedTitle(e.target.value)}
+									onBlur={handleTitleUpdateConfirm}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter') handleTitleUpdateConfirm()
+										if (e.key === 'Escape') setIsEditingTitle(false)
+									}}
 									style={{
-										padding: '6px 12px', border: 'none', borderRadius: '6px',
-										backgroundColor: currentThemeColors.button.primary,
-										color: currentThemeColors.button.primaryText,
-										fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
-									}}>
-									Save
-								</button>
+										fontSize: '1.7em', fontWeight: '600', width: '100%',
+										border: `1px solid ${currentThemeColors.input.border}`,
+										borderRadius: '6px', backgroundColor: currentThemeColors.input.background,
+										color: currentThemeColors.input.text, fontFamily: 'inherit',
+									}}
+									autoFocus
+								/>
+							) : (
+								<h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true) }}
+									style={{ cursor: 'pointer', fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2 }}>
+									{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
+								</h1>
+							)}
+							{formattedDate && (
+								<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
+									{formattedDate}
+								</p>
+							)}
+						</div>
+						{/* Edit / Save+Cancel */}
+						<div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+							{isEditing ? (
+								<>
+									<button
+										onMouseDown={(e) => e.preventDefault()}
+										onClick={doSave}
+										style={{
+											padding: '6px 12px', border: 'none', borderRadius: '6px',
+											backgroundColor: currentThemeColors.button.primary,
+											color: currentThemeColors.button.primaryText,
+											fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+										}}>
+										Save
+									</button>
+									<button
+										onMouseDown={() => { cancelClickedRef.current = true }}
+										onClick={doCancel}
+										style={{
+											padding: '6px 12px',
+											border: `1px solid ${currentThemeColors.border}`,
+											borderRadius: '6px',
+											backgroundColor: currentThemeColors.background,
+											color: currentThemeColors.text,
+											fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+										}}>
+										Cancel
+									</button>
+								</>
+							) : (
 								<button
-									onMouseDown={() => { cancelClickedRef.current = true }}
-									onClick={doCancel}
+									onClick={() => enterEditMode()}
 									style={{
 										padding: '6px 12px',
 										border: `1px solid ${currentThemeColors.border}`,
 										borderRadius: '6px',
-										backgroundColor: currentThemeColors.background,
-										color: currentThemeColors.text,
+										backgroundColor: currentThemeColors.backgroundSecondary,
+										color: currentThemeColors.secondaryText,
 										fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
 									}}>
-									Cancel
+									Edit
 								</button>
-							</>
-						) : (
-							<button
-								onClick={() => enterEditMode()}
-								style={{
-									padding: '6px 12px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '6px',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.secondaryText,
-									fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
-								}}>
-								Edit
-							</button>
-						)}
+							)}
+						</div>
 					</div>
 
 					{/*
