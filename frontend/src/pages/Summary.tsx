@@ -406,7 +406,7 @@ export default function Summary() {
 							style={{
 								padding: '6px 24px 20px',
 								lineHeight: '1.5',
-								fontSize: '15px',
+								fontSize: '14px',
 								outline: 'none',
 								cursor: isEditing ? 'text' : 'default',
 								minHeight: '100px',
