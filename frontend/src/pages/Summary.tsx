@@ -268,7 +268,7 @@ export default function Summary() {
 			{/* Settings card */}
 			{(hasSummary || isProcessing) && (
 				<div style={{
-					backgroundColor: currentThemeColors.background, padding: '10px 12px',
+					padding: '10px 12px',
 					borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '12px',
 				}}>
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
