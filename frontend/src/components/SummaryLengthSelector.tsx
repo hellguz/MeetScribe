@@ -10,8 +10,8 @@ interface SummaryLengthSelectorProps {
 }
 
 const options: { label: string; value: SummaryLength }[] = [
-	{ label: 'Briefing', value: 'briefing' },
 	{ label: 'Essence', value: 'essence' },
+	{ label: 'Briefing', value: 'briefing' },
 	{ label: 'Narrative', value: 'narrative' },
 	{ label: 'Minutes', value: 'minutes' },
 ]
