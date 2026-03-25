@@ -250,8 +250,6 @@ export default function Summary() {
 
 	return (
 		<div style={{ maxWidth: 800, margin: '0 auto', padding: '12px 24px 24px', color: currentThemeColors.text }}>
-			<ThemeToggle />
-
 			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
 				<button
@@ -266,63 +264,66 @@ export default function Summary() {
 					}}>
 					← Back to Recordings
 				</button>
-				{hasSummary && !isProcessing && (
-					<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-						{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '11px', opacity: 0.7 }}>Copied!</span>}
-						<div
-							style={{
-								display: 'flex',
-								borderRadius: '6px',
-								overflow: 'hidden',
-								border: `1px solid ${currentThemeColors.border}`,
-								backgroundColor: currentThemeColors.backgroundSecondary,
-							}}>
+				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+					{hasSummary && !isProcessing && (
+						<>
+							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '11px', opacity: 0.7 }}>Copied!</span>}
+							<div
+								style={{
+									display: 'flex',
+									borderRadius: '6px',
+									overflow: 'hidden',
+									border: `1px solid ${currentThemeColors.border}`,
+									backgroundColor: currentThemeColors.backgroundSecondary,
+								}}>
+								<button
+									onClick={() => handleCopy('text')}
+									style={copyButtonStyle}
+									title="Copy as plain text"
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+										<rect x="9" y="9" width="13" height="13" rx="2" />
+										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+									</svg>
+								</button>
+								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+								<button
+									onClick={() => handleCopy('markdown')}
+									style={copyButtonStyle}
+									title="Copy as Markdown"
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+										<polyline points="16 18 22 12 16 6" />
+										<polyline points="8 6 2 12 8 18" />
+									</svg>
+								</button>
+							</div>
 							<button
-								onClick={() => handleCopy('text')}
-								style={copyButtonStyle}
-								title="Copy as plain text"
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+								onClick={() => enterEditMode()}
+								title="Edit summary"
+								style={{
+									padding: '5px 7px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									cursor: 'pointer',
+									display: 'flex',
+									alignItems: 'center',
+									lineHeight: 1,
+									transition: 'background-color 0.2s ease',
+								}}>
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-									<rect x="9" y="9" width="13" height="13" rx="2" />
-									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+									<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+									<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 								</svg>
 							</button>
-							<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
-							<button
-								onClick={() => handleCopy('markdown')}
-								style={copyButtonStyle}
-								title="Copy as Markdown"
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-									<polyline points="16 18 22 12 16 6" />
-									<polyline points="8 6 2 12 8 18" />
-								</svg>
-							</button>
-						</div>
-						<button
-							onClick={() => enterEditMode()}
-							title="Edit summary"
-							style={{
-								padding: '5px 7px',
-								border: `1px solid ${currentThemeColors.border}`,
-								borderRadius: '6px',
-								backgroundColor: currentThemeColors.backgroundSecondary,
-								color: currentThemeColors.secondaryText,
-								cursor: 'pointer',
-								display: 'flex',
-								alignItems: 'center',
-								lineHeight: 1,
-								transition: 'background-color 0.2s ease',
-							}}>
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-							</svg>
-						</button>
-					</div>
-				)}
+						</>
+					)}
+					<ThemeToggle />
+				</div>
 			</div>
 
 			{/* Settings card */}
