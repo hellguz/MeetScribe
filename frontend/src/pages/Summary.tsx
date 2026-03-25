@@ -61,14 +61,13 @@ export default function Summary() {
 		loadedFromCache,
 	} = useMeetingSummary({ mid, languageState, setLanguageState })
 
-	const [isEditingTitle, setIsEditingTitle] = useState(false)
-	const [editedTitle, setEditedTitle] = useState('')
 	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
 	// Rich-text inline editor state
+	const titleRef = useRef<HTMLHeadingElement>(null)
 	const editorRef = useRef<HTMLDivElement>(null)
 	const [isEditing, setIsEditing] = useState(false)
 	const isEditingRef = useRef(false)        // sync ref for effects/callbacks
@@ -95,6 +94,12 @@ export default function Summary() {
 		if (!editorRef.current || isEditingRef.current) return
 		setEditorHtml(summaryMarkdown || '')
 	}, [summaryMarkdown, setEditorHtml])
+
+	// Sync title text into the h1 whenever meetingTitle changes, but never while editing
+	useEffect(() => {
+		if (!titleRef.current || isEditingRef.current) return
+		titleRef.current.innerText = meetingTitle || ''
+	}, [meetingTitle])
 
 	const enterEditMode = useCallback((e?: React.MouseEvent) => {
 		if (isEditingRef.current) return
@@ -141,29 +146,29 @@ export default function Summary() {
 		if (md !== (summaryMarkdown || '').trim()) {
 			await handleSummaryUpdate(md)
 		}
-	}, [summaryMarkdown, handleSummaryUpdate])
+
+		const newTitle = titleRef.current?.innerText?.trim() || ''
+		if (newTitle && newTitle !== meetingTitle) {
+			await handleTitleUpdate(newTitle)
+		}
+	}, [summaryMarkdown, handleSummaryUpdate, meetingTitle, handleTitleUpdate])
 
 	const doCancel = useCallback(() => {
 		if (!editorRef.current) return
 		isEditingRef.current = false
 		cancelClickedRef.current = false
 		setIsEditing(false)
-		// Restore original content
 		setEditorHtml(summaryMarkdown || '')
 		editorRef.current.blur()
-	}, [summaryMarkdown, setEditorHtml])
+		if (titleRef.current) titleRef.current.innerText = meetingTitle || ''
+	}, [summaryMarkdown, setEditorHtml, meetingTitle])
 
-	const handleEditorBlur = useCallback(() => {
+	// Save when focus leaves the entire editable area (title + body)
+	const handleContainerBlur = useCallback((e: React.FocusEvent) => {
 		if (cancelClickedRef.current) return
+		if (e.currentTarget.contains(e.relatedTarget as Node)) return
 		doSave()
 	}, [doSave])
-
-	const handleTitleUpdateConfirm = useCallback(async () => {
-		if (editedTitle.trim() && editedTitle.trim() !== meetingTitle) {
-			await handleTitleUpdate(editedTitle.trim())
-		}
-		setIsEditingTitle(false)
-	}, [editedTitle, meetingTitle, handleTitleUpdate])
 
 	const handleContextUpdateConfirm = () => {
 		if (editedContext !== context) handleRegenerate({ newContext: editedContext })
@@ -318,31 +323,21 @@ export default function Summary() {
 					boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
 					transition: 'box-shadow 0.15s ease',
 				}}>
+					{/* Editable area: title + body share onBlur so focus can move between them freely */}
+				<div onBlur={handleContainerBlur}>
 					{/* Title row */}
 					<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '20px 24px 0 24px' }}>
 						<div style={{ flex: 1, marginRight: '12px' }}>
-							{isEditingTitle ? (
-								<input type="text" value={editedTitle}
-									onChange={(e) => setEditedTitle(e.target.value)}
-									onBlur={handleTitleUpdateConfirm}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter') handleTitleUpdateConfirm()
-										if (e.key === 'Escape') setIsEditingTitle(false)
-									}}
-									style={{
-										fontSize: '1.7em', fontWeight: '600', width: '100%',
-										border: `1px solid ${currentThemeColors.input.border}`,
-										borderRadius: '6px', backgroundColor: currentThemeColors.input.background,
-										color: currentThemeColors.input.text, fontFamily: 'inherit',
-									}}
-									autoFocus
-								/>
-							) : (
-								<h1 onClick={() => { setEditedTitle(meetingTitle || ''); setIsEditingTitle(true) }}
-									style={{ cursor: 'pointer', fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2 }}>
-									{meetingTitle || (isLoading ? ' ' : `Summary for ${mid}`)}
-								</h1>
-							)}
+							<h1
+								ref={titleRef}
+								contentEditable={isEditing}
+								suppressContentEditableWarning
+								onDoubleClick={!isEditing ? enterEditMode : undefined}
+								onKeyDown={(e) => { if (e.key === 'Escape') { cancelClickedRef.current = true; doCancel() } }}
+								style={{ fontSize: '1.7em', margin: 0, fontFamily: 'inherit', fontWeight: 600, lineHeight: 1.2, outline: 'none', cursor: isEditing ? 'text' : 'default' }}
+							>
+								{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
+							</h1>
 							{formattedDate && (
 								<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>
 									{formattedDate}
@@ -405,7 +400,6 @@ export default function Summary() {
 						contentEditable={isEditing}
 						suppressContentEditableWarning
 						onDoubleClick={!isEditing ? (e) => enterEditMode(e) : undefined}
-						onBlur={handleEditorBlur}
 						onKeyDown={(e) => {
 							if (e.key === 'Escape') {
 								cancelClickedRef.current = true
@@ -422,6 +416,7 @@ export default function Summary() {
 						}}
 						className="markdown-content"
 					/>
+				</div>
 				</div>
 			) : showProcessingMessage ? (
 				<p>⏳ Processing summary, please wait...</p>
