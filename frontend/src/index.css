@@ -24,12 +24,22 @@ body {
   line-height: 1.25;
 }
 
+/* Top-level heading (## Title) */
+.markdown-content h2 {
+  font-size: 1.15em;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  margin: 1.8em 0 0.5em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
 /* Section headings (### Topic) */
 .markdown-content h3 {
   font-size: 1.1em;
   font-weight: 550;
   letter-spacing: 0.01em;
-  margin: 2.1em 0 0.5em;
+  margin: 1.8em 0 0.5em;
   text-transform: uppercase;
   opacity: 0.6;
 }
