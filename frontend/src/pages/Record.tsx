@@ -146,8 +146,20 @@ export default function Record() {
 			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
 			animationFrameRef.current = null
 			if (canvasRef.current) {
-				const ctx = canvasRef.current.getContext('2d')
-				if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+				const canvas = canvasRef.current
+				const ctx = canvas.getContext('2d')
+				if (ctx) {
+					ctx.clearRect(0, 0, canvas.width, canvas.height)
+					const centerY = canvas.height / 2
+					ctx.lineWidth = 1.5
+					ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)'
+					ctx.setLineDash([6, 5])
+					ctx.beginPath()
+					ctx.moveTo(0, centerY)
+					ctx.lineTo(canvas.width, centerY)
+					ctx.stroke()
+					ctx.setLineDash([])
+				}
 			}
 		} else if (isRecording) {
 			drawWaveform()
@@ -208,7 +220,7 @@ export default function Record() {
 	return (
 		<div style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<ThemeToggle />
-			<h1 style={{ textAlign: 'center', marginBottom: '8px', color: currentThemeColors.text, fontFamily: 'Jost, serif' }}>🎙️ MeetScribe</h1>
+			<h1 style={{ textAlign: 'center', marginBottom: '8px', color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
 
 			{!isUiLocked && (
 				<>
@@ -293,7 +305,7 @@ export default function Record() {
 							color: currentThemeColors.button.primaryText,
 							opacity: isUiLocked || (audioSource === 'file' && !selectedFile) ? 0.5 : 1,
 						}}>
-						{audioSource === 'file' ? '📄 Start Transcription' : '🎙️ Start Recording'}
+						{audioSource === 'file' ? 'Start Transcription' : 'Start Recording'}
 					</button>
 				) : (
 					<div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
@@ -304,13 +316,14 @@ export default function Record() {
 									padding: '16px 24px',
 									fontSize: '18px',
 									fontWeight: 'bold',
-									border: 'none',
+									border: isPaused ? '2px solid transparent' : `2px solid ${currentThemeColors.border}`,
 									borderRadius: '8px',
 									cursor: 'pointer',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.text,
+									backgroundColor: isPaused ? '#f59e0b' : 'transparent',
+									color: isPaused ? '#ffffff' : currentThemeColors.text,
+									transition: 'background-color 0.2s, color 0.2s, border-color 0.2s',
 								}}>
-								{isPaused ? '▶️ Resume' : '⏸️ Pause'}
+								{isPaused ? 'Resume' : 'Pause'}
 							</button>
 						)}
 						<button
@@ -325,7 +338,7 @@ export default function Record() {
 								backgroundColor: currentThemeColors.button.danger,
 								color: currentThemeColors.button.dangerText,
 							}}>
-							⏹️ Stop & Summarize
+							Stop & Summarize
 						</button>
 					</div>
 				)}

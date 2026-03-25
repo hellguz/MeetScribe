@@ -160,3 +160,21 @@ body {
 	font-style: italic;
 	opacity: 0.85;
 }
+
+/* ── Recording page animations ─────────────────────────────────────────── */
+
+@keyframes pausedPulse {
+
+	0%,
+	100% {
+		opacity: 0.5;
+	}
+
+	50% {
+		opacity: 1;
+	}
+}
+
+.paused-label {
+	animation: pausedPulse 2s ease-in-out infinite;
+}
