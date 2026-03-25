@@ -8,11 +8,11 @@ Ever been in back-to-back meetings, frantically trying to type notes while also 
 
 ## ✨ Key Features
 
-  * **📝 Automated Meeting Summaries:** Get neatly formatted summaries tailored to your needs. Choose from various lengths, from a quarter-page brief to a comprehensive two-page document.
+  * **📝 Automated Meeting Summaries:** Get neatly formatted summaries tailored to your needs. Choose from various lengths — from a punchy **Essence** (key decisions only) to a comprehensive two-page document.
   * **🌐 Multi-Lingual Summaries:** Generate summaries in over 25 languages, including English, Spanish, Japanese, and more. The system can auto-detect the transcript language or you can specify a target language.
   * **🤖 Powerful & Flexible AI Core:**
       * **Local or Cloud Transcription:** Uses the high-quality `whisper-large-v3` model for speech-to-text. You can configure it to run on your own hardware for maximum privacy or use a faster cloud API (Groq) for transcription.
-      * **Intelligent Summarization:** Leverages `gpt-5-mini` for intelligent, context-aware summaries with a sophisticated prompting strategy that ensures high-quality, structured output.
+      * **Intelligent Summarization:** Leverages Claude (Anthropic) for intelligent, context-aware summaries with a sophisticated prompting strategy that ensures high-quality, structured output.
   * **📊 Comprehensive Admin Dashboard:** A dashboard page gives a full overview of platform usage, device statistics, user feedback trends, and interesting facts like the "busiest hour" and "most active day".
   * **🎤 Live Transcription:** See the text appear in near real-time as you speak, so you know it's working.
   * **🔒 Private & Self-Hostable:** Your recordings and transcripts are processed on your own server, not a third-party service. Run it on your own machine or cloud server.
@@ -43,7 +43,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
 │                         ┌───────────────────────────────────┐
 │                         │      ThreadPoolExecutor           │
 │                         │  - 3. Transcribe audio chunks     │
-│                         │  - 4. Call OpenAI for summary     │
+│                         │  - 4. Call Anthropic for summary  │
 │                         │  - 4. Update meeting in SQLite    │
 │                         └───────────────────────────────────┘
 │                                           │
@@ -74,7 +74,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
 
       * When you click "Stop & Summarize," the final audio chunk is uploaded.
       * After the background thread transcribes the last chunk, it assembles the full transcript from all chunks in SQLite.
-      * The thread detects the language of the transcript. Based on your selection (Auto, English, or Custom), it sends the complete text to the **OpenAI API** (`gpt-5-mini`) with a detailed prompt asking for a structured summary in the target language and desired length.
+      * The thread detects the language of the transcript. Based on your selection (Auto, English, or Custom), it sends the complete text to the **Anthropic API** (Claude) with a detailed prompt asking for a structured summary in the target language and desired length.
       * The final summary, a dynamically generated title, and the full transcript are saved to the `Meeting` record in SQLite, and the `done` flag is set. The next time the frontend polls, it receives the completed summary and navigates you to the results page.
 
 ## 🚀 Quick Start
@@ -94,7 +94,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
     cp .env.sample .env
     ```
 
-    Open `.env` and fill in your `OPENAI_API_KEY` (and optionally `GROQ_API_KEY`).
+    Open `.env` and fill in your `ANTHROPIC_API_KEY` (and optionally `GROQ_API_KEY`).
 
 3.  **Install dependencies:**
 
@@ -125,7 +125,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
     git clone https://github.com/hellguz/meetscribe.git
     cd meetscribe
     cp .env.sample .env
-    # Edit .env and add your OPENAI_API_KEY
+    # Edit .env and add your ANTHROPIC_API_KEY
     ```
 
 2.  **Build and run:**
@@ -143,7 +143,7 @@ All configuration lives in a single `.env` file in the project root.
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| **`OPENAI_API_KEY`** | **Required.** Your OpenAI API key for generating summaries. | — |
+| **`ANTHROPIC_API_KEY`** | **Required.** Your Anthropic API key for generating summaries (Claude). | — |
 | `GROQ_API_KEY` | Your Groq API key for faster cloud-based transcription. | — |
 | `RECOGNITION_IN_CLOUD` | `true` = use Groq for transcription, `false` = use local Whisper. | `false` |
 | `WHISPER_MODEL_SIZE` | Local Whisper model size. Options: `tiny`, `base`, `small`, `medium`, `large-v3`. | `medium` |
