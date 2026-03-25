@@ -405,6 +405,19 @@ def update_meeting_config(mid: uuid.UUID, payload: MeetingConfigUpdate):
         return mtg
 
 
+@app.post("/api/meetings/{mid}/heartbeat", status_code=200)
+def heartbeat_meeting(mid: uuid.UUID):
+    """Refreshes last_activity for a paused meeting to prevent janitor auto-finalization."""
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        mtg.last_activity = dt.datetime.utcnow()
+        db.add(mtg)
+        db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/meetings/{mid}/regenerate", status_code=200)
 def regenerate_meeting_summary(mid: uuid.UUID, payload: RegeneratePayload):
     """

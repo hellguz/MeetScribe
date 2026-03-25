@@ -16,6 +16,7 @@ interface RecordingStatusProps {
 	canvasRef: React.RefObject<HTMLCanvasElement>
 	audioSource: AudioSource
 	wakeLockStatus: 'inactive' | 'active' | 'error'
+	isPaused: boolean
 }
 
 const formatTime = (seconds: number) => {
@@ -38,6 +39,7 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	canvasRef,
 	audioSource,
 	wakeLockStatus,
+	isPaused,
 }) => {
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount
 	const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100))
@@ -60,8 +62,29 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	return (
 		<>
 			{isRecording && (
-				<div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', color: theme.button.danger, marginBottom: '6px' }}>
-					⏱️ {formatTime(recordingTime)}
+				<div style={{
+					textAlign: 'center',
+					fontSize: '24px',
+					fontWeight: 'bold',
+					color: isPaused ? '#f59e0b' : theme.button.danger,
+					marginBottom: '6px',
+				}}>
+					{isPaused ? '⏸' : '⏱️'} {formatTime(recordingTime)}
+					{isPaused && (
+						<span className="paused-label" style={{
+							fontSize: '11px',
+							fontWeight: '600',
+							marginLeft: '10px',
+							letterSpacing: '0.12em',
+							color: '#f59e0b',
+							background: 'rgba(245, 158, 11, 0.12)',
+							padding: '2px 7px',
+							borderRadius: '4px',
+							verticalAlign: 'middle',
+						}}>
+							PAUSED
+						</span>
+					)}
 				</div>
 			)}
 
@@ -136,8 +159,9 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 					textAlign: 'center',
 					marginBottom: '12px',
 					padding: '10px',
-					backgroundColor: isUiLocked ? theme.backgroundSecondary : theme.background,
-					border: `2px solid ${isRecording ? theme.button.danger : isProcessing ? theme.secondaryText : theme.button.primary}`,
+					backgroundColor: isUiLocked ? (isPaused ? 'rgba(245, 158, 11, 0.06)' : theme.backgroundSecondary) : theme.background,
+					border: `2px solid ${isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.secondaryText : theme.button.primary}`,
+					transition: 'border-color 0.3s, background-color 0.3s',
 					borderRadius: '8px',
 					overflow: 'hidden',
 				}}>
@@ -148,10 +172,15 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 						zIndex: 1,
 						fontSize: '18px',
 						fontWeight: 'bold',
-						color: isRecording ? theme.button.danger : isProcessing ? theme.secondaryText : theme.button.primary,
+						color: isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.secondaryText : theme.button.primary,
 						marginBottom: '4px',
 					}}>
-					{isRecording ? '🔴 Recording...' : isProcessing ? '⚙️ Processing... Please wait.' : '⚪ Ready'}
+					{isRecording
+						? isPaused
+							? '⏸ Paused'
+							: '🔴 Recording...'
+						: isProcessing ? 'Processing... Please wait.' : 'Ready'
+					}
 				</div>
 			</div>
 

@@ -73,6 +73,15 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	useEffect(() => {
 		isRecordingRef.current = isRecording
 	}, [isRecording])
+
+	const [isPaused, setIsPaused] = useState(false)
+	const isPausedRef = useRef(false)
+	useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
+	const pausedDurationRef = useRef<number>(0)
+	const pausedAtRef = useRef<number | null>(null)
+	const chunkTimerRef = useRef<NodeJS.Timeout | null>(null)
+	const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
 	useEffect(() => {
 		localStorage.setItem('meetscribe_include_mic', JSON.stringify(includeMic))
 	}, [includeMic])
@@ -104,6 +113,14 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		chunkIndexRef.current = 0
 		meetingId.current = null
 		setWakeLockStatus('inactive')
+		setIsPaused(false)
+		isPausedRef.current = false
+		pausedDurationRef.current = 0
+		pausedAtRef.current = null
+		if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current)
+		chunkTimerRef.current = null
+		if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current)
+		heartbeatIntervalRef.current = null
 	}
 
 	const pollMeetingStatus = useCallback(async () => {
@@ -212,14 +229,27 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 	const stopRecording = useCallback(
 		async (isFinal: boolean = true) => {
-			if (mediaRef.current && mediaRef.current.state === 'recording') {
+			// Clear pause-related timers first
+			if (heartbeatIntervalRef.current) {
+				clearInterval(heartbeatIntervalRef.current)
+				heartbeatIntervalRef.current = null
+			}
+			if (chunkTimerRef.current) {
+				clearTimeout(chunkTimerRef.current)
+				chunkTimerRef.current = null
+			}
+			// Stop recorder regardless of whether it's recording or paused
+			if (mediaRef.current && mediaRef.current.state !== 'inactive') {
 				mediaRef.current.stop()
 			}
 			if (isFinal) {
+				setIsPaused(false)
+				isPausedRef.current = false
+				pausedDurationRef.current = 0
+				pausedAtRef.current = null
 				setRecording(false)
 				setIsProcessing(true)
 
-				// --- NEW: Release wake lock ---
 				if (wakeLockSentinelRef.current) {
 					await wakeLockSentinelRef.current.release()
 					wakeLockSentinelRef.current = null
@@ -241,7 +271,10 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				animationFrameRef.current = null
 				analyserRef.current = null
 
-				if (timerRef.current) clearInterval(timerRef.current)
+				if (timerRef.current) {
+					clearInterval(timerRef.current)
+					timerRef.current = null
+				}
 				await new Promise((resolve) => setTimeout(resolve, 500))
 				const finalBlob = new Blob([], { type: mediaRef.current?.mimeType || 'audio/webm' })
 				await uploadChunk(finalBlob, chunkIndexRef.current, true)
@@ -249,6 +282,50 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		},
 		[uploadChunk],
 	)
+
+	const pauseRecording = useCallback(() => {
+		if (!isPausedRef.current && mediaRef.current && mediaRef.current.state === 'recording') {
+			mediaRef.current.pause()
+			setIsPaused(true)
+			isPausedRef.current = true
+			pausedAtRef.current = Date.now()
+			if (timerRef.current) clearInterval(timerRef.current)
+			timerRef.current = null
+			if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current)
+			chunkTimerRef.current = null
+			heartbeatIntervalRef.current = setInterval(async () => {
+				if (!meetingId.current) return
+				try {
+					await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/heartbeat`, { method: 'POST' })
+				} catch {
+					// Silently ignore — one missed heartbeat is within the safety margin
+				}
+			}, 90_000)
+		}
+	}, [])
+
+	const resumeRecording = useCallback(() => {
+		if (isPausedRef.current && mediaRef.current && mediaRef.current.state === 'paused') {
+			mediaRef.current.resume()
+			if (pausedAtRef.current !== null) {
+				pausedDurationRef.current += Date.now() - pausedAtRef.current
+				pausedAtRef.current = null
+			}
+			setIsPaused(false)
+			isPausedRef.current = false
+			if (heartbeatIntervalRef.current) {
+				clearInterval(heartbeatIntervalRef.current)
+				heartbeatIntervalRef.current = null
+			}
+			timerRef.current = setInterval(() => {
+				setRecordingTime(Math.floor((Date.now() - startTimeRef.current - pausedDurationRef.current) / 1000))
+			}, 1000)
+			const recorderAtResume = mediaRef.current
+			chunkTimerRef.current = setTimeout(() => {
+				if (recorderAtResume && recorderAtResume.state === 'recording') recorderAtResume.stop()
+			}, CHUNK_DURATION_MS)
+		}
+	}, [])
 
 	const startLiveRecording = useCallback(
 		async (source: 'mic' | 'system', drawWaveform: () => void, initialContext: string) => {
@@ -312,7 +389,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				await createMeetingOnBackend(`Recording ${new Date().toLocaleString()}`, initialContext)
 
 				pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
-				timerRef.current = setInterval(() => setRecordingTime(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000)
+				timerRef.current = setInterval(() => {
+				setRecordingTime(Math.floor((Date.now() - startTimeRef.current - pausedDurationRef.current) / 1000))
+			}, 1000)
 
 				const createAndStartRecorder = () => {
 					if (!streamRef.current) return
@@ -328,7 +407,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 						if (isRecordingRef.current) createAndStartRecorder()
 					}
 					recorder.start()
-					setTimeout(() => {
+					chunkTimerRef.current = setTimeout(() => {
 						if (recorder.state === 'recording') recorder.stop()
 					}, CHUNK_DURATION_MS)
 				}
@@ -434,7 +513,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
 			if (timerRef.current) clearInterval(timerRef.current)
 			if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
-			// --- NEW: Ensure wake lock is released on component unmount ---
+			if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current)
+			if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current)
 			if (wakeLockSentinelRef.current) {
 				wakeLockSentinelRef.current.release()
 			}
@@ -458,6 +538,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		setSelectedFile,
 		startLiveRecording,
 		stopRecording,
+		isPaused,
+		pauseRecording,
+		resumeRecording,
 		startFileProcessing,
 		transcriptionSpeedLabel,
 		analyserRef,
