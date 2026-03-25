@@ -65,6 +65,8 @@ export default function Summary() {
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+	const [transcriptCopied, setTranscriptCopied] = useState(false)
+	const transcriptCopyTimerRef = useRef<NodeJS.Timeout | null>(null)
 
 	// Rich-text inline editor state
 	const titleRef = useRef<HTMLHeadingElement>(null)
@@ -438,13 +440,37 @@ export default function Summary() {
 					border: `1px solid ${currentThemeColors.border}`,
 				}}>
 					<h4 onClick={() => setIsTranscriptVisible(!isTranscriptVisible)}
-						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center' }}>
-						<span style={{
-							display: 'inline-block',
-							transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
-							transition: 'transform 0.2s', marginRight: '8px',
-						}}>▶</span>{' '}
-						🎤 Transcript
+						style={{ cursor: 'pointer', userSelect: 'none', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+						<span style={{ display: 'flex', alignItems: 'center' }}>
+							<span style={{
+								display: 'inline-block',
+								transform: isTranscriptVisible ? 'rotate(90deg)' : 'rotate(0deg)',
+								transition: 'transform 0.2s', marginRight: '8px',
+							}}>▶</span>{' '}
+							🎤 Transcript
+						</span>
+						<button
+							onClick={(e) => {
+								e.stopPropagation()
+								navigator.clipboard.writeText(transcript || '').then(() => {
+									setTranscriptCopied(true)
+									if (transcriptCopyTimerRef.current) clearTimeout(transcriptCopyTimerRef.current)
+									transcriptCopyTimerRef.current = setTimeout(() => setTranscriptCopied(false), 3000)
+								})
+							}}
+							title='Copy transcript'
+							style={{
+								padding: '3px 7px', border: `1px solid ${currentThemeColors.border}`,
+								borderRadius: '6px', backgroundColor: currentThemeColors.backgroundSecondary,
+								color: currentThemeColors.secondaryText, cursor: 'pointer',
+								display: 'flex', alignItems: 'center', gap: '4px',
+								fontSize: '11px', lineHeight: 1, fontFamily: 'inherit',
+							}}>
+							{transcriptCopied
+								? <span>Copied!</span>
+								: <svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><rect x='9' y='9' width='13' height='13' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg>
+							}
+						</button>
 					</h4>
 					{isTranscriptVisible && (
 						<pre style={{ marginTop: '16px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>
