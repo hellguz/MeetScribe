@@ -404,8 +404,8 @@ export default function Summary() {
 								}
 							}}
 							style={{
-								padding: '20px 24px',
-								lineHeight: '1.7',
+								padding: '6px 24px 20px',
+								lineHeight: '1.5',
 								fontSize: '15px',
 								outline: 'none',
 								cursor: isEditing ? 'text' : 'default',

@@ -26,12 +26,12 @@ body {
 
 /* Section headings (### Topic) */
 .markdown-content h3 {
-  font-size: 0.95em;
-  font-weight: 650;
+  font-size: 1.1em;
+  font-weight: 550;
   letter-spacing: 0.01em;
-  margin: 1.1em 0 0.3em;
+  margin: 2.1em 0 0.5em;
   text-transform: uppercase;
-  opacity: 0.55;
+  opacity: 0.6;
 }
 
 /* Subtitle / context line (#### Project — Team) */
