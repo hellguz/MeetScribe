@@ -231,7 +231,7 @@ export default function Summary() {
 			<ThemeToggle />
 
 			{/* Top nav */}
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
 				<button onClick={() => navigate('/record')} style={{
 					background: 'none', border: 'none', cursor: 'pointer',
 					color: currentThemeColors.secondaryText, fontSize: '15px', fontFamily: 'inherit',
@@ -268,26 +268,23 @@ export default function Summary() {
 			{/* Settings card */}
 			{(hasSummary || isProcessing) && (
 			<div style={{
-				backgroundColor: currentThemeColors.background, padding: '16px',
-				borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '24px',
+				backgroundColor: currentThemeColors.background, padding: '10px 12px',
+				borderRadius: '12px', border: `1px solid ${currentThemeColors.border}`, marginBottom: '12px',
 			}}>
-				<div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+				<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
 							<SummaryLengthSelector value={currentMeetingLength} disabled={isRegenerating || isProcessing} onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })} />
 							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 						<div>
-							<label htmlFor="context-editor" style={{ display: 'block', fontWeight: 500, marginBottom: '8px', fontSize: '14px' }}>
-								Context
-							</label>
 							<textarea id="context-editor" value={editedContext ?? ''} onChange={(e) => setEditedContext(e.target.value)}
-								placeholder="Add participant names, project codes, or key terms here to improve summary accuracy. Changes will trigger a regeneration."
+								placeholder="Context: participant names, project codes, key terms..."
 								disabled={isRegenerating || isProcessing}
 								style={{
-									width: '100%', minHeight: '60px', padding: '10px 12px', borderRadius: '8px',
+									width: '100%', minHeight: '32px', padding: '5px 8px', borderRadius: '6px',
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
-									color: currentThemeColors.input.text, fontSize: '14px',
+									color: currentThemeColors.input.text, fontSize: '13px',
 									resize: 'vertical', boxSizing: 'border-box',
 									opacity: (isRegenerating || isProcessing) ? 0.7 : 1,
 								}}
@@ -295,14 +292,14 @@ export default function Summary() {
 							{contextHasChanged && (
 								<button onClick={handleContextUpdateConfirm} disabled={isRegenerating || isProcessing}
 									style={{
-										marginTop: '12px', padding: '8px 16px', border: 'none', borderRadius: '8px',
+										marginTop: '6px', padding: '5px 12px', border: 'none', borderRadius: '6px',
 										backgroundColor: currentThemeColors.button.primary,
 										color: currentThemeColors.button.primaryText,
-										fontSize: '14px', fontWeight: '500',
+										fontSize: '13px', fontWeight: '500',
 										cursor: (isRegenerating || isProcessing) ? 'not-allowed' : 'pointer',
 										opacity: (isRegenerating || isProcessing) ? 0.6 : 1, transition: 'all 0.2s ease',
 									}}>
-									Apply & Regenerate Summary
+									Apply & Regenerate
 								</button>
 							)}
 						</div>
