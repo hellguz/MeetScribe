@@ -7,6 +7,9 @@ import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import { CopyTextIcon, CopyMarkdownIcon, EditIcon } from '../components/Icons'
+import FavoriteButton from '../components/FavoriteButton'
+import TagsManager from '../components/TagsManager'
+import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMeetingTag } from '../utils/tags'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
@@ -72,6 +75,8 @@ export default function Summary() {
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const [transcriptCopied, setTranscriptCopied] = useState(false)
 	const transcriptCopyTimerRef = useRef<NodeJS.Timeout | null>(null)
+	const [, setFavTagTick] = useState(0)
+	const refreshFavTags = useCallback(() => setFavTagTick((t) => t + 1), [])
 
 	// Rich-text inline editor state
 	const titleRef = useRef<HTMLHeadingElement>(null)
@@ -314,6 +319,27 @@ export default function Summary() {
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 								<EditIcon />
 							</button>
+							{mid && (
+								<>
+									<FavoriteButton
+										isFavorite={checkFavorite(mid)}
+										onToggle={() => {
+											toggleFavorite(mid)
+											refreshFavTags()
+										}}
+										theme={currentThemeColors}
+									/>
+									<TagsManager
+										selectedTagIds={getMeetingTagIds(mid)}
+										onToggleTag={(tagId) => {
+											toggleMeetingTag(mid, tagId)
+											refreshFavTags()
+										}}
+										onTagsChanged={refreshFavTags}
+										theme={currentThemeColors}
+									/>
+								</>
+							)}
 						</>
 					)}
 					<ThemeToggle />

@@ -65,3 +65,29 @@ export const TrashIcon: React.FC<IconProps> = ({ size = 14 }) => (
 		<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 	</svg>
 )
+
+export const StarIcon: React.FC<IconProps & { filled?: boolean }> = ({ size = 14, filled = false }) => (
+	<svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+		<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+	</svg>
+)
+
+export const PlusIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<line x1="12" y1="5" x2="12" y2="19" />
+		<line x1="5" y1="12" x2="19" y2="12" />
+	</svg>
+)
+
+export const CheckIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<polyline points="20 6 9 17 4 12" />
+	</svg>
+)
+
+export const CloseIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<line x1="18" y1="6" x2="6" y2="18" />
+		<line x1="6" y1="6" x2="18" y2="18" />
+	</svg>
+)
