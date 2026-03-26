@@ -27,6 +27,8 @@ const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme }>
 				borderRadius: '6px 0 0 6px',
 				backgroundColor: theme.backgroundSecondary,
 				lineHeight: 1,
+				boxSizing: 'border-box',
+				minHeight: '26px',
 			}}>
 			{selected.map((t) => (
 				<span key={t.id} title={t.name} style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color, display: 'inline-block', flexShrink: 0 }} />
