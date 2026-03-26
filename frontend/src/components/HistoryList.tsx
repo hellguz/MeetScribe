@@ -103,7 +103,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-											{/* Favorite & Tags - always visible if active, otherwise on hover */}
+											{/* Tags & Favorite - always visible if active, otherwise on hover */}
 											<div
 												style={{
 													display: 'flex',
@@ -111,14 +111,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													gap: '4px',
 													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
 												}}>
-												<FavoriteButton
-													isFavorite={fav}
-													onToggle={() => {
-														toggleFavorite(m.id)
-														refresh()
-													}}
-													theme={currentThemeColors}
-												/>
 												<TagsManager
 													selectedTagIds={tagIds}
 													onToggleTag={(tagId) => {
@@ -126,6 +118,14 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 														refresh()
 													}}
 													onTagsChanged={refresh}
+													theme={currentThemeColors}
+												/>
+												<FavoriteButton
+													isFavorite={fav}
+													onToggle={() => {
+														toggleFavorite(m.id)
+														refresh()
+													}}
 													theme={currentThemeColors}
 												/>
 											</div>

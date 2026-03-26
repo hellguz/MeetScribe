@@ -321,14 +321,6 @@ export default function Summary() {
 							</button>
 							{mid && (
 								<>
-									<FavoriteButton
-										isFavorite={checkFavorite(mid)}
-										onToggle={() => {
-											toggleFavorite(mid)
-											refreshFavTags()
-										}}
-										theme={currentThemeColors}
-									/>
 									<TagsManager
 										selectedTagIds={getMeetingTagIds(mid)}
 										onToggleTag={(tagId) => {
@@ -336,6 +328,14 @@ export default function Summary() {
 											refreshFavTags()
 										}}
 										onTagsChanged={refreshFavTags}
+										theme={currentThemeColors}
+									/>
+									<FavoriteButton
+										isFavorite={checkFavorite(mid)}
+										onToggle={() => {
+											toggleFavorite(mid)
+											refreshFavTags()
+										}}
 										theme={currentThemeColors}
 									/>
 								</>
