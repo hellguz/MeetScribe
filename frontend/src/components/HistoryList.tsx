@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { MeetingMeta } from '../utils/history'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { useTheme } from '../contexts/ThemeContext'
+import { EditIcon, TrashIcon } from './Icons'
 
 interface HistoryListProps {
 	history: MeetingMeta[]
@@ -83,26 +84,62 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 									<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }} onClick={() => navigate(`/summary/${m.id}`)}>
 										{m.title}
 									</span>
-									<div style={{ display: 'flex', alignItems: 'center', visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden' }}>
-										<span
+									<div
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
+											borderRadius: '6px',
+											overflow: 'hidden',
+											border: `1px solid ${currentThemeColors.border}`,
+											backgroundColor: currentThemeColors.backgroundSecondary,
+										}}>
+										<button
 											onClick={(e) => {
 												e.stopPropagation()
 												setEditingMeetingId(m.id)
 												setEditingTitle(m.title)
 											}}
-											style={{ fontSize: '15px', cursor: 'pointer', marginRight: '10px' }}
-											title="Edit title">
-											✏️
-										</span>
-										<span
+											title="Edit title"
+											style={{
+												padding: '5px 7px',
+												border: 'none',
+												backgroundColor: 'transparent',
+												color: currentThemeColors.secondaryText,
+												cursor: 'pointer',
+												lineHeight: 1,
+												display: 'flex',
+												alignItems: 'center',
+												justifyContent: 'center',
+												transition: 'background-color 0.2s ease',
+											}}
+											onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+											<EditIcon />
+										</button>
+										<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+										<button
 											onClick={(e) => {
 												e.stopPropagation()
 												handleDeleteClick(m.id)
 											}}
-											style={{ fontSize: '15px', cursor: 'pointer' }}
-											title="Delete meeting">
-											❌
-										</span>
+											title="Delete meeting"
+											style={{
+												padding: '5px 7px',
+												border: 'none',
+												backgroundColor: 'transparent',
+												color: currentThemeColors.secondaryText,
+												cursor: 'pointer',
+												lineHeight: 1,
+												display: 'flex',
+												alignItems: 'center',
+												justifyContent: 'center',
+												transition: 'background-color 0.2s ease',
+											}}
+											onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+											<TrashIcon />
+										</button>
 									</div>
 								</>
 							)}
