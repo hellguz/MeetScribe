@@ -105,6 +105,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
 											{/* Edit/Delete group - only on hover */}
 											<div
+												className="history-edit-delete"
 												style={{
 													display: 'flex',
 													alignItems: 'center',
