@@ -217,4 +217,7 @@ body {
 	.history-edit-delete {
 		display: none !important;
 	}
+	.history-fav-tags {
+		visibility: visible !important;
+	}
 }

@@ -164,6 +164,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 											</div>
 											{/* Tags & Favorite - always visible if active, otherwise on hover */}
 											<div
+												className="history-fav-tags"
 												style={{
 													display: 'flex',
 													alignItems: 'center',
