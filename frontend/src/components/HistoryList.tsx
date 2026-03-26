@@ -94,9 +94,14 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 									/>
 								) : (
 									<>
-										<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }} onClick={() => navigate(`/summary/${m.id}`)}>
-											{m.title}
-										</span>
+										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
+											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>
+												{m.title}
+											</span>
+											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
+												{new Date(m.started_at).toLocaleDateString()}
+											</span>
+										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
 											{/* Favorite & Tags - always visible if active, otherwise on hover */}
 											<div
@@ -185,41 +190,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 										</div>
 									</>
 								)}
-								<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px', flexShrink: 0 }}>
-									{m.status === 'pending' && (
-										<span
-											style={{
-												marginRight: 8,
-												color: theme === 'light' ? '#b45309' : '#fde047',
-												backgroundColor: theme === 'light' ? '#fef3c7' : '#422006',
-												padding: '2px 6px',
-												borderRadius: '4px',
-												fontSize: 12,
-												fontWeight: '500',
-											}}>
-											Pending
-										</span>
-									)}
-									{m.status === 'complete' && (
-										<span
-											style={{
-												marginRight: 8,
-												color: theme === 'light' ? '#057a55' : '#34d399',
-												backgroundColor: theme === 'light' ? '#def7ec' : '#047481',
-												padding: '2px 6px',
-												borderRadius: '4px',
-												fontSize: 12,
-												fontWeight: '500',
-											}}>
-											Complete
-										</span>
-									)}
-									<span
-										style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }}
-										onClick={() => navigate(`/summary/${m.id}`)}>
-										{new Date(m.started_at).toLocaleDateString()}
-									</span>
-								</div>
 							</div>
 						</li>
 					)
