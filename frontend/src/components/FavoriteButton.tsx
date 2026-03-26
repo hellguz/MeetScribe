@@ -9,7 +9,7 @@ interface FavoriteButtonProps {
 	size?: number
 }
 
-const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 14 }) => {
+const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 16 }) => {
 	return (
 		<button
 			onClick={(e) => {
@@ -18,7 +18,7 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, t
 			}}
 			title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
 			style={{
-				padding: '5px 7px',
+				padding: '7px 9px',
 				border: `1px solid ${theme.border}`,
 				borderRadius: '6px',
 				backgroundColor: isFavorite ? (theme.body === '#FFFFFF' ? '#fefce8' : '#422006') : theme.backgroundSecondary,
