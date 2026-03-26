@@ -103,32 +103,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-											{/* Tags & Favorite - always visible if active, otherwise on hover */}
-											<div
-												style={{
-													display: 'flex',
-													alignItems: 'center',
-													gap: '4px',
-													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
-												}}>
-												<TagsManager
-													selectedTagIds={tagIds}
-													onToggleTag={(tagId) => {
-														toggleMeetingTag(m.id, tagId)
-														refresh()
-													}}
-													onTagsChanged={refresh}
-													theme={currentThemeColors}
-												/>
-												<FavoriteButton
-													isFavorite={fav}
-													onToggle={() => {
-														toggleFavorite(m.id)
-														refresh()
-													}}
-													theme={currentThemeColors}
-												/>
-											</div>
 											{/* Edit/Delete group - only on hover */}
 											<div
 												style={{
@@ -186,6 +160,32 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 													<TrashIcon />
 												</button>
+											</div>
+											{/* Tags & Favorite - always visible if active, otherwise on hover */}
+											<div
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: '4px',
+													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
+												}}>
+												<TagsManager
+													selectedTagIds={tagIds}
+													onToggleTag={(tagId) => {
+														toggleMeetingTag(m.id, tagId)
+														refresh()
+													}}
+													onTagsChanged={refresh}
+													theme={currentThemeColors}
+												/>
+												<FavoriteButton
+													isFavorite={fav}
+													onToggle={() => {
+														toggleFavorite(m.id)
+														refresh()
+													}}
+													theme={currentThemeColors}
+												/>
 											</div>
 										</div>
 									</>
