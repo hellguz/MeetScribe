@@ -6,7 +6,11 @@ import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon } from '../components/Icons'
+import { removeMeeting } from '../utils/history'
+import FavoriteButton from '../components/FavoriteButton'
+import TagsManager from '../components/TagsManager'
+import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMeetingTag } from '../utils/tags'
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
@@ -72,6 +76,8 @@ export default function Summary() {
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const [transcriptCopied, setTranscriptCopied] = useState(false)
 	const transcriptCopyTimerRef = useRef<NodeJS.Timeout | null>(null)
+	const [, setFavTagTick] = useState(0)
+	const refreshFavTags = useCallback(() => setFavTagTick((t) => t + 1), [])
 
 	// Rich-text inline editor state
 	const titleRef = useRef<HTMLHeadingElement>(null)
@@ -230,6 +236,18 @@ export default function Summary() {
 		}
 	}
 
+	const handleDelete = async () => {
+		if (!mid) return
+		if (!window.confirm('Are you sure you want to permanently delete this meeting and its summary? This cannot be undone.')) return
+		removeMeeting(mid)
+		try {
+			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`, { method: 'DELETE' })
+		} catch {
+			// best-effort server delete
+		}
+		navigate('/record')
+	}
+
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
 	const hasSummary = !!summaryMarkdown && !isProcessing
@@ -250,7 +268,7 @@ export default function Summary() {
 	}
 
 	return (
-		<div style={{ maxWidth: 800, margin: '0 auto', padding: '12px 24px 24px', color: currentThemeColors.text }}>
+		<div className="page-container" style={{ maxWidth: 800, margin: '0 auto', padding: '12px 24px 24px', color: currentThemeColors.text }}>
 			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
 				<button
@@ -295,25 +313,53 @@ export default function Summary() {
 									<CopyMarkdownIcon />
 								</button>
 							</div>
-							<button
-								onClick={() => enterEditMode()}
-								title="Edit summary"
+							<div
 								style={{
-									padding: '5px 7px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '6px',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.secondaryText,
-									cursor: 'pointer',
 									display: 'flex',
-									alignItems: 'center',
-									lineHeight: 1,
-									transition: 'background-color 0.2s ease',
-								}}
-								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-								<EditIcon />
-							</button>
+									borderRadius: '6px',
+									overflow: 'hidden',
+									border: `1px solid ${currentThemeColors.border}`,
+									backgroundColor: currentThemeColors.backgroundSecondary,
+								}}>
+								<button
+									onClick={() => enterEditMode()}
+									title="Edit summary"
+									style={copyButtonStyle}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<EditIcon />
+								</button>
+								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+								<button
+									onClick={handleDelete}
+									title="Delete meeting"
+									style={copyButtonStyle}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<TrashIcon />
+								</button>
+							</div>
+							{mid && (
+								<>
+									<TagsManager
+										selectedTagIds={getMeetingTagIds(mid)}
+										onToggleTag={(tagId) => {
+											toggleMeetingTag(mid, tagId)
+											refreshFavTags()
+										}}
+										onTagsChanged={refreshFavTags}
+										theme={currentThemeColors}
+									/>
+									<FavoriteButton
+										isFavorite={checkFavorite(mid)}
+										onToggle={() => {
+											toggleFavorite(mid)
+											refreshFavTags()
+										}}
+										theme={currentThemeColors}
+									/>
+								</>
+							)}
 						</>
 					)}
 					<ThemeToggle />

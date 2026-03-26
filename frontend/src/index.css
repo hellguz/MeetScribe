@@ -212,3 +212,16 @@ body {
 .paused-label {
 	animation: pausedPulse 2s ease-in-out infinite;
 }
+
+@media (max-width: 640px) {
+	.page-container {
+		padding-left: 10px !important;
+		padding-right: 10px !important;
+	}
+	.history-edit-delete {
+		display: none !important;
+	}
+	.history-fav-tags {
+		visibility: visible !important;
+	}
+}

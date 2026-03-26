@@ -1,9 +1,12 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MeetingMeta } from '../utils/history'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { useTheme } from '../contexts/ThemeContext'
 import { EditIcon, TrashIcon } from './Icons'
+import FavoriteButton from './FavoriteButton'
+import TagsManager from './TagsManager'
+import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMeetingTag } from '../utils/tags'
 
 interface HistoryListProps {
 	history: MeetingMeta[]
@@ -18,6 +21,10 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 	const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null)
 	const [editingTitle, setEditingTitle] = useState<string>('')
 	const [hoveredMeetingId, setHoveredMeetingId] = useState<string | null>(null)
+
+	// Force re-render when favorites/tags change
+	const [, setTick] = useState(0)
+	const refresh = useCallback(() => setTick((t) => t + 1), [])
 
 	const handleTitleChangeConfirm = async () => {
 		if (!editingMeetingId || !editingTitle.trim()) {
@@ -44,143 +51,151 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 		<div style={{ marginTop: '40px', marginBottom: '20px' }}>
 			<h2 style={{ margin: '12px 0 12px 0', fontSize: 16, textAlign: 'center', color: currentThemeColors.text }}>Previous Meetings</h2>
 			<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: `1px solid ${currentThemeColors.border}`, borderRadius: '8px' }}>
-				{history.map((m, index) => (
-					<li
-						key={m.id}
-						style={{
-							padding: '12px 12px',
-							borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
-							color: currentThemeColors.text,
-						}}
-						onMouseEnter={() => setHoveredMeetingId(m.id)}
-						onMouseLeave={() => setHoveredMeetingId(null)}>
-						<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-							{editingMeetingId === m.id ? (
-								<input
-									type="text"
-									value={editingTitle}
-									onChange={(e) => setEditingTitle(e.target.value)}
-									onBlur={handleTitleChangeConfirm}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter') handleTitleChangeConfirm()
-										else if (e.key === 'Escape') setEditingMeetingId(null)
-										e.stopPropagation()
-									}}
-									onClick={(e) => e.stopPropagation()}
-									style={{
-										flexGrow: 1,
-										padding: '4px 8px',
-										fontSize: '1em',
-										marginRight: '10px',
-										border: `1px solid ${currentThemeColors.input.border}`,
-										borderRadius: '4px',
-										backgroundColor: currentThemeColors.input.background,
-										color: currentThemeColors.input.text,
-									}}
-									autoFocus
-								/>
-							) : (
-								<>
-									<span style={{ fontWeight: 500, flexGrow: 1, cursor: 'pointer', fontSize: '0.9em' }} onClick={() => navigate(`/summary/${m.id}`)}>
-										{m.title}
-									</span>
-									<div
+				{history.map((m, index) => {
+					const fav = checkFavorite(m.id)
+					const tagIds = getMeetingTagIds(m.id)
+					const isHovered = hoveredMeetingId === m.id
+					const showFavTagAlways = fav || tagIds.length > 0
+
+					return (
+						<li
+							key={m.id}
+							style={{
+								padding: '12px 12px',
+								borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
+								color: currentThemeColors.text,
+							}}
+							onMouseEnter={() => setHoveredMeetingId(m.id)}
+							onMouseLeave={() => setHoveredMeetingId(null)}>
+							<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+								{editingMeetingId === m.id ? (
+									<input
+										type="text"
+										value={editingTitle}
+										onChange={(e) => setEditingTitle(e.target.value)}
+										onBlur={handleTitleChangeConfirm}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') handleTitleChangeConfirm()
+											else if (e.key === 'Escape') setEditingMeetingId(null)
+											e.stopPropagation()
+										}}
+										onClick={(e) => e.stopPropagation()}
 										style={{
-											display: 'flex',
-											alignItems: 'center',
-											visibility: hoveredMeetingId === m.id ? 'visible' : 'hidden',
-											borderRadius: '6px',
-											overflow: 'hidden',
-											border: `1px solid ${currentThemeColors.border}`,
-											backgroundColor: currentThemeColors.backgroundSecondary,
-										}}>
-										<button
-											onClick={(e) => {
-												e.stopPropagation()
-												setEditingMeetingId(m.id)
-												setEditingTitle(m.title)
-											}}
-											title="Edit title"
-											style={{
-												padding: '5px 7px',
-												border: 'none',
-												backgroundColor: 'transparent',
-												color: currentThemeColors.secondaryText,
-												cursor: 'pointer',
-												lineHeight: 1,
-												display: 'flex',
-												alignItems: 'center',
-												justifyContent: 'center',
-												transition: 'background-color 0.2s ease',
-											}}
-											onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-											<EditIcon />
-										</button>
-										<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
-										<button
-											onClick={(e) => {
-												e.stopPropagation()
-												handleDeleteClick(m.id)
-											}}
-											title="Delete meeting"
-											style={{
-												padding: '5px 7px',
-												border: 'none',
-												backgroundColor: 'transparent',
-												color: currentThemeColors.secondaryText,
-												cursor: 'pointer',
-												lineHeight: 1,
-												display: 'flex',
-												alignItems: 'center',
-												justifyContent: 'center',
-												transition: 'background-color 0.2s ease',
-											}}
-											onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-											<TrashIcon />
-										</button>
-									</div>
-								</>
-							)}
-							<div style={{ display: 'flex', alignItems: 'center', marginLeft: '10px', flexShrink: 0 }}>
-								{m.status === 'pending' && (
-									<span
-										style={{
-											marginRight: 8,
-											color: theme === 'light' ? '#b45309' : '#fde047',
-											backgroundColor: theme === 'light' ? '#fef3c7' : '#422006',
-											padding: '2px 6px',
+											flexGrow: 1,
+											padding: '4px 8px',
+											fontSize: '1em',
+											marginRight: '10px',
+											border: `1px solid ${currentThemeColors.input.border}`,
 											borderRadius: '4px',
-											fontSize: 12,
-											fontWeight: '500',
-										}}>
-										Pending
-									</span>
+											backgroundColor: currentThemeColors.input.background,
+											color: currentThemeColors.input.text,
+										}}
+										autoFocus
+									/>
+								) : (
+									<>
+										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
+											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>
+												{m.title}
+											</span>
+											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
+												{new Date(m.started_at).toLocaleDateString()}
+											</span>
+										</div>
+										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+											{/* Edit/Delete group - only on hover */}
+											<div
+												className="history-edit-delete"
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													visibility: isHovered ? 'visible' : 'hidden',
+													borderRadius: '6px',
+													overflow: 'hidden',
+													border: `1px solid ${currentThemeColors.border}`,
+													backgroundColor: currentThemeColors.backgroundSecondary,
+												}}>
+												<button
+													onClick={(e) => {
+														e.stopPropagation()
+														setEditingMeetingId(m.id)
+														setEditingTitle(m.title)
+													}}
+													title="Edit title"
+													style={{
+														padding: '5px 7px',
+														border: 'none',
+														backgroundColor: 'transparent',
+														color: currentThemeColors.secondaryText,
+														cursor: 'pointer',
+														lineHeight: 1,
+														display: 'flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														transition: 'background-color 0.2s ease',
+													}}
+													onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+													onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+													<EditIcon />
+												</button>
+												<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+												<button
+													onClick={(e) => {
+														e.stopPropagation()
+														handleDeleteClick(m.id)
+													}}
+													title="Delete meeting"
+													style={{
+														padding: '5px 7px',
+														border: 'none',
+														backgroundColor: 'transparent',
+														color: currentThemeColors.secondaryText,
+														cursor: 'pointer',
+														lineHeight: 1,
+														display: 'flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														transition: 'background-color 0.2s ease',
+													}}
+													onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+													onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+													<TrashIcon />
+												</button>
+											</div>
+											{/* Tags & Favorite - always visible if active, otherwise on hover */}
+											<div
+												className="history-fav-tags"
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: '4px',
+													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
+												}}>
+												<TagsManager
+													selectedTagIds={tagIds}
+													onToggleTag={(tagId) => {
+														toggleMeetingTag(m.id, tagId)
+														refresh()
+													}}
+													onTagsChanged={refresh}
+													theme={currentThemeColors}
+												/>
+												<FavoriteButton
+													isFavorite={fav}
+													onToggle={() => {
+														toggleFavorite(m.id)
+														refresh()
+													}}
+													theme={currentThemeColors}
+												/>
+											</div>
+										</div>
+									</>
 								)}
-								{m.status === 'complete' && (
-									<span
-										style={{
-											marginRight: 8,
-											color: theme === 'light' ? '#057a55' : '#34d399',
-											backgroundColor: theme === 'light' ? '#def7ec' : '#047481',
-											padding: '2px 6px',
-											borderRadius: '4px',
-											fontSize: 12,
-											fontWeight: '500',
-										}}>
-										Complete
-									</span>
-								)}
-								<span
-									style={{ fontStyle: 'italic', color: currentThemeColors.secondaryText, fontSize: 14, cursor: 'pointer' }}
-									onClick={() => navigate(`/summary/${m.id}`)}>
-									{new Date(m.started_at).toLocaleDateString()}
-								</span>
 							</div>
-						</div>
-					</li>
-				))}
+						</li>
+					)
+				})}
 			</ul>
 		</div>
 	)
