@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Tag, getTags, createTag, updateTag, deleteTag, getDefaultColors } from '../utils/tags'
-import { PlusIcon, EditIcon, CloseIcon } from './Icons'
+import { TagIcon, PlusIcon, EditIcon, CloseIcon } from './Icons'
 import { AppTheme } from '../styles/theme'
 
 interface TagsManagerProps {
@@ -226,7 +226,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 				}}
 				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
 				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}>
-				<PlusIcon size={size} />
+				<TagIcon size={size} />
 			</button>
 
 			{isOpen && (
