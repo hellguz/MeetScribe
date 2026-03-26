@@ -218,7 +218,7 @@ export default function Record() {
 	}
 
 	return (
-		<div style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
+		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
 				<div style={{ flex: 1 }} />
 				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
