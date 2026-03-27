@@ -281,7 +281,7 @@ export default function Summary() {
 						fontSize: '15px',
 						fontFamily: 'inherit',
 					}}>
-					← Back to Recordings
+					← Back
 				</button>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
 					{hasSummary && !isProcessing && (
