@@ -76,7 +76,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 	const [isPaused, setIsPaused] = useState(false)
 	const isPausedRef = useRef(false)
-	useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
+	useEffect(() => {
+		isPausedRef.current = isPaused
+	}, [isPaused])
 	const pausedDurationRef = useRef<number>(0)
 	const pausedAtRef = useRef<number | null>(null)
 	const chunkTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -390,8 +392,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 				pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
 				timerRef.current = setInterval(() => {
-				setRecordingTime(Math.floor((Date.now() - startTimeRef.current - pausedDurationRef.current) / 1000))
-			}, 1000)
+					setRecordingTime(Math.floor((Date.now() - startTimeRef.current - pausedDurationRef.current) / 1000))
+				}, 1000)
 
 				const createAndStartRecorder = () => {
 					if (!streamRef.current) return

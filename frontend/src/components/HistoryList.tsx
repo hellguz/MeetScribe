@@ -55,7 +55,9 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 					const fav = checkFavorite(m.id)
 					const tagIds = getMeetingTagIds(m.id)
 					const isHovered = hoveredMeetingId === m.id
-					const showFavTagAlways = fav || tagIds.length > 0
+					const hasTags = tagIds.length > 0
+					// Show the fav/tags wrapper whenever there are dots, a star, or hover
+					const showFavTags = hasTags || fav || isHovered
 
 					return (
 						<li
@@ -95,9 +97,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 								) : (
 									<>
 										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
-											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>
-												{m.title}
-											</span>
+											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>{m.title}</span>
 											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
 												{new Date(m.started_at).toLocaleDateString()}
 											</span>
@@ -110,10 +110,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													display: 'flex',
 													alignItems: 'center',
 													visibility: isHovered ? 'visible' : 'hidden',
-													borderRadius: '6px',
-													overflow: 'hidden',
-													border: `1px solid ${currentThemeColors.border}`,
-													backgroundColor: currentThemeColors.backgroundSecondary,
 												}}>
 												<button
 													onClick={(e) => {
@@ -138,7 +134,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 													<EditIcon />
 												</button>
-												<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
 												<button
 													onClick={(e) => {
 														e.stopPropagation()
@@ -162,14 +157,14 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													<TrashIcon />
 												</button>
 											</div>
-											{/* Tags & Favorite - always visible if active, otherwise on hover */}
+											{/* Tags & Favorite - visible when dots/star present or hovered; individual items control own visibility */}
 											<div
 												className="history-fav-tags"
 												style={{
 													display: 'flex',
 													alignItems: 'center',
-													gap: '4px',
-													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
+													gap: '0',
+													visibility: showFavTags ? 'visible' : 'hidden',
 												}}>
 												<TagsManager
 													selectedTagIds={tagIds}
@@ -179,6 +174,8 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													}}
 													onTagsChanged={refresh}
 													theme={currentThemeColors}
+													ghost
+													iconVisible={isHovered}
 												/>
 												<FavoriteButton
 													isFavorite={fav}
@@ -187,6 +184,8 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 														refresh()
 													}}
 													theme={currentThemeColors}
+													ghost
+													visible={fav || isHovered}
 												/>
 											</div>
 										</div>

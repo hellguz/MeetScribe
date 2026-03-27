@@ -9,10 +9,12 @@ interface TagsManagerProps {
 	onTagsChanged: () => void
 	theme: AppTheme
 	size?: number
+	ghost?: boolean
+	iconVisible?: boolean
 }
 
 /** Compact colored dots showing selected tags. */
-const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme }> = ({ tags, selectedIds, theme }) => {
+const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme; ghost?: boolean }> = ({ tags, selectedIds, theme, ghost = false }) => {
 	const selected = tags.filter((t) => selectedIds.includes(t.id))
 	if (selected.length === 0) return null
 	return (
@@ -21,17 +23,21 @@ const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme }>
 				display: 'flex',
 				alignItems: 'center',
 				gap: '3px',
-				padding: '5px 6px',
-				border: `1px solid ${theme.border}`,
+				padding: ghost ? '7px 4px 7px 0' : '7px 8px',
+				border: ghost ? 'none' : `1px solid ${theme.border}`,
 				borderRight: 'none',
-				borderRadius: '6px 0 0 6px',
-				backgroundColor: theme.backgroundSecondary,
+				borderRadius: ghost ? 0 : '6px 0 0 6px',
+				backgroundColor: ghost ? 'transparent' : theme.backgroundSecondary,
 				lineHeight: 1,
 				boxSizing: 'border-box',
-				minHeight: '26px',
+				minHeight: '32px',
 			}}>
 			{selected.map((t) => (
-				<span key={t.id} title={t.name} style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color, display: 'inline-block', flexShrink: 0 }} />
+				<span
+					key={t.id}
+					title={t.name}
+					style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: t.color, display: 'inline-block', flexShrink: 0 }}
+				/>
 			))}
 		</div>
 	)
@@ -71,8 +77,8 @@ const TagForm: React.FC<{
 				}}
 				placeholder="Tag name"
 				style={{
-					padding: '4px 8px',
-					fontSize: '12px',
+					padding: '6px 8px',
+					fontSize: '14px',
 					border: `1px solid ${theme.input.border}`,
 					borderRadius: '4px',
 					backgroundColor: theme.input.background,
@@ -87,8 +93,8 @@ const TagForm: React.FC<{
 						key={c}
 						onClick={() => setColor(c)}
 						style={{
-							width: 18,
-							height: 18,
+							width: 20,
+							height: 20,
 							borderRadius: '50%',
 							backgroundColor: c,
 							border: color === c ? '2px solid ' + theme.text : '2px solid transparent',
@@ -104,8 +110,8 @@ const TagForm: React.FC<{
 					<button
 						onClick={onDelete}
 						style={{
-							padding: '3px 8px',
-							fontSize: '11px',
+							padding: '5px 10px',
+							fontSize: '13px',
 							border: 'none',
 							borderRadius: '4px',
 							backgroundColor: theme.button.danger,
@@ -120,8 +126,8 @@ const TagForm: React.FC<{
 				<button
 					onClick={onCancel}
 					style={{
-						padding: '3px 8px',
-						fontSize: '11px',
+						padding: '5px 10px',
+						fontSize: '13px',
 						border: `1px solid ${theme.border}`,
 						borderRadius: '4px',
 						backgroundColor: theme.background,
@@ -135,8 +141,8 @@ const TagForm: React.FC<{
 					onClick={handleSubmit}
 					disabled={!name.trim()}
 					style={{
-						padding: '3px 8px',
-						fontSize: '11px',
+						padding: '5px 10px',
+						fontSize: '13px',
 						border: 'none',
 						borderRadius: '4px',
 						backgroundColor: theme.button.primary,
@@ -152,7 +158,7 @@ const TagForm: React.FC<{
 	)
 }
 
-const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 14 }) => {
+const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 16, ghost = false, iconVisible = true }) => {
 	const [isOpen, setIsOpen] = useState(false)
 	const [tags, setTags] = useState<Tag[]>(getTags)
 	const [formMode, setFormMode] = useState<'none' | 'new' | string>('none') // 'none', 'new', or tag id for editing
@@ -204,18 +210,19 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 
 	return (
 		<div ref={containerRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-			{hasDots && <TagDots tags={tags} selectedIds={selectedTagIds} theme={theme} />}
+			{hasDots && <TagDots tags={tags} selectedIds={selectedTagIds} theme={theme} ghost={ghost} />}
 			<button
+				className="history-tag-icon-btn"
 				onClick={(e) => {
 					e.stopPropagation()
 					setIsOpen(!isOpen)
 				}}
 				title="Manage tags"
 				style={{
-					padding: '5px 7px',
-					border: `1px solid ${theme.border}`,
+					padding: '7px 9px',
+					border: ghost ? 'none' : `1px solid ${theme.border}`,
 					borderRadius: hasDots ? '0 6px 6px 0' : '6px',
-					backgroundColor: theme.backgroundSecondary,
+					backgroundColor: ghost ? 'transparent' : theme.backgroundSecondary,
 					color: theme.secondaryText,
 					cursor: 'pointer',
 					lineHeight: 1,
@@ -223,9 +230,10 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 					alignItems: 'center',
 					justifyContent: 'center',
 					transition: 'background-color 0.2s ease',
+					visibility: iconVisible ? 'visible' : 'hidden',
 				}}
-				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
-				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}>
+				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}
+				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 				<TagIcon size={size} />
 			</button>
 
@@ -267,7 +275,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 											style={{
 												display: 'flex',
 												alignItems: 'center',
-												padding: '6px 8px',
+												padding: '8px 10px',
 												cursor: 'pointer',
 												backgroundColor: isHovered ? theme.listItem.hoverBackground : 'transparent',
 												transition: 'background-color 0.1s',
@@ -285,7 +293,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 											/>
 											<span
 												style={{
-													fontSize: '12px',
+													fontSize: '14px',
 													color: theme.text,
 													flex: 1,
 													overflow: 'hidden',
@@ -302,7 +310,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 														setFormMode(tag.id)
 													}}
 													style={{
-														padding: '2px',
+														padding: '3px',
 														border: 'none',
 														background: 'none',
 														color: theme.secondaryText,
@@ -312,12 +320,10 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 														alignItems: 'center',
 														flexShrink: 0,
 													}}>
-													<EditIcon size={11} />
+													<EditIcon size={13} />
 												</button>
 											)}
-											{!isHovered && isSelected && (
-												<span style={{ fontSize: '11px', color: theme.secondaryText, flexShrink: 0 }}>✓</span>
-											)}
+											{!isHovered && isSelected && <span style={{ fontSize: '13px', color: theme.secondaryText, flexShrink: 0 }}>✓</span>}
 										</div>
 									)
 								})}
@@ -325,19 +331,19 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 							<div
 								style={{
 									borderTop: tags.length > 0 ? `1px solid ${theme.border}` : 'none',
-									padding: '6px 8px',
+									padding: '8px 10px',
 									cursor: 'pointer',
 									display: 'flex',
 									alignItems: 'center',
 									gap: '6px',
-									fontSize: '12px',
+									fontSize: '14px',
 									color: theme.secondaryText,
 									transition: 'background-color 0.1s',
 								}}
 								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.listItem.hoverBackground)}
 								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 								onClick={() => setFormMode('new')}>
-								<PlusIcon size={11} />
+								<PlusIcon size={13} />
 								<span>New Tag</span>
 							</div>
 						</>
