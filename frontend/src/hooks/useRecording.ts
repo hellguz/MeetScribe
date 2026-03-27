@@ -7,33 +7,52 @@ import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 
 const CHUNK_DURATION_MS = 30_000
 
-const encodeAudioChunk = (chunkBuffer: AudioBuffer): Promise<Blob> => {
-	return new Promise((resolve, reject) => {
-		const audioCtx = new AudioContext({ sampleRate: chunkBuffer.sampleRate })
-		const source = audioCtx.createBufferSource()
-		source.buffer = chunkBuffer
+/**
+ * Encodes an AudioBuffer as a WAV Blob synchronously (no real-time MediaRecorder needed).
+ * WAV is universally supported and Whisper/FFmpeg will correctly decode it on the backend.
+ */
+const encodeAudioChunkAsWav = (chunkBuffer: AudioBuffer): Blob => {
+	const numChannels = chunkBuffer.numberOfChannels
+	const sampleRate = chunkBuffer.sampleRate
+	const numSamples = chunkBuffer.length
+	const bytesPerSample = 2 // 16-bit PCM
+	const blockAlign = numChannels * bytesPerSample
+	const dataSize = numSamples * numChannels * bytesPerSample
+	const buffer = new ArrayBuffer(44 + dataSize)
+	const view = new DataView(buffer)
 
-		const dest = audioCtx.createMediaStreamDestination()
-		source.connect(dest)
+	const writeStr = (offset: number, str: string) => {
+		for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i))
+	}
 
-		const recorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm; codecs=opus' })
-		const chunks: Blob[] = []
+	// RIFF header
+	writeStr(0, 'RIFF')
+	view.setUint32(4, 36 + dataSize, true)
+	writeStr(8, 'WAVE')
+	// fmt chunk
+	writeStr(12, 'fmt ')
+	view.setUint32(16, 16, true)
+	view.setUint16(20, 1, true) // PCM
+	view.setUint16(22, numChannels, true)
+	view.setUint32(24, sampleRate, true)
+	view.setUint32(28, sampleRate * blockAlign, true)
+	view.setUint16(32, blockAlign, true)
+	view.setUint16(34, 16, true)
+	// data chunk
+	writeStr(36, 'data')
+	view.setUint32(40, dataSize, true)
 
-		recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
-		recorder.onstop = () => {
-			const blob = new Blob(chunks, { type: 'audio/webm; codecs=opus' })
-			resolve(blob)
-			audioCtx.close().catch(console.error)
+	// Write interleaved 16-bit PCM samples
+	let offset = 44
+	for (let i = 0; i < numSamples; i++) {
+		for (let ch = 0; ch < numChannels; ch++) {
+			const s = chunkBuffer.getChannelData(ch)[i]
+			view.setInt16(offset, Math.max(-1, Math.min(1, s)) * 0x7fff, true)
+			offset += 2
 		}
-		recorder.onerror = (e) => {
-			reject(e)
-			audioCtx.close().catch(console.error)
-		}
-		source.onended = () => recorder.stop()
+	}
 
-		recorder.start()
-		source.start(0)
-	})
+	return new Blob([buffer], { type: 'audio/wav' })
 }
 
 export const useRecording = (summaryLength: SummaryLength, languageState: SummaryLanguageState) => {
@@ -456,7 +475,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 						chunkBuffer.getChannelData(ch).set(originalBuffer.getChannelData(ch).subarray(startSample, endSample))
 					}
 
-					const blob = await encodeAudioChunk(chunkBuffer)
+					const blob = encodeAudioChunkAsWav(chunkBuffer)
 					await uploadChunk(blob, i, i === numChunks - 1)
 					setLocalChunksCount((c) => c + 1)
 				}

@@ -206,12 +206,11 @@ async def upload_chunk(
             mc = MeetingChunk(
                 meeting_id=meeting_id, chunk_index=chunk_index, path=str(chunk_path)
             )
+            mtg.received_chunks += 1
         else:
             mc.path = str(chunk_path)
             mc.text = None
         db.add(mc)
-
-        mtg.received_chunks += 1
         mtg.last_activity = dt.datetime.utcnow()
 
         if mtg.done:
