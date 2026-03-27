@@ -8,11 +8,13 @@ interface FavoriteButtonProps {
 	theme: AppTheme
 	size?: number
 	ghost?: boolean
+	visible?: boolean
 }
 
-const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 16, ghost = false }) => {
+const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 16, ghost = false, visible = true }) => {
 	return (
 		<button
+			className="history-fav-btn"
 			onClick={(e) => {
 				e.stopPropagation()
 				onToggle()
@@ -30,6 +32,7 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, t
 				alignItems: 'center',
 				justifyContent: 'center',
 				transition: 'background-color 0.2s ease, color 0.2s ease',
+				visibility: visible ? 'visible' : 'hidden',
 			}}
 			onMouseEnter={(e) => {
 				if (!isFavorite) e.currentTarget.style.backgroundColor = ghost ? theme.backgroundSecondary : theme.background

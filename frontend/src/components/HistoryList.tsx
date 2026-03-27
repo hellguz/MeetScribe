@@ -55,7 +55,9 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 					const fav = checkFavorite(m.id)
 					const tagIds = getMeetingTagIds(m.id)
 					const isHovered = hoveredMeetingId === m.id
-					const showFavTagAlways = fav || tagIds.length > 0
+					const hasTags = tagIds.length > 0
+					// Show the fav/tags wrapper whenever there are dots, a star, or hover
+					const showFavTags = hasTags || fav || isHovered
 
 					return (
 						<li
@@ -155,14 +157,14 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													<TrashIcon />
 												</button>
 											</div>
-											{/* Tags & Favorite - always visible if active, otherwise on hover */}
+											{/* Tags & Favorite - visible when dots/star present or hovered; individual items control own visibility */}
 											<div
 												className="history-fav-tags"
 												style={{
 													display: 'flex',
 													alignItems: 'center',
 													gap: '0',
-													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
+													visibility: showFavTags ? 'visible' : 'hidden',
 												}}>
 												<TagsManager
 													selectedTagIds={tagIds}
@@ -173,6 +175,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													onTagsChanged={refresh}
 													theme={currentThemeColors}
 													ghost
+													iconVisible={isHovered}
 												/>
 												<FavoriteButton
 													isFavorite={fav}
@@ -182,6 +185,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													}}
 													theme={currentThemeColors}
 													ghost
+													visible={fav || isHovered}
 												/>
 											</div>
 										</div>

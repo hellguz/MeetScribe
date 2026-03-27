@@ -223,4 +223,8 @@ body {
 	.history-fav-tags {
 		visibility: visible !important;
 	}
+	.history-tag-icon-btn,
+	.history-fav-btn {
+		visibility: visible !important;
+	}
 }

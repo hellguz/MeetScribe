@@ -10,6 +10,7 @@ interface TagsManagerProps {
 	theme: AppTheme
 	size?: number
 	ghost?: boolean
+	iconVisible?: boolean
 }
 
 /** Compact colored dots showing selected tags. */
@@ -157,7 +158,7 @@ const TagForm: React.FC<{
 	)
 }
 
-const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 16, ghost = false }) => {
+const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 16, ghost = false, iconVisible = true }) => {
 	const [isOpen, setIsOpen] = useState(false)
 	const [tags, setTags] = useState<Tag[]>(getTags)
 	const [formMode, setFormMode] = useState<'none' | 'new' | string>('none') // 'none', 'new', or tag id for editing
@@ -211,6 +212,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 		<div ref={containerRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
 			{hasDots && <TagDots tags={tags} selectedIds={selectedTagIds} theme={theme} ghost={ghost} />}
 			<button
+				className="history-tag-icon-btn"
 				onClick={(e) => {
 					e.stopPropagation()
 					setIsOpen(!isOpen)
@@ -228,6 +230,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 					alignItems: 'center',
 					justifyContent: 'center',
 					transition: 'background-color 0.2s ease',
+					visibility: iconVisible ? 'visible' : 'hidden',
 				}}
 				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}
 				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
