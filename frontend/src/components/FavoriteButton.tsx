@@ -7,9 +7,10 @@ interface FavoriteButtonProps {
 	onToggle: () => void
 	theme: AppTheme
 	size?: number
+	ghost?: boolean
 }
 
-const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 16 }) => {
+const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, theme, size = 16, ghost = false }) => {
 	return (
 		<button
 			onClick={(e) => {
@@ -19,9 +20,9 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, t
 			title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
 			style={{
 				padding: '7px 9px',
-				border: `1px solid ${theme.border}`,
+				border: ghost ? 'none' : `1px solid ${theme.border}`,
 				borderRadius: '6px',
-				backgroundColor: isFavorite ? (theme.body === '#FFFFFF' ? '#fefce8' : '#422006') : theme.backgroundSecondary,
+				backgroundColor: ghost ? 'transparent' : isFavorite ? (theme.body === '#FFFFFF' ? '#fefce8' : '#422006') : theme.backgroundSecondary,
 				color: isFavorite ? '#eab308' : theme.secondaryText,
 				cursor: 'pointer',
 				lineHeight: 1,
@@ -31,10 +32,10 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({ isFavorite, onToggle, t
 				transition: 'background-color 0.2s ease, color 0.2s ease',
 			}}
 			onMouseEnter={(e) => {
-				if (!isFavorite) e.currentTarget.style.backgroundColor = theme.background
+				if (!isFavorite) e.currentTarget.style.backgroundColor = ghost ? theme.backgroundSecondary : theme.background
 			}}
 			onMouseLeave={(e) => {
-				if (!isFavorite) e.currentTarget.style.backgroundColor = theme.backgroundSecondary
+				if (!isFavorite) e.currentTarget.style.backgroundColor = ghost ? 'transparent' : theme.backgroundSecondary
 			}}>
 			<StarIcon size={size} filled={isFavorite} />
 		</button>

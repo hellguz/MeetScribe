@@ -110,10 +110,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													display: 'flex',
 													alignItems: 'center',
 													visibility: isHovered ? 'visible' : 'hidden',
-													borderRadius: '6px',
-													overflow: 'hidden',
-													border: `1px solid ${currentThemeColors.border}`,
-													backgroundColor: currentThemeColors.backgroundSecondary,
 												}}>
 												<button
 													onClick={(e) => {
@@ -138,7 +134,6 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 													<EditIcon />
 												</button>
-												<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
 												<button
 													onClick={(e) => {
 														e.stopPropagation()
@@ -168,7 +163,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 												style={{
 													display: 'flex',
 													alignItems: 'center',
-													gap: '4px',
+													gap: '0',
 													visibility: showFavTagAlways || isHovered ? 'visible' : 'hidden',
 												}}>
 												<TagsManager
@@ -179,6 +174,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 													}}
 													onTagsChanged={refresh}
 													theme={currentThemeColors}
+													ghost
 												/>
 												<FavoriteButton
 													isFavorite={fav}
@@ -187,6 +183,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 														refresh()
 													}}
 													theme={currentThemeColors}
+													ghost
 												/>
 											</div>
 										</div>

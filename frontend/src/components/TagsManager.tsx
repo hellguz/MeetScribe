@@ -9,10 +9,11 @@ interface TagsManagerProps {
 	onTagsChanged: () => void
 	theme: AppTheme
 	size?: number
+	ghost?: boolean
 }
 
 /** Compact colored dots showing selected tags. */
-const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme }> = ({ tags, selectedIds, theme }) => {
+const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme; ghost?: boolean }> = ({ tags, selectedIds, theme, ghost = false }) => {
 	const selected = tags.filter((t) => selectedIds.includes(t.id))
 	if (selected.length === 0) return null
 	return (
@@ -21,11 +22,11 @@ const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme }>
 				display: 'flex',
 				alignItems: 'center',
 				gap: '3px',
-				padding: '7px 8px',
-				border: `1px solid ${theme.border}`,
+				padding: ghost ? '7px 4px 7px 0' : '7px 8px',
+				border: ghost ? 'none' : `1px solid ${theme.border}`,
 				borderRight: 'none',
-				borderRadius: '6px 0 0 6px',
-				backgroundColor: theme.backgroundSecondary,
+				borderRadius: ghost ? 0 : '6px 0 0 6px',
+				backgroundColor: 'transparent',
 				lineHeight: 1,
 				boxSizing: 'border-box',
 				minHeight: '32px',
@@ -152,7 +153,7 @@ const TagForm: React.FC<{
 	)
 }
 
-const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 16 }) => {
+const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, onTagsChanged, theme, size = 16, ghost = false }) => {
 	const [isOpen, setIsOpen] = useState(false)
 	const [tags, setTags] = useState<Tag[]>(getTags)
 	const [formMode, setFormMode] = useState<'none' | 'new' | string>('none') // 'none', 'new', or tag id for editing
@@ -204,7 +205,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 
 	return (
 		<div ref={containerRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-			{hasDots && <TagDots tags={tags} selectedIds={selectedTagIds} theme={theme} />}
+			{hasDots && <TagDots tags={tags} selectedIds={selectedTagIds} theme={theme} ghost={ghost} />}
 			<button
 				onClick={(e) => {
 					e.stopPropagation()
@@ -213,9 +214,9 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 				title="Manage tags"
 				style={{
 					padding: '7px 9px',
-					border: `1px solid ${theme.border}`,
+					border: ghost ? 'none' : `1px solid ${theme.border}`,
 					borderRadius: hasDots ? '0 6px 6px 0' : '6px',
-					backgroundColor: theme.backgroundSecondary,
+					backgroundColor: 'transparent',
 					color: theme.secondaryText,
 					cursor: 'pointer',
 					lineHeight: 1,
@@ -224,8 +225,8 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 					justifyContent: 'center',
 					transition: 'background-color 0.2s ease',
 				}}
-				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
-				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}>
+				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.backgroundSecondary)}
+				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 				<TagIcon size={size} />
 			</button>
 
