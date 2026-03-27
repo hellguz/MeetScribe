@@ -602,11 +602,7 @@ export default function Summary() {
 								lineHeight: 1,
 								fontFamily: 'inherit',
 							}}>
-							{transcriptCopied ? (
-								<span>Copied!</span>
-							) : (
-								<CopyTextIcon size={13} />
-							)}
+							{transcriptCopied ? <span>Copied!</span> : <CopyTextIcon size={13} />}
 						</button>
 					</h5>
 					{isTranscriptVisible && (

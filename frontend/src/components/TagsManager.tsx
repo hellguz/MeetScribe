@@ -32,7 +32,11 @@ const TagDots: React.FC<{ tags: Tag[]; selectedIds: string[]; theme: AppTheme; g
 				minHeight: '32px',
 			}}>
 			{selected.map((t) => (
-				<span key={t.id} title={t.name} style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: t.color, display: 'inline-block', flexShrink: 0 }} />
+				<span
+					key={t.id}
+					title={t.name}
+					style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: t.color, display: 'inline-block', flexShrink: 0 }}
+				/>
 			))}
 		</div>
 	)
@@ -216,7 +220,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 					padding: '7px 9px',
 					border: ghost ? 'none' : `1px solid ${theme.border}`,
 					borderRadius: hasDots ? '0 6px 6px 0' : '6px',
-				backgroundColor: ghost ? 'transparent' : theme.backgroundSecondary,
+					backgroundColor: ghost ? 'transparent' : theme.backgroundSecondary,
 					color: theme.secondaryText,
 					cursor: 'pointer',
 					lineHeight: 1,
@@ -316,9 +320,7 @@ const TagsManager: React.FC<TagsManagerProps> = ({ selectedTagIds, onToggleTag, 
 													<EditIcon size={13} />
 												</button>
 											)}
-											{!isHovered && isSelected && (
-												<span style={{ fontSize: '13px', color: theme.secondaryText, flexShrink: 0 }}>✓</span>
-											)}
+											{!isHovered && isSelected && <span style={{ fontSize: '13px', color: theme.secondaryText, flexShrink: 0 }}>✓</span>}
 										</div>
 									)
 								})}
