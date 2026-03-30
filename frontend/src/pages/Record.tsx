@@ -1,6 +1,6 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { getHistory, MeetingMeta, syncHistory, saveMeeting, removeMeeting } from '../utils/history'
+import { apiUrl } from '../utils/api'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
@@ -11,7 +11,6 @@ import AudioSourceSelector from '../components/AudioSourceSelector'
 import FileUpload from '../components/FileUpload'
 import RecordingStatus from '../components/RecordingStatus'
 import HistoryList from '../components/HistoryList'
-import { AudioSource } from '../types'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 
@@ -89,7 +88,7 @@ export default function Record() {
 			const localHistory = getHistory()
 			if (localHistory.length > 0) {
 				try {
-					const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/sync`, {
+					const res = await fetch(apiUrl(`/api/meetings/sync`), {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ ids: localHistory.map((m) => m.id) }),
@@ -182,7 +181,7 @@ export default function Record() {
 
 		setHistory((prev) => prev.map((m) => (m.id === id ? { ...m, title: newTitle } : m)))
 		try {
-			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${id}/title`, {
+			const response = await fetch(apiUrl(`/api/meetings/${id}/title`), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title: newTitle }),
@@ -201,7 +200,7 @@ export default function Record() {
 		setHistory((prev) => prev.filter((m) => m.id !== id))
 		removeMeeting(id)
 		try {
-			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${id}`, {
+			const response = await fetch(apiUrl(`/api/meetings/${id}`), {
 				method: 'DELETE',
 			})
 			if (!response.ok) {

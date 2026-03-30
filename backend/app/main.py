@@ -16,7 +16,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, SQLModel, create_engine, select, func, delete
+from sqlmodel import Session, SQLModel, create_engine, select, func
+from sqlalchemy import delete
 
 from .config import settings
 from .models import (
@@ -97,9 +98,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-INACTIVITY_TIMEOUT_SECONDS = 120
-
 
 VALID_SUMMARY_MODES = {"briefing", "essence", "narrative", "minutes"}
 
@@ -275,7 +273,7 @@ def get_meeting(mid: uuid.UUID):
         if (
             not mtg.final_received
             and mtg.expected_chunks is None
-            and (now - mtg.last_activity).total_seconds() > INACTIVITY_TIMEOUT_SECONDS
+            and (now - mtg.last_activity).total_seconds() > settings.inactivity_timeout_seconds
         ):
             mtg.final_received = True
             mtg.expected_chunks = mtg.received_chunks
@@ -332,15 +330,9 @@ def delete_meeting(mid: uuid.UUID):
             shutil.rmtree(mtg_dir)
             LOGGER.info(f"Deleted audio directory for meeting {mid}")
 
-        # Batch delete associated chunks from DB
-        chunks_to_delete = db.exec(select(MeetingChunk).where(MeetingChunk.meeting_id == mid)).all()
-        for chunk in chunks_to_delete:
-            db.delete(chunk)
-
-        # Batch delete associated feedback from DB
-        feedback_to_delete = db.exec(select(Feedback).where(Feedback.meeting_id == mid)).all()
-        for f in feedback_to_delete:
-            db.delete(f)
+        # Bulk delete associated chunks and feedback
+        db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mid))
+        db.exec(delete(Feedback).where(Feedback.meeting_id == mid))
 
         # Delete meeting itself
         db.delete(mtg)

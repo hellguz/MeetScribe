@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Tag, getTags, createTag, updateTag, deleteTag, getDefaultColors } from '../utils/tags'
-import { TagIcon, PlusIcon, EditIcon, CloseIcon } from './Icons'
+import { TagIcon, PlusIcon, EditIcon } from './Icons'
 import { AppTheme } from '../styles/theme'
 
 interface TagsManagerProps {

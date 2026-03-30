@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useContext, useCallback } from 'react'
+import { useState, useEffect, useContext, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ThemeContext } from '../contexts/ThemeContext'
+import { apiUrl } from '../utils/api'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { DashboardStats, FeatureSuggestion } from '../types'
 import StatCard from '../components/dashboard/StatCard'
@@ -22,7 +23,7 @@ export default function Dashboard() {
 
 	const fetchStats = useCallback(async () => {
 		try {
-			const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/stats`)
+			const response = await fetch(apiUrl('/api/dashboard/stats'))
 			if (!response.ok) throw new Error('Failed to fetch dashboard stats.')
 			setStats(await response.json())
 		} catch (err) {
@@ -38,7 +39,7 @@ export default function Dashboard() {
 	}, [currentThemeColors.background, fetchStats])
 
 	const handleFeedbackAction = async (action: 'delete' | 'update_status', id: number, newStatus?: string) => {
-		let url = `${import.meta.env.VITE_API_BASE_URL}/api/feedback/${id}`
+		let url = apiUrl(`/api/feedback/${id}`)
 		let options: RequestInit = { method: 'DELETE' }
 
 		if (action === 'update_status') {
