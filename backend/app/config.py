@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     groq_api_key: str
 
     recognition_in_cloud: bool
-    
+
     whisper_model_size: str = "tiny"
 
     frontend_origin: str
@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     db_path: Path = BASE_DIR / "data" / "db.sqlite3"
 
     worker_threads: int = 4
+
+    # Model used for summarization and title generation
+    summary_model: str = "claude-sonnet-4-6"
+
+    # Seconds of inactivity before a recording is auto-finalized
+    inactivity_timeout_seconds: int = 120
 
 
 @lru_cache

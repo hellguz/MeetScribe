@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { marked } from 'marked'
+import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
@@ -137,8 +138,10 @@ export default function Summary() {
 				let range: Range | null = null
 				if (document.caretRangeFromPoint) {
 					range = document.caretRangeFromPoint(clickX, clickY)
-				} else if ((document as any).caretPositionFromPoint) {
-					const pos = (document as any).caretPositionFromPoint(clickX, clickY)
+				} else if ('caretPositionFromPoint' in document) {
+					// Firefox-only API not yet in TypeScript's DOM types
+					type DocWithCaret = Document & { caretPositionFromPoint(x: number, y: number): { offsetNode: Node; offset: number } | null }
+					const pos = (document as DocWithCaret).caretPositionFromPoint(clickX, clickY)
 					if (pos) {
 						range = document.createRange()
 						range.setStart(pos.offsetNode, pos.offset)
@@ -225,7 +228,7 @@ export default function Summary() {
 		setLanguageState(newState)
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
 		try {
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
+			const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ target_language: targetLanguage, language_mode: newState.mode }),
@@ -241,7 +244,7 @@ export default function Summary() {
 		if (!window.confirm('Are you sure you want to permanently delete this meeting and its summary? This cannot be undone.')) return
 		removeMeeting(mid)
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`, { method: 'DELETE' })
+			await fetch(apiUrl(`/api/meetings/${mid}`), { method: 'DELETE' })
 		} catch {
 			// best-effort server delete
 		}

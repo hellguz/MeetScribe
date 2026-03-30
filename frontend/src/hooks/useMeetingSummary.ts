@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCached, saveCached, removeCached } from '../utils/summaryCache'
+import { getCached, saveCached } from '../utils/summaryCache'
 import { getHistory, saveMeeting } from '../utils/history'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { apiUrl } from '../utils/api'
 
 interface UseMeetingSummaryProps {
 	mid: string | undefined
@@ -35,7 +36,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 			}
 
 			try {
-				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}?_=${Date.now()}`)
+				const res = await fetch(apiUrl(`/api/meetings/${mid}?_=${Date.now()}`))
 
 				if (!res.ok) {
 					const errorData = await res.json().catch(() => ({ message: 'Failed to fetch meeting data' }))
@@ -108,7 +109,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		if (!mid) return
 		setSubmittedFeedback((prev) => (isSelected ? [...prev, type] : prev.filter((t) => t !== type)))
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
+			await fetch(apiUrl(`/api/feedback`), {
 				method: isSelected ? 'POST' : 'DELETE',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ meeting_id: mid, feedback_type: type }),
@@ -122,7 +123,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const handleSuggestionSubmit = async (suggestionText: string) => {
 		if (!mid || !suggestionText) return
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/feedback`, {
+			await fetch(apiUrl(`/api/feedback`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ meeting_id: mid, feedback_type: 'feature_suggestion', suggestion_text: suggestionText }),
@@ -149,7 +150,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 					summary_custom_language: settings.newLanguageState?.lastCustomLanguage ?? languageState.lastCustomLanguage,
 					context: settings.newContext ?? context,
 				}
-				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/regenerate`, {
+				const res = await fetch(apiUrl(`/api/meetings/${mid}/regenerate`), {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
@@ -172,7 +173,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 			if (!mid) return
 			setSummaryMarkdown(content) // Optimistic update
 			try {
-				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/summary`, {
+				const res = await fetch(apiUrl(`/api/meetings/${mid}/summary`), {
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ content }),
@@ -190,7 +191,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		async (newTitle: string) => {
 			if (!mid || !newTitle || newTitle === meetingTitle) return
 			try {
-				const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/title`, {
+				const res = await fetch(apiUrl(`/api/meetings/${mid}/title`), {
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ title: newTitle }),

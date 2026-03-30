@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
-import { saveMeeting, getHistory } from '../utils/history'
+import { saveMeeting } from '../utils/history'
 import { AudioSource } from '../types'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { apiUrl } from '../utils/api'
 
 const CHUNK_DURATION_MS = 30_000
 
@@ -128,7 +129,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const pollMeetingStatus = useCallback(async () => {
 		if (!meetingId.current) return
 		try {
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}`)
+			const res = await fetch(apiUrl(`/api/meetings/${meetingId.current}`))
 			if (!res.ok) return
 			const data = await res.json()
 
@@ -161,7 +162,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const createMeetingOnBackend = useCallback(
 		async (title: string, context: string) => {
 			const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings`, {
+			const res = await fetch(apiUrl(`/api/meetings`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -190,7 +191,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		fd.append('file', blob, `chunk-${index}.webm`)
 		fd.append('is_final', String(isFinal))
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/chunks`, { method: 'POST', body: fd })
+			await fetch(apiUrl(`/api/chunks`), { method: 'POST', body: fd })
 		} catch (error) {
 			console.error(`Failed to upload chunk ${index}:`, error)
 		}
@@ -199,7 +200,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const updateContext = useCallback(async (newContext: string) => {
 		if (!meetingId.current) return
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/context`, {
+			await fetch(apiUrl(`/api/meetings/${meetingId.current}/context`), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ context: newContext }),
@@ -219,7 +220,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		}
 
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/config`, {
+			await fetch(apiUrl(`/api/meetings/${meetingId.current}/config`), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload),
@@ -298,7 +299,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			heartbeatIntervalRef.current = setInterval(async () => {
 				if (!meetingId.current) return
 				try {
-					await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${meetingId.current}/heartbeat`, { method: 'POST' })
+					await fetch(apiUrl(`/api/meetings/${meetingId.current}/heartbeat`), { method: 'POST' })
 				} catch {
 					// Silently ignore — one missed heartbeat is within the safety margin
 				}
@@ -343,13 +344,10 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 							// The lock was released by the browser (e.g., user switched tabs).
 							// It will be re-acquired on visibility change if recording is still active.
 							wakeLockSentinelRef.current = null
-							if (isRecordingRef.current) {
-								console.log('Screen Wake Lock was released, will try to reacquire on visibility change.')
-							}
 						}
-					} catch (err: any) {
+					} catch (err: unknown) {
 						// This can happen if the document is not visible, etc.
-						console.error(`Failed to acquire screen wake lock: ${err.name}`, err)
+						console.error('Failed to acquire screen wake lock:', err)
 						setWakeLockStatus('error')
 					}
 				} else {
@@ -492,12 +490,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 					setWakeLockStatus('active')
 					wakeLockSentinelRef.current.onrelease = () => {
 						wakeLockSentinelRef.current = null
-						if (isRecordingRef.current) {
-							console.log('Screen Wake Lock was released again.')
-						}
 					}
-					console.log('Screen Wake Lock reacquired on visibility change.')
-				} catch (err: any) {
+				} catch (err: unknown) {
 					console.error('Failed to re-acquire screen wake lock:', err)
 					setWakeLockStatus('error')
 				}

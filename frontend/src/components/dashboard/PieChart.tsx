@@ -2,6 +2,9 @@ import React, { useMemo } from 'react'
 import { AppTheme } from '../../styles/theme'
 import { getFeedbackColors } from '../../utils/feedbackColors'
 
+type FeedbackColorEntry = { text: string; bg: string; border: string }
+type FeedbackColorMap = Record<string, FeedbackColorEntry | undefined>
+
 interface PieChartProps {
 	data: { [key: string]: number }
 	theme: AppTheme
@@ -36,7 +39,7 @@ const PieChart: React.FC<PieChartProps> = ({ data, theme, title }) => {
 		const endY = 50 + 45 * Math.sin(Math.PI * (accumulatedAngle / 180))
 
 		const pathData = `M 50,50 L ${startX},${startY} A 45,45 0 ${isLargeArc},1 ${endX},${endY} Z`
-		const color = (feedbackColors as any)[key]?.border || theme.secondaryText
+		const color = (feedbackColors as FeedbackColorMap)[key]?.border ?? theme.secondaryText
 
 		return <path key={key} d={pathData} fill={color} stroke={theme.body} strokeWidth="2" />
 	})
@@ -52,7 +55,7 @@ const PieChart: React.FC<PieChartProps> = ({ data, theme, title }) => {
 				</svg>
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignSelf: 'center' }}>
 					{sortedData.map(([key, value]) => {
-						const color = (feedbackColors as any)[key]?.border || theme.secondaryText
+						const color = (feedbackColors as FeedbackColorMap)[key]?.border ?? theme.secondaryText
 						return (
 							<div key={key} style={{ display: 'flex', alignItems: 'center', fontSize: '12px' }}>
 								<span style={{ width: 12, height: 12, backgroundColor: color, borderRadius: '4px', marginRight: 8, flexShrink: 0 }}></span>
