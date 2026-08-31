@@ -1,6 +1,6 @@
 import React from 'react'
 import Spinner from './Spinner'
-import { stageText } from '../utils/processingStage'
+import { describeStage } from '../utils/processingStage'
 import { AppTheme } from '../styles/theme'
 import { AudioSource } from '../types'
 
@@ -51,8 +51,9 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 }) => {
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount
 	// Diarization runs over the whole recording and can take minutes, so name
-	// the stage and its position rather than a bare "please wait".
-	const processingLabel = stageText(processingStage, processingTotal, 'Processing')
+	// the stage and its position rather than a bare "please wait". Rendered
+	// smaller than the recording state: it is a quiet status, not an alarm.
+	const progress = describeStage(processingStage, processingTotal, 'Processing')
 	const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100))
 	const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100))
 	const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal
@@ -184,9 +185,9 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 					style={{
 						position: 'relative',
 						zIndex: 1,
-						fontSize: '18px',
-						fontWeight: 'bold',
-						color: isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.secondaryText : theme.button.primary,
+						fontSize: isProcessing ? '15px' : '18px',
+						fontWeight: isProcessing ? 500 : 'bold',
+						color: isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.text : theme.button.primary,
 						marginBottom: '4px',
 					}}>
 					{isRecording ? (
@@ -196,9 +197,14 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 							'🔴 Recording...'
 						)
 					) : isProcessing ? (
-						<span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-							<Spinner size={18} label={processingLabel} />
-							{processingLabel}
+						<span style={{ display: 'inline-flex', alignItems: 'center', gap: '9px' }}>
+							<Spinner size={14} color={theme.secondaryText} label={progress.label} />
+							<span>{progress.label}…</span>
+							{progress.step && progress.total ? (
+								<span style={{ fontSize: '12px', fontWeight: 400, color: theme.secondaryText, letterSpacing: '0.02em' }}>
+									{progress.step}/{progress.total}
+								</span>
+							) : null}
 						</span>
 					) : (
 						'Ready'

@@ -7,7 +7,7 @@
  *   reprocessing old (3) — transcribe, diarize, summarize
  */
 const LABELS: Record<string, string> = {
-	transcribing: 'Re-transcribing audio',
+	transcribing: 'Transcribing audio',
 	diarizing: 'Identifying speakers',
 	summarizing: 'Writing summary',
 }
@@ -35,8 +35,8 @@ export function describeStage(stage: string | null, total: number | null, fallba
 	return { label: name, step: index + 1, total: stages.length }
 }
 
-/** "Step 2 of 3 · Identifying speakers", or just the label when unknown. */
+/** "Identifying speakers… 2/3", or just the label when the count is unknown. */
 export function stageText(stage: string | null, total: number | null, fallback = 'Processing'): string {
 	const { label, step, total: n } = describeStage(stage, total, fallback)
-	return step && n ? `Step ${step} of ${n} · ${label}` : `${label}…`
+	return step && n ? `${label}… ${step}/${n}` : `${label}…`
 }

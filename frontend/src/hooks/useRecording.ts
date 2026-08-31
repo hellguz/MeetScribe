@@ -8,35 +8,6 @@ import { apiUrl } from '../utils/api'
 
 const CHUNK_DURATION_MS = 30_000
 
-const encodeAudioChunk = (chunkBuffer: AudioBuffer): Promise<Blob> => {
-	return new Promise((resolve, reject) => {
-		const audioCtx = new AudioContext({ sampleRate: chunkBuffer.sampleRate })
-		const source = audioCtx.createBufferSource()
-		source.buffer = chunkBuffer
-
-		const dest = audioCtx.createMediaStreamDestination()
-		source.connect(dest)
-
-		const recorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm; codecs=opus' })
-		const chunks: Blob[] = []
-
-		recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
-		recorder.onstop = () => {
-			const blob = new Blob(chunks, { type: 'audio/webm; codecs=opus' })
-			resolve(blob)
-			audioCtx.close().catch(console.error)
-		}
-		recorder.onerror = (e) => {
-			reject(e)
-			audioCtx.close().catch(console.error)
-		}
-		source.onended = () => recorder.stop()
-
-		recorder.start()
-		source.start(0)
-	})
-}
-
 export const useRecording = (summaryLength: SummaryLength, languageState: SummaryLanguageState) => {
 	const navigate = useNavigate()
 	const [isRecording, setRecording] = useState(false)
@@ -441,42 +412,33 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			resetState()
 			setIsProcessing(true)
 			try {
-				await createMeetingOnBackend(`Transcription of ${selectedFile.name}`, initialContext)
-				pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
+				const createdId = await createMeetingOnBackend(`Transcription of ${selectedFile.name}`, initialContext)
+				const target = createdId ?? meetingId.current
 
-				const audioCtx = new AudioContext()
-				const arrayBuffer = await selectedFile.arrayBuffer()
-				const originalBuffer = await audioCtx.decodeAudioData(arrayBuffer)
-				const chunkDurationSec = CHUNK_DURATION_MS / 1000
-				const numChunks = Math.ceil(originalBuffer.duration / chunkDurationSec)
-				setExpectedTotalChunks(numChunks)
-
-				for (let i = 0; i < numChunks; i++) {
-					const startS = i * chunkDurationSec
-					const endS = Math.min(startS + chunkDurationSec, originalBuffer.duration)
-					if (endS <= startS) continue
-
-					const startSample = Math.floor(startS * originalBuffer.sampleRate)
-					const endSample = Math.floor(endS * originalBuffer.sampleRate)
-
-					const chunkBuffer = audioCtx.createBuffer(originalBuffer.numberOfChannels, endSample - startSample, originalBuffer.sampleRate)
-					for (let ch = 0; ch < originalBuffer.numberOfChannels; ch++) {
-						chunkBuffer.getChannelData(ch).set(originalBuffer.getChannelData(ch).subarray(startSample, endSample))
-					}
-
-					const blob = await encodeAudioChunk(chunkBuffer)
-					await uploadChunk(blob, i, i === numChunks - 1)
-					setLocalChunksCount((c) => c + 1)
+				// Upload the file as-is. It used to be decoded, sliced into 30s
+				// pieces and re-encoded through a MediaRecorder in the browser —
+				// which runs in real time, so an hour of audio took over an hour
+				// before anything reached the server. The backend now transcribes
+				// it in large batches instead.
+				const body = new FormData()
+				body.append('file', selectedFile, selectedFile.name)
+				const res = await fetch(apiUrl(`/api/meetings/${target}/upload`), { method: 'POST', body })
+				if (!res.ok) {
+					const detail = await res.json().catch(() => ({}))
+					throw new Error(detail.detail || 'Upload failed')
 				}
-				audioCtx.close()
+
+				setUploadedChunks(1)
+				setExpectedTotalChunks(1)
+				pollIntervalRef.current = setInterval(pollMeetingStatus, 3000)
 			} catch (err) {
 				console.error('File processing failed:', err)
-				alert('Failed to process the audio file.')
+				alert(err instanceof Error ? err.message : 'Failed to process the audio file.')
 				if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
 				resetState()
 			}
 		},
-		[selectedFile, createMeetingOnBackend, pollMeetingStatus, uploadChunk],
+		[selectedFile, createMeetingOnBackend, pollMeetingStatus],
 	)
 
 	useEffect(() => {

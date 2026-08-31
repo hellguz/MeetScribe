@@ -21,6 +21,7 @@ from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
 import json
+import math
 import tempfile
 import wave
 from dataclasses import dataclass, field
@@ -534,98 +535,113 @@ def _decode_chunk_pcm(path: str):
 
 def rebuild_timings_in_batches(db: Session, chunks: list[MeetingChunk]) -> int:
     """
-    Recover segment timings for old chunks by re-transcribing in large batches.
+    Recover segment timings by re-transcribing the audio in fixed-length windows.
 
-    Fewer, longer requests are both faster and *more* accurate: Whisper sees
-    continuous audio instead of isolated 30-second islands, and timings come
-    back on one axis instead of being stitched from per-chunk offsets.
+    Windows are cut on TIME, not on chunk boundaries. An uploaded file is stored
+    as a single chunk, so grouping by chunk would put a 90-minute recording in
+    one request and Groq rejects it with 413. Slicing the decoded stream keeps
+    every request the same size whether the source was one file or 200 chunks.
 
-    Segments are written back onto the chunk they fall in, so the normal merge
-    path is unchanged and a later re-run needs no API calls at all.
+    Fewer, longer requests are also more accurate than per-chunk ones: Whisper
+    sees continuous audio rather than isolated islands. Segments are written
+    back onto the chunk they fall in, so the merge path is unchanged and a later
+    re-run needs no API calls.
+
     Returns how many chunks were given timings.
     """
     sample_rate = diarization.SAMPLE_RATE
-
-    # Decode once, recording where each chunk sits on the meeting timeline.
-    decoded = []
-    cursor = 0.0
-    for chunk in chunks:
-        pcm = _decode_chunk_pcm(chunk.path)
-        if pcm is None or pcm.size == 0:
-            continue
-        span = len(pcm) / sample_rate
-        decoded.append((chunk, pcm, cursor, cursor + span))
-        cursor += span
-
-    if not decoded:
-        return 0
-
-    # Group into batches of at most BACKFILL_BATCH_SECONDS.
-    batches: list[list] = [[]]
-    for item in decoded:
-        current = batches[-1]
-        current_span = sum(len(p) for _, p, _, _ in current) / sample_rate
-        if current and current_span + (item[3] - item[2]) > BACKFILL_BATCH_SECONDS:
-            batches.append([item])
-        else:
-            current.append(item)
-
-    LOGGER.info(
-        "Re-transcribing %.1f min as %d batch(es) instead of %d single-chunk requests.",
-        cursor / 60, len([b for b in batches if b]), len(decoded),
-    )
-
     updated = 0
-    with tempfile.TemporaryDirectory(prefix="meetscribe-backfill-") as tmp:
-        for number, batch in enumerate(batches, start=1):
-            if not batch:
-                continue
-            batch_start = batch[0][2]
-            audio = np.concatenate([pcm for _, pcm, _, _ in batch])
 
-            wav_path = Path(tmp) / f"batch_{number:03d}.wav"
+    with tempfile.TemporaryDirectory(prefix="meetscribe-backfill-") as tmp:
+        tmp_dir = Path(tmp)
+        raw_path = tmp_dir / "all.f32"
+
+        # Decode once to disk, remembering where each chunk sits on the timeline.
+        spans: list[tuple[MeetingChunk, float, float]] = []
+        cursor = 0  # samples
+        with raw_path.open("wb") as out:
+            for chunk in chunks:
+                pcm = _decode_chunk_pcm(chunk.path)
+                if pcm is None or pcm.size == 0:
+                    continue
+                out.write(pcm.tobytes())
+                spans.append((chunk, cursor / sample_rate, (cursor + len(pcm)) / sample_rate))
+                cursor += len(pcm)
+
+        if not spans or cursor == 0:
+            LOGGER.warning("No decodable audio; cannot rebuild timings.")
+            return 0
+
+        window_samples = int(BACKFILL_BATCH_SECONDS * sample_rate)
+        window_count = math.ceil(cursor / window_samples)
+        LOGGER.info(
+            "Re-transcribing %.1f min as %d window(s) of up to %d min.",
+            cursor / sample_rate / 60, window_count, BACKFILL_BATCH_SECONDS // 60,
+        )
+
+        per_chunk: dict[int, list[dict]] = {}
+        covered: list[tuple[float, float]] = []
+        failures = 0
+
+        for index in range(window_count):
+            offset = index * window_samples
+            count = min(window_samples, cursor - offset)
+            samples = np.fromfile(raw_path, dtype=np.float32, count=count, offset=offset * 4)
+            base = offset / sample_rate
+
+            wav_path = tmp_dir / f"window_{index + 1:03d}.wav"
             with wave.open(str(wav_path), "wb") as out:
                 out.setnchannels(1)
                 out.setsampwidth(2)
                 out.setframerate(sample_rate)
                 out.writeframes(
-                    np.clip(audio * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+                    np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
                 )
 
             try:
                 result = transcribe_webm_chunk_in_worker(str(wav_path))
             except Exception as exc:
-                LOGGER.warning("Batch %d could not be transcribed: %s", number, exc)
+                LOGGER.warning("Window %d could not be transcribed: %s", index + 1, exc)
+                failures += 1
                 continue
+            finally:
+                wav_path.unlink(missing_ok=True)
+
             if not result.segments:
-                LOGGER.warning("Batch %d returned no timings; leaving its chunks as they were.", number)
+                LOGGER.warning("Window %d returned no timings.", index + 1)
+                failures += 1
                 continue
 
-            # Put each segment on the meeting timeline, then back into the chunk
-            # containing it, as a chunk-relative time.
-            per_chunk: dict[int, list[dict]] = {}
+            covered.append((base, base + count / sample_rate))
             for seg in result.segments:
-                start = batch_start + float(seg.get("start") or 0.0)
-                end = batch_start + float(seg.get("end") or 0.0)
-                for chunk, _pcm, c_start, c_end in batch:
-                    if c_start <= start < c_end:
+                seg_start = base + float(seg.get("start") or 0.0)
+                seg_end = base + float(seg.get("end") or 0.0)
+                for chunk, c_start, c_end in spans:
+                    if c_start <= seg_start < c_end:
                         per_chunk.setdefault(chunk.chunk_index, []).append(
-                            {"start": start - c_start, "end": end - c_start,
+                            {"start": seg_start - c_start, "end": seg_end - c_start,
                              "text": seg.get("text") or ""}
                         )
                         break
 
-            # Rewrite every chunk in the batch from this transcription. Keeping
-            # the old text for chunks that got no segment would duplicate words
-            # already captured by a neighbouring segment.
-            for chunk, _pcm, _s, _e in batch:
-                segments = per_chunk.get(chunk.chunk_index, [])
-                chunk.segments_json = json.dumps(segments) if segments else None
-                chunk.text = " ".join(s["text"].strip() for s in segments).strip()
-                db.add(chunk)
-                if segments:
-                    updated += 1
-            db.commit()
+        if failures:
+            LOGGER.error(
+                "%d of %d transcription window(s) failed; their audio keeps whatever text it had.",
+                failures, window_count,
+            )
+
+        # Only rewrite chunks whose audio a window actually covered — otherwise a
+        # failed window would blank text we still have.
+        for chunk, c_start, c_end in spans:
+            if not any(w_start < c_end and c_start < w_end for w_start, w_end in covered):
+                continue
+            segments = per_chunk.get(chunk.chunk_index, [])
+            chunk.segments_json = json.dumps(segments) if segments else None
+            chunk.text = " ".join(s["text"].strip() for s in segments).strip()
+            db.add(chunk)
+            if segments:
+                updated += 1
+        db.commit()
 
     return updated
 
