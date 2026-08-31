@@ -302,13 +302,17 @@ def get_meeting(mid: uuid.UUID):
             db.add(mtg)
             db.commit()
 
-        live_tx = _build_live_transcript(db, mid)
         data = mtg.model_dump()
-        data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
+        # Only assemble the live transcript while it is still needed. A finished
+        # meeting used it nowhere, but paid for a scan of all its chunks on
+        # every single fetch.
+        data["transcript_text"] = (
+            mtg.transcript_text if mtg.done else _build_live_transcript(db, mid)
+        )
         data["transcribed_chunks"] = transcribed_count
-        # Re-diarization needs the original audio, which older meetings may
-        # no longer have. A handful of stat() calls, single meeting only.
-        data["can_rediarize"] = bool(tasks.meeting_audio_chunks(db, mid))
+        # Re-diarization needs the original audio, which older meetings may no
+        # longer have. Cheap existence check only — this runs on every poll.
+        data["can_rediarize"] = tasks.has_meeting_audio(db, mid)
 
         # Get existing feedback
         feedback_results = db.exec(

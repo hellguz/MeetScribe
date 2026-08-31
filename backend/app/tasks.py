@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import datetime as dt
 import uuid
 import time
@@ -433,6 +434,34 @@ def meeting_audio_chunks(db: Session, meeting_id: uuid.UUID) -> list[MeetingChun
         except OSError:
             continue
     return available
+
+
+def has_meeting_audio(db: Session, meeting_id: uuid.UUID) -> bool:
+    """
+    Whether any chunk audio survives, without paying for the full list.
+
+    Called on every meeting fetch (including polls), so it must stay cheap:
+    one query for a single chunk path, then one directory scan that stops at
+    the first usable file. Statting every chunk cost ~100ms on a 721-chunk
+    meeting locally, and far more over a bind mount.
+    """
+    first = db.exec(
+        select(MeetingChunk.path)
+        .where(MeetingChunk.meeting_id == meeting_id)
+        .where(MeetingChunk.path.is_not(None))
+        .limit(1)
+    ).first()
+    if not first:
+        return False
+
+    try:
+        with os.scandir(Path(first).parent) as entries:
+            for entry in entries:
+                if entry.name.endswith(".webm") and entry.stat().st_size > 100:
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) -> None:
