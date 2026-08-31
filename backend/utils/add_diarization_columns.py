@@ -27,6 +27,7 @@ log = logging.getLogger("migration")
 COLUMNS = [
     ("meeting", "processing_stage", "TEXT"),
     ("meeting", "speaker_count", "INTEGER"),
+    ("meeting", "processing_total", "INTEGER"),
     ("meetingchunk", "segments_json", "TEXT"),
     ("meetingchunk", "audio_seconds", "REAL"),
 ]

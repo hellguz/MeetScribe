@@ -1,5 +1,6 @@
 import React from 'react'
 import Spinner from './Spinner'
+import { stageText } from '../utils/processingStage'
 import { AppTheme } from '../styles/theme'
 import { AudioSource } from '../types'
 
@@ -20,6 +21,8 @@ interface RecordingStatusProps {
 	isPaused: boolean
 	/** Backend post-meeting stage: 'diarizing' | 'summarizing' | null. */
 	processingStage: string | null
+	/** How many stages this run has, so progress can read "step 2 of 2". */
+	processingTotal: number | null
 }
 
 const formatTime = (seconds: number) => {
@@ -44,16 +47,12 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	wakeLockStatus,
 	isPaused,
 	processingStage,
+	processingTotal,
 }) => {
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount
-	// Diarization runs over the whole recording and can take minutes, so say
-	// which stage is running rather than a bare "please wait".
-	const processingLabel =
-		processingStage === 'diarizing'
-			? 'Identifying speakers…'
-			: processingStage === 'summarizing'
-				? 'Writing summary…'
-				: 'Processing… Please wait.'
+	// Diarization runs over the whole recording and can take minutes, so name
+	// the stage and its position rather than a bare "please wait".
+	const processingLabel = stageText(processingStage, processingTotal, 'Processing')
 	const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100))
 	const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100))
 	const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal

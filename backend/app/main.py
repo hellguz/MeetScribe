@@ -351,7 +351,10 @@ def rediarize_meeting(mid: uuid.UUID):
         mtg.done = False
         # Set so the status endpoint does not also queue a plain summary run.
         mtg.summary_task_queued = True
-        mtg.processing_stage = "diarizing"
+        # Reprocessing re-transcribes first, so three stages. Published now so
+        # the first poll already knows, rather than after the worker starts.
+        mtg.processing_stage = "transcribing"
+        mtg.processing_total = 3
         db.add(mtg)
         db.commit()
 

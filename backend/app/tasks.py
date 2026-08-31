@@ -84,18 +84,49 @@ class ChunkTranscription:
     segments: list[dict] = field(default_factory=list)
 
 
+def _is_hallucination(get) -> bool:
+    """
+    Whether a Whisper segment looks invented rather than heard.
+
+    Uses Whisper's own published heuristics on the metrics it returns, which
+    the Groq API exposes too. The no-speech and confidence tests are ANDed on
+    purpose: genuinely quiet speech scores a low no_speech_prob and survives,
+    so this does not cost sensitivity on soft recordings.
+    """
+    no_speech = get("no_speech_prob")
+    logprob = get("avg_logprob")
+    if (
+        no_speech is not None
+        and logprob is not None
+        and no_speech > settings.whisper_no_speech_threshold
+        and logprob < settings.whisper_logprob_threshold
+    ):
+        return True
+
+    # Repetition loops compress unusually well.
+    ratio = get("compression_ratio")
+    return ratio is not None and ratio > settings.whisper_compression_ratio_threshold
+
+
 def _normalise_segments(raw) -> list[dict]:
-    """Coerce Groq/Whisper segment objects (dicts or attr objects) to plain dicts."""
+    """Coerce Groq/Whisper segments (dicts or objects) to plain dicts, dropping
+    anything that looks hallucinated."""
     out = []
+    dropped = []
     for seg in raw or []:
         get = seg.get if isinstance(seg, dict) else lambda k, d=None: getattr(seg, k, d)
         text = (get("text") or "").strip()
         if not text:
             continue
+        if _is_hallucination(get):
+            dropped.append(text[:40])
+            continue
         try:
             out.append({"start": float(get("start") or 0.0), "end": float(get("end") or 0.0), "text": text})
         except (TypeError, ValueError):
             continue
+    if dropped:
+        LOGGER.info("Dropped %d likely-hallucinated segment(s): %s", len(dropped), dropped[:3])
     return out
 
 
@@ -150,6 +181,9 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> ChunkTranscription:
             segments, _info = whisper.transcribe(
                 str(chunk_path),
                 beam_size=5,
+                # Without this, one hallucinated segment becomes the prompt for
+                # the next and the model spirals.
+                condition_on_previous_text=False,
                 vad_filter=True,
                 vad_parameters=dict(
                     threshold=0.1, min_silence_duration_ms=500, speech_pad_ms=300
@@ -349,6 +383,10 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     duration_seconds = num_chunks * 30
 
     if plain_transcript and diarization.is_enabled():
+        # A fresh recording was transcribed live, so this run is diarize +
+        # summarize. Reprocessing sets 3 before calling us.
+        if mtg.processing_total is None:
+            mtg.processing_total = 2
         mtg.processing_stage = "diarizing"
         db.add(mtg)
         db.commit()  # publish the stage before a multi-minute job
@@ -379,6 +417,8 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
         mtg.duration_seconds = duration_seconds
 
         mtg.processing_stage = "summarizing"
+        if mtg.processing_total is None:
+            mtg.processing_total = 1  # diarization skipped; summarizing only
         db.add(mtg)
         db.commit()
 
@@ -409,6 +449,7 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
         mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
 
     mtg.processing_stage = None
+    mtg.processing_total = None
     mtg.done = True
     db.add(mtg)
     db.commit()
@@ -626,6 +667,7 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
                         meeting_id_str, len(missing),
                     )
                     mtg.processing_stage = "transcribing"
+                    mtg.processing_total = 3
                     db.add(mtg)
                     db.commit()
 

@@ -33,9 +33,14 @@ class Meeting(SQLModel, table=True):
     summary_custom_language: str | None = None
     context: str | None = None
     timezone: str | None = None
-    # Which post-meeting stage is running: 'diarizing' | 'summarizing' | None.
-    # Drives the frontend's progress text; None once `done` is set.
+    # Which post-meeting stage is running: 'transcribing' | 'diarizing' |
+    # 'summarizing' | None. Drives the frontend's progress text; None once
+    # `done` is set.
     processing_stage: str | None = None
+    # How many stages this particular run has, so the UI can say "step 2 of 3".
+    # A fresh recording skips transcription (already done live) and has 2;
+    # reprocessing an old meeting re-transcribes first and has 3.
+    processing_total: int | None = None
     # Distinct speakers found by diarization; None if it did not run.
     speaker_count: int | None = None
 
@@ -135,6 +140,7 @@ class MeetingStatus(SQLModel):
     context: str | None = None
     timezone: str | None = None
     processing_stage: str | None = None
+    processing_total: int | None = None
     speaker_count: int | None = None
     # True when the original audio survives, so speakers can still be identified.
     can_rediarize: bool = False

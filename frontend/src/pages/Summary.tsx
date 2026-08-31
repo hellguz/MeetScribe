@@ -5,6 +5,7 @@ import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
 import Spinner from '../components/Spinner'
+import { stageText } from '../utils/processingStage'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
@@ -68,6 +69,7 @@ export default function Summary() {
 		canRediarize,
 		speakerCount,
 		processingStage,
+		processingTotal,
 		handleRediarize,
 		handleTranslate,
 		handleFeedbackToggle,
@@ -265,14 +267,8 @@ export default function Summary() {
 	const showProcessingMessage = busy && !summaryMarkdown
 	// A transcript recorded before diarization existed has no speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
-	const stageLabel =
-		processingStage === 'diarizing'
-			? 'Identifying speakers…'
-			: processingStage === 'transcribing'
-				? 'Re-transcribing audio…'
-				: processingStage === 'summarizing'
-					? 'Writing summary…'
-					: 'Processing summary, please wait…'
+	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
+	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -532,8 +528,8 @@ export default function Summary() {
 						color: currentThemeColors.secondaryText,
 						fontSize: '14px',
 					}}>
-					<Spinner label="Regenerating summary" />
-					Regenerating summary…
+					<Spinner label={stageLabel} />
+					{stageLabel}
 				</div>
 			)}
 

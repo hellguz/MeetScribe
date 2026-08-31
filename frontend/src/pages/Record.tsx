@@ -44,6 +44,7 @@ export default function Record() {
 		startFileProcessing,
 		transcriptionSpeedLabel,
 		processingStage,
+		processingTotal,
 		analyserRef,
 		animationFrameRef,
 		updateContext,
@@ -300,6 +301,7 @@ export default function Record() {
 				transcribedChunks={transcribedChunks}
 				transcriptionSpeedLabel={transcriptionSpeedLabel}
 				processingStage={processingStage}
+				processingTotal={processingTotal}
 				liveTranscript={liveTranscript}
 				canvasRef={canvasRef}
 				audioSource={audioSource}
