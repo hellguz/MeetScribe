@@ -1,8 +1,7 @@
-import React from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Record from './pages/Record'
 import Summary from './pages/Summary'
-import Dashboard from './pages/Dashboard' // Import the new Dashboard component
+import Dashboard from './pages/Dashboard'
 
 export default function App() {
 	return (

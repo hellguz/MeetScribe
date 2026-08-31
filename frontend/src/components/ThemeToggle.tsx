@@ -16,7 +16,7 @@ const ThemeToggle: React.FC<ThemeToggleProps> = ({ style }) => {
 			onClick={toggleTheme}
 			title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
 			style={{
-				padding: '5px 7px',
+				padding: '7px 9px',
 				border: `1px solid ${colors.border}`,
 				borderRadius: '6px',
 				backgroundColor: colors.backgroundSecondary,

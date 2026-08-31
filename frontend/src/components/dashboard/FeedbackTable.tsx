@@ -4,6 +4,9 @@ import { AppTheme } from '../../styles/theme'
 import { MeetingWithFeedback, Feedback } from '../../types'
 import { getFeedbackColors } from '../../utils/feedbackColors'
 
+type FeedbackColorEntry = { text: string; bg: string; border: string }
+type FeedbackColorMap = Record<string, FeedbackColorEntry | undefined>
+
 interface FeedbackTableProps {
 	meetings: MeetingWithFeedback[]
 	theme: AppTheme
@@ -36,7 +39,7 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
 		const [isHovered, setIsHovered] = useState(false)
 		const type = feedback.type === 'feature_suggestion' ? '💡 Suggestion' : feedback.type
 		const label = getLabel(type)
-		const colors = (feedbackColors as any)[type] || { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
+		const colors = (feedbackColors as FeedbackColorMap)[type] ?? { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
 
 		return (
 			<span
@@ -92,7 +95,7 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
 				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
 					{allFeedbackTypes.map((type) => {
 						const isActive = activeFilters.includes(type)
-						const colors = (feedbackColors as any)[type] || { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
+						const colors = (feedbackColors as FeedbackColorMap)[type] ?? { text: theme.text, bg: theme.backgroundSecondary, border: theme.border }
 						return (
 							<button
 								key={type}

@@ -54,10 +54,10 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 					disabled={disabled}
 					style={{
 						width: '100%',
-						padding: '4px 8px',
-						borderRadius: '4px',
+						padding: '7px 10px',
+						borderRadius: '6px',
 						border: `1px solid ${currentThemeColors.border}`,
-						fontSize: '13px',
+						fontSize: '15px',
 						backgroundColor: currentThemeColors.body,
 						color: currentThemeColors.text,
 						opacity: disabled ? 0.6 : 1,
@@ -92,7 +92,7 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 								key={option.value}
 								onClick={() => handleSelect(option.value)}
 								style={{
-									padding: '6px 10px',
+									padding: '9px 12px',
 									cursor: 'pointer',
 									fontWeight: value === option.value ? 'bold' : 'normal',
 									fontFamily: 'inherit',
@@ -115,7 +115,7 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 				backgroundColor: currentThemeColors.body,
 				border: `1px solid ${currentThemeColors.border}`,
 				borderRadius: '8px',
-				padding: '3px',
+				padding: '4px',
 				width: 'fit-content',
 				opacity: disabled ? 0.6 : 1,
 				cursor: disabled ? 'not-allowed' : 'default',
@@ -129,16 +129,16 @@ const SummaryLengthSelector: React.FC<SummaryLengthSelectorProps> = ({ value, di
 						onClick={() => handleSelect(option.value)}
 						disabled={disabled}
 						style={{
-							padding: '3px 10px',
+							padding: '5px 12px',
 							border: 'none',
-							borderRadius: '4px',
+							borderRadius: '5px',
 							backgroundColor: isActive ? currentThemeColors.backgroundSecondary : 'transparent',
 							color: currentThemeColors.text,
 							cursor: disabled ? 'not-allowed' : 'pointer',
 							fontWeight: isActive ? 'bold' : 'normal',
 							transition: 'all 0.2s ease',
-							fontSize: '13px',
-							height: '24px',
+							fontSize: '15px',
+							height: '30px',
 							boxSizing: 'border-box',
 							display: 'flex',
 							alignItems: 'center',

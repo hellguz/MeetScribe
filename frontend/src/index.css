@@ -76,7 +76,7 @@ body {
 }
 
 .markdown-content li {
-	margin-bottom: 0.25em;
+	margin-bottom: 0.3em;
 }
 
 .markdown-content li p {
@@ -198,7 +198,6 @@ body {
 /* ── Recording page animations ─────────────────────────────────────────── */
 
 @keyframes pausedPulse {
-
 	0%,
 	100% {
 		opacity: 0.5;
@@ -222,6 +221,10 @@ body {
 		display: none !important;
 	}
 	.history-fav-tags {
+		visibility: visible !important;
+	}
+	.history-tag-icon-btn,
+	.history-fav-btn {
 		visibility: visible !important;
 	}
 }

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { marked } from 'marked'
+import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
@@ -137,8 +138,10 @@ export default function Summary() {
 				let range: Range | null = null
 				if (document.caretRangeFromPoint) {
 					range = document.caretRangeFromPoint(clickX, clickY)
-				} else if ((document as any).caretPositionFromPoint) {
-					const pos = (document as any).caretPositionFromPoint(clickX, clickY)
+				} else if ('caretPositionFromPoint' in document) {
+					// Firefox-only API not yet in TypeScript's DOM types
+					type DocWithCaret = Document & { caretPositionFromPoint(x: number, y: number): { offsetNode: Node; offset: number } | null }
+					const pos = (document as DocWithCaret).caretPositionFromPoint(clickX, clickY)
 					if (pos) {
 						range = document.createRange()
 						range.setStart(pos.offsetNode, pos.offset)
@@ -225,7 +228,7 @@ export default function Summary() {
 		setLanguageState(newState)
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
 		try {
-			const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}/translate`, {
+			const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ target_language: targetLanguage, language_mode: newState.mode }),
@@ -241,7 +244,7 @@ export default function Summary() {
 		if (!window.confirm('Are you sure you want to permanently delete this meeting and its summary? This cannot be undone.')) return
 		removeMeeting(mid)
 		try {
-			await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/meetings/${mid}`, { method: 'DELETE' })
+			await fetch(apiUrl(`/api/meetings/${mid}`), { method: 'DELETE' })
 		} catch {
 			// best-effort server delete
 		}
@@ -255,7 +258,7 @@ export default function Summary() {
 	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
 
 	const copyButtonStyle: React.CSSProperties = {
-		padding: '5px 7px',
+		padding: '7px 9px',
 		border: 'none',
 		backgroundColor: 'transparent',
 		color: currentThemeColors.secondaryText,
@@ -278,15 +281,15 @@ export default function Summary() {
 						border: 'none',
 						cursor: 'pointer',
 						color: currentThemeColors.secondaryText,
-						fontSize: '13px',
+						fontSize: '15px',
 						fontFamily: 'inherit',
 					}}>
-					← Back to Recordings
+					← Back
 				</button>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
 					{hasSummary && !isProcessing && (
 						<>
-							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '11px', opacity: 0.7 }}>Copied!</span>}
+							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '13px', opacity: 0.7 }}>Copied!</span>}
 							<div
 								style={{
 									display: 'flex',
@@ -393,13 +396,13 @@ export default function Summary() {
 								disabled={isRegenerating || isProcessing}
 								style={{
 									width: '100%',
-									minHeight: '32px',
-									padding: '5px 8px',
+									minHeight: '36px',
+									padding: '7px 10px',
 									borderRadius: '6px',
 									border: `1px solid ${currentThemeColors.input.border}`,
 									backgroundColor: currentThemeColors.input.background,
 									color: currentThemeColors.input.text,
-									fontSize: '13px',
+									fontSize: '15px',
 									fontFamily: 'inherit',
 									resize: 'vertical',
 									boxSizing: 'border-box',
@@ -412,12 +415,12 @@ export default function Summary() {
 									disabled={isRegenerating || isProcessing}
 									style={{
 										marginTop: '6px',
-										padding: '5px 12px',
+										padding: '8px 14px',
 										border: 'none',
 										borderRadius: '6px',
 										backgroundColor: currentThemeColors.button.primary,
 										color: currentThemeColors.button.primaryText,
-										fontSize: '13px',
+										fontSize: '15px',
 										fontWeight: '500',
 										cursor: isRegenerating || isProcessing ? 'not-allowed' : 'pointer',
 										opacity: isRegenerating || isProcessing ? 0.6 : 1,
@@ -466,7 +469,7 @@ export default function Summary() {
 									{meetingTitle || (isLoading ? '\u00a0' : `Summary for ${mid}`)}
 								</h1>
 								{formattedDate && (
-									<p style={{ margin: '6px 0 0 0', fontSize: '14px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
+									<p style={{ margin: '6px 0 0 0', fontSize: '15px', color: currentThemeColors.secondaryText, fontFamily: 'inherit' }}>{formattedDate}</p>
 								)}
 							</div>
 							{/* Edit / Save+Cancel */}
@@ -477,12 +480,12 @@ export default function Summary() {
 											onMouseDown={(e) => e.preventDefault()}
 											onClick={doSave}
 											style={{
-												padding: '6px 12px',
+												padding: '8px 14px',
 												border: 'none',
 												borderRadius: '6px',
 												backgroundColor: currentThemeColors.button.primary,
 												color: currentThemeColors.button.primaryText,
-												fontSize: '13px',
+												fontSize: '15px',
 												fontWeight: 500,
 												cursor: 'pointer',
 												fontFamily: 'inherit',
@@ -495,12 +498,12 @@ export default function Summary() {
 											}}
 											onClick={doCancel}
 											style={{
-												padding: '6px 12px',
+												padding: '8px 14px',
 												border: `1px solid ${currentThemeColors.border}`,
 												borderRadius: '6px',
 												backgroundColor: currentThemeColors.background,
 												color: currentThemeColors.text,
-												fontSize: '13px',
+												fontSize: '15px',
 												cursor: 'pointer',
 												fontFamily: 'inherit',
 											}}>
@@ -530,7 +533,7 @@ export default function Summary() {
 							style={{
 								padding: '6px 24px 20px',
 								lineHeight: '1.5',
-								fontSize: '14px',
+								fontSize: '16px',
 								outline: 'none',
 								cursor: isEditing ? 'text' : 'default',
 								minHeight: '100px',
@@ -589,7 +592,7 @@ export default function Summary() {
 							}}
 							title="Copy transcript"
 							style={{
-								padding: '3px 7px',
+								padding: '5px 9px',
 								border: `1px solid ${currentThemeColors.border}`,
 								borderRadius: '6px',
 								backgroundColor: currentThemeColors.backgroundSecondary,
@@ -598,19 +601,15 @@ export default function Summary() {
 								display: 'flex',
 								alignItems: 'center',
 								gap: '4px',
-								fontSize: '11px',
+								fontSize: '13px',
 								lineHeight: 1,
 								fontFamily: 'inherit',
 							}}>
-							{transcriptCopied ? (
-								<span>Copied!</span>
-							) : (
-								<CopyTextIcon size={13} />
-							)}
+							{transcriptCopied ? <span>Copied!</span> : <CopyTextIcon size={13} />}
 						</button>
 					</h5>
 					{isTranscriptVisible && (
-						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '14px', lineHeight: '1.6' }}>{transcript}</pre>
+						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '15px', lineHeight: '1.6' }}>{transcript}</pre>
 					)}
 				</div>
 			)}

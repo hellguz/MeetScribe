@@ -62,26 +62,29 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	return (
 		<>
 			{isRecording && (
-				<div style={{
-					textAlign: 'center',
-					fontSize: '24px',
-					fontWeight: 'bold',
-					color: isPaused ? '#f59e0b' : theme.button.danger,
-					marginBottom: '6px',
-				}}>
+				<div
+					style={{
+						textAlign: 'center',
+						fontSize: '24px',
+						fontWeight: 'bold',
+						color: isPaused ? '#f59e0b' : theme.button.danger,
+						marginBottom: '6px',
+					}}>
 					{isPaused ? '⏸' : '⏱️'} {formatTime(recordingTime)}
 					{isPaused && (
-						<span className="paused-label" style={{
-							fontSize: '11px',
-							fontWeight: '600',
-							marginLeft: '10px',
-							letterSpacing: '0.12em',
-							color: '#f59e0b',
-							background: 'rgba(245, 158, 11, 0.12)',
-							padding: '2px 7px',
-							borderRadius: '4px',
-							verticalAlign: 'middle',
-						}}>
+						<span
+							className="paused-label"
+							style={{
+								fontSize: '11px',
+								fontWeight: '600',
+								marginLeft: '10px',
+								letterSpacing: '0.12em',
+								color: '#f59e0b',
+								background: 'rgba(245, 158, 11, 0.12)',
+								padding: '2px 7px',
+								borderRadius: '4px',
+								verticalAlign: 'middle',
+							}}>
 							PAUSED
 						</span>
 					)}
@@ -175,12 +178,7 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 						color: isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.secondaryText : theme.button.primary,
 						marginBottom: '4px',
 					}}>
-					{isRecording
-						? isPaused
-							? '⏸ Paused'
-							: '🔴 Recording...'
-						: isProcessing ? 'Processing... Please wait.' : 'Ready'
-					}
+					{isRecording ? (isPaused ? '⏸ Paused' : '🔴 Recording...') : isProcessing ? 'Processing... Please wait.' : 'Ready'}
 				</div>
 			</div>
 
