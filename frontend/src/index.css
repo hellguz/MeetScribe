@@ -212,6 +212,24 @@ body {
 	animation: pausedPulse 2s ease-in-out infinite;
 }
 
+@keyframes spinnerRotate {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.spinner {
+	animation: spinnerRotate 0.8s linear infinite;
+	transform-origin: 50% 50%;
+}
+
+/* Keep the motion cue without it being a fast rotation. */
+@media (prefers-reduced-motion: reduce) {
+	.spinner {
+		animation-duration: 2.5s;
+	}
+}
+
 @media (max-width: 640px) {
 	.page-container {
 		padding-left: 10px !important;

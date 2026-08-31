@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
+import Spinner from '../components/Spinner'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
@@ -63,6 +64,10 @@ export default function Summary() {
 		currentMeetingLength,
 		submittedFeedback,
 		isRegenerating,
+		canRediarize,
+		speakerCount,
+		processingStage,
+		handleRediarize,
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
@@ -256,6 +261,20 @@ export default function Summary() {
 	const hasSummary = !!summaryMarkdown && !isProcessing
 	const displayLoading = isLoading && !loadedFromCache
 	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
+	// Regenerating with a summary already on screen showed nothing at all, so
+	// changing the language looked like a no-op. Announce it and dim the stale text.
+	const showRegeneratingBanner = isRegenerating && !!summaryMarkdown
+	// A transcript recorded before diarization existed has no speaker labels.
+	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
+	const busy = isProcessing || isRegenerating
+	const stageLabel =
+		processingStage === 'diarizing'
+			? 'Identifying speakers…'
+			: processingStage === 'transcribing'
+				? 'Re-transcribing audio…'
+				: processingStage === 'summarizing'
+					? 'Writing summary…'
+					: 'Processing summary, please wait…'
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -434,9 +453,31 @@ export default function Summary() {
 				</div>
 			)}
 
+			{showRegeneratingBanner && (
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '8px',
+						margin: '0 0 10px',
+						padding: '8px 12px',
+						borderRadius: '8px',
+						backgroundColor: currentThemeColors.backgroundSecondary,
+						border: `1px solid ${currentThemeColors.border}`,
+						color: currentThemeColors.secondaryText,
+						fontSize: '14px',
+					}}>
+					<Spinner label="Regenerating summary" />
+					Regenerating summary…
+				</div>
+			)}
+
 			{/* Summary */}
 			{displayLoading ? (
-				<p>Loading summary...</p>
+				<p style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+					<Spinner label="Loading summary" />
+					Loading summary…
+				</p>
 			) : error ? (
 				<p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>
 			) : hasSummary ? (
@@ -446,7 +487,8 @@ export default function Summary() {
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 						boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
-						transition: 'box-shadow 0.15s ease',
+						opacity: showRegeneratingBanner ? 0.5 : 1,
+						transition: 'box-shadow 0.15s ease, opacity 0.2s ease',
 					}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}
 					<div onBlur={handleContainerBlur}>
@@ -543,7 +585,10 @@ export default function Summary() {
 					</div>
 				</div>
 			) : showProcessingMessage ? (
-				<p>⏳ Processing summary, please wait...</p>
+				<p style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+					<Spinner label={stageLabel} />
+					{stageLabel}
+				</p>
 			) : (
 				<p>No summary is available for this meeting.</p>
 			)}
@@ -580,7 +625,45 @@ export default function Summary() {
 								▶
 							</span>{' '}
 							🎤 Transcript
+							{speakerCount ? (
+								<span style={{ marginLeft: '8px', fontWeight: 400, fontSize: '13px', color: currentThemeColors.secondaryText }}>
+									{speakerCount} {speakerCount === 1 ? 'speaker' : 'speakers'}
+								</span>
+							) : null}
 						</span>
+						<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+						{canRediarize && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation()
+									handleRediarize()
+								}}
+								disabled={busy}
+								title={
+									isDiarized
+										? 'Re-run speaker identification and summary'
+										: 'Identify speakers in this recording and rewrite the summary'
+								}
+								style={{
+									padding: '5px 9px',
+									border: `1px solid ${currentThemeColors.border}`,
+									borderRadius: '6px',
+									backgroundColor: currentThemeColors.backgroundSecondary,
+									color: currentThemeColors.secondaryText,
+									cursor: busy ? 'not-allowed' : 'pointer',
+									opacity: busy ? 0.6 : 1,
+									display: 'flex',
+									alignItems: 'center',
+									gap: '5px',
+									fontSize: '13px',
+									lineHeight: 1,
+									fontFamily: 'inherit',
+									whiteSpace: 'nowrap',
+								}}>
+								{busy ? <Spinner size={13} /> : <span aria-hidden>🗣️</span>}
+								{isDiarized ? 'Redo speakers' : 'Find speakers'}
+							</button>
+						)}
 						<button
 							onClick={(e) => {
 								e.stopPropagation()
@@ -607,6 +690,7 @@ export default function Summary() {
 							}}>
 							{transcriptCopied ? <span>Copied!</span> : <CopyTextIcon size={13} />}
 						</button>
+						</span>
 					</h5>
 					{isTranscriptVisible && (
 						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '15px', lineHeight: '1.6' }}>{transcript}</pre>

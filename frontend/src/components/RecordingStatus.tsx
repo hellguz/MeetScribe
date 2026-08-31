@@ -1,4 +1,5 @@
 import React from 'react'
+import Spinner from './Spinner'
 import { AppTheme } from '../styles/theme'
 import { AudioSource } from '../types'
 
@@ -17,6 +18,8 @@ interface RecordingStatusProps {
 	audioSource: AudioSource
 	wakeLockStatus: 'inactive' | 'active' | 'error'
 	isPaused: boolean
+	/** Backend post-meeting stage: 'diarizing' | 'summarizing' | null. */
+	processingStage: string | null
 }
 
 const formatTime = (seconds: number) => {
@@ -40,8 +43,17 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	audioSource,
 	wakeLockStatus,
 	isPaused,
+	processingStage,
 }) => {
 	const realTotal = expectedTotalChunks !== null ? expectedTotalChunks : localChunksCount
+	// Diarization runs over the whole recording and can take minutes, so say
+	// which stage is running rather than a bare "please wait".
+	const processingLabel =
+		processingStage === 'diarizing'
+			? 'Identifying speakers…'
+			: processingStage === 'summarizing'
+				? 'Writing summary…'
+				: 'Processing… Please wait.'
 	const getUploadProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (uploadedChunks / realTotal) * 100))
 	const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100))
 	const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal
@@ -178,7 +190,20 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 						color: isRecording ? (isPaused ? '#f59e0b' : theme.button.danger) : isProcessing ? theme.secondaryText : theme.button.primary,
 						marginBottom: '4px',
 					}}>
-					{isRecording ? (isPaused ? '⏸ Paused' : '🔴 Recording...') : isProcessing ? 'Processing... Please wait.' : 'Ready'}
+					{isRecording ? (
+						isPaused ? (
+							'⏸ Paused'
+						) : (
+							'🔴 Recording...'
+						)
+					) : isProcessing ? (
+						<span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+							<Spinner size={18} label={processingLabel} />
+							{processingLabel}
+						</span>
+					) : (
+						'Ready'
+					)}
 				</div>
 			</div>
 

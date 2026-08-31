@@ -25,6 +25,10 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [currentMeetingLength, setCurrentMeetingLength] = useState<SummaryLength>('narrative')
 	const [submittedFeedback, setSubmittedFeedback] = useState<string[]>([])
 	const [isRegenerating, setIsRegenerating] = useState(false)
+	// Whether the original audio survives, so speakers can still be identified.
+	const [canRediarize, setCanRediarize] = useState(false)
+	const [speakerCount, setSpeakerCount] = useState<number | null>(null)
+	const [processingStage, setProcessingStage] = useState<string | null>(null)
 
 	const fetchMeetingData = useCallback(
 		async (isInitialFetch: boolean = false) => {
@@ -54,6 +58,9 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				}
 
 				setContext(data.context || '')
+				setCanRediarize(!!data.can_rediarize)
+				setSpeakerCount(typeof data.speaker_count === 'number' ? data.speaker_count : null)
+				setProcessingStage(data.processing_stage ?? null)
 				const trn = data.transcript_text || null
 				setTranscript(trn)
 				setSummaryMarkdown(data.summary_markdown || null)
@@ -104,6 +111,27 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		},
 		[mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState],
 	)
+
+	/**
+	 * Re-run timings, diarization and the summary for this meeting. Used for
+	 * recordings made before speaker labels existed. The backend clears `done`,
+	 * which puts this hook into its polling path.
+	 */
+	const handleRediarize = useCallback(async () => {
+		if (!mid) return
+		setIsProcessing(true)
+		try {
+			const res = await fetch(apiUrl(`/api/meetings/${mid}/rediarize`), { method: 'POST' })
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}))
+				throw new Error(body.detail || 'Could not start speaker identification.')
+			}
+			fetchMeetingData(false)
+		} catch (err) {
+			setIsProcessing(false)
+			setError(err instanceof Error ? err.message : 'Could not start speaker identification.')
+		}
+	}, [mid, fetchMeetingData])
 
 	const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
 		if (!mid) return
@@ -245,6 +273,10 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		currentMeetingLength,
 		submittedFeedback,
 		isRegenerating,
+		canRediarize,
+		speakerCount,
+		processingStage,
+		handleRediarize,
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
