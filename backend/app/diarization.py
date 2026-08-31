@@ -36,7 +36,6 @@ LOGGER = logging.getLogger("meetscribe_diarization")
 
 SAMPLE_RATE = 16_000
 SEGMENTATION_MODEL = Path("sherpa-onnx-pyannote-segmentation-3-0") / "model.int8.onnx"
-EMBEDDING_MODEL = Path("wespeaker_en_voxceleb_CAM++.onnx")
 
 # One diarizer per concurrency slot: checking one out guarantees no two threads
 # call process() on the same object, while still amortizing model loading.
@@ -52,8 +51,10 @@ class SpeakerTurn:
 
 
 def model_paths() -> tuple[Path, Path]:
+    """(segmentation, embedding) model paths. The embedder is configurable
+    because which one is used matters more than any other single setting."""
     root = Path(settings.diarization_model_dir)
-    return root / SEGMENTATION_MODEL, root / EMBEDDING_MODEL
+    return root / SEGMENTATION_MODEL, root / settings.diarization_embedding_model
 
 
 def models_available() -> bool:
@@ -173,15 +174,16 @@ def _prune_minor_speakers(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
     Background noise, laughter and one-word interjections produce unreliable
     embeddings, and each fragment tends to become its own "speaker". Without
     this, noisy recordings invent a dozen speakers; with it, one threshold works
-    for both clean and noisy audio. Measured speaker counts (ground truth in
-    brackets) at threshold 0.6:
+    for both clean and noisy audio. Measured on four 21-minute AMI meetings at
+    threshold 0.90, true speaker count 4 in every case:
 
-        clean parliament debate [3-4]: 5 raw -> 3 pruned
-        noisy outdoor conversation [3]: 11 raw -> 4 pruned
+        raw clusters:  21, 18, 19, 21
+        after pruning:  4,  3,  3,  4
 
-    A cluster survives if it holds a meaningful *share* of the speech OR enough
-    absolute speech — the second test matters in long meetings, where a genuine
-    but quiet participant is a tiny fraction of the total.
+    A cluster survives on its *share* of the speech alone. An earlier version
+    also let a cluster through on absolute duration ("or >= 8 seconds"), which
+    backfired: 8s is under 1% of a 21-minute meeting, so almost every noise
+    cluster qualified, and long meetings reported 13+ speakers.
     """
     if not turns:
         return turns
@@ -195,7 +197,6 @@ def _prune_minor_speakers(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
         speaker
         for speaker, seconds in talk.items()
         if seconds / total >= settings.diarization_min_speaker_share
-        or seconds >= settings.diarization_min_speaker_seconds
     }
     if not major or len(major) == len(talk):
         return turns

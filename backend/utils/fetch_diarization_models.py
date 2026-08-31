@@ -30,12 +30,24 @@ RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 SEGMENTATION_ARCHIVE = (
     f"{RELEASES}/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
 )
-# The upstream release tag really is spelled "recongition".
-EMBEDDING_URL = f"{RELEASES}/speaker-recongition-models/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
-
 SEGMENTATION_DIR = "sherpa-onnx-pyannote-segmentation-3-0"
 SEGMENTATION_FILE = "model.int8.onnx"
-EMBEDDING_FILE = "wespeaker_en_voxceleb_CAM++.onnx"
+
+# Whichever embedder is configured gets downloaded. The upstream release tag
+# really is spelled "recongition". Benchmarked mean DER over four AMI meetings
+# is noted beside each; campplus is the default and the best of them.
+EMBEDDING_MODELS = {
+    "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx": 23.7,
+    "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx": 25.7,
+    "wespeaker_en_voxceleb_CAM++.onnx": 60.7,
+    "nemo_en_titanet_small.onnx": None,
+}
+DEFAULT_EMBEDDING_FILE = "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+
+
+def embedding_url(filename: str) -> str:
+    # '+' must be percent-encoded or GitHub serves a 404.
+    return f"{RELEASES}/speaker-recongition-models/{filename.replace('+', '%2B')}"
 
 
 def _present(path: Path) -> bool:
@@ -62,9 +74,9 @@ def _download(url: str, dest: Path) -> None:
     print(f"[models] saved {dest.name} ({dest.stat().st_size / 1e6:.1f} MB)")
 
 
-def fetch(target_dir: Path) -> None:
+def fetch(target_dir: Path, embedding_file: str = DEFAULT_EMBEDDING_FILE) -> None:
     seg_model = target_dir / SEGMENTATION_DIR / SEGMENTATION_FILE
-    emb_model = target_dir / EMBEDDING_FILE
+    emb_model = target_dir / embedding_file
 
     if _present(seg_model):
         print(f"[models] {SEGMENTATION_DIR}/{SEGMENTATION_FILE} already present")
@@ -80,15 +92,24 @@ def fetch(target_dir: Path) -> None:
             raise RuntimeError(f"archive did not contain {seg_model}")
 
     if _present(emb_model):
-        print(f"[models] {EMBEDDING_FILE} already present")
+        print(f"[models] {embedding_file} already present")
     else:
-        _download(EMBEDDING_URL, emb_model)
+        _download(embedding_url(embedding_file), emb_model)
 
 
 def main() -> int:
     target_dir = Path(os.environ.get("DIARIZATION_MODEL_DIR") or DEFAULT_DIR)
+    embedding_file = (
+        os.environ.get("DIARIZATION_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_FILE
+    )
+    if embedding_file not in EMBEDDING_MODELS:
+        print(
+            f"[models] note: {embedding_file} is not one of the benchmarked models; "
+            "attempting the download anyway.",
+            file=sys.stderr,
+        )
     try:
-        fetch(target_dir)
+        fetch(target_dir, embedding_file)
     except Exception as exc:
         # Never fatal: without models the app simply skips speaker labels.
         print(f"[models] WARNING: {exc}", file=sys.stderr)

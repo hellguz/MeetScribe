@@ -33,30 +33,32 @@ class Settings(BaseSettings):
     # transcript with Speaker 1..N before it is sent for summarization.
     diarization_enabled: bool = True
     diarization_model_dir: Path = BASE_DIR / "data" / "models"
-    # Cosine threshold for speaker clustering. Higher merges speakers together;
-    # lower splits them apart. Measured on two real recordings:
+    # Speaker-embedding model. Measured over four 21-minute AMI meetings
+    # (mean DER, 0.25s collar) plus two of our own recordings:
     #
-    #   Bundestag debate, ~3-4 speakers, clean audio:
-    #     0.4 -> 7 | 0.5 -> 5 | 0.7 -> 3 | 0.8 -> 2 | 0.9 -> 1 (all collapsed)
-    #   Outdoor conversation, ~3 speakers, noisy and sparse:
-    #     0.5 -> 15 | 0.7 -> 7 | 0.9 -> 3
+    #   campplus @0.90   DER 23.7   speakers 4,3,3,4 (truth 4)   RTF ~0.08
+    #   eres2net @0.95   DER 25.7   speakers 3,3,2,4             RTF ~0.15-0.41
+    #   wespeaker@0.60   DER 60.7   speakers 13,15,14,14         RTF ~0.07
     #
-    # Clean speech tolerates a lower threshold than noisy speech. 0.6 is paired
-    # with the minor-cluster pruning below, which together handle both cases:
+    # campplus wins on accuracy, on speaker count, and on cost. It is trained
+    # on Chinese yet transfers well to English, German and Russian — speaker
+    # embeddings are far less language-bound than they look.
+    diarization_embedding_model: str = "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+    # Cosine threshold for clustering. Higher merges speakers, lower splits
+    # them. 0.90 matches sherpa-onnx's own recommendation; 0.60 (our first
+    # guess) produced 13-15 speakers in a 4-person meeting because the optimal
+    # value drifts badly with recording length.
+    diarization_cluster_threshold: float = 0.9
+    # A speaker cluster holding less than this share of the speech is treated as
+    # noise and folded into the nearest real speaker.
     #
-    #                                    raw -> pruned   (ground truth)
-    #   clean parliament debate           5   -> 3        (3-4)
-    #   noisy outdoor conversation       11   -> 4        (3)
-    #
-    # Lower this if distinct speakers are being merged; raise it if one person
-    # keeps appearing under several labels.
-    diarization_cluster_threshold: float = 0.6
-    # A speaker cluster is treated as noise — and folded into the nearest real
-    # speaker — when it holds less than this share of the speech AND less than
-    # `min_speaker_seconds` of it. The absolute floor keeps genuinely quiet
-    # participants in long meetings, where anyone is a tiny share of the total.
+    # There is deliberately NO absolute-seconds escape hatch. An earlier
+    # "6% share OR 8 seconds" rule was meant to protect quiet participants, but
+    # 8s is under 1% of a 21-minute meeting, so nearly every noise cluster
+    # survived it — that single clause was most of why long meetings reported
+    # 13+ speakers. The cost is that someone speaking under ~6% of the time
+    # gets merged into a neighbour, which barely affects a summary.
     diarization_min_speaker_share: float = 0.06
-    diarization_min_speaker_seconds: float = 8.0
     # Ignore speech/silence runs shorter than these (seconds). Short bursts
     # produce unreliable embeddings and inflate the speaker count.
     diarization_min_duration_on: float = 0.5
