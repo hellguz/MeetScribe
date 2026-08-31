@@ -21,7 +21,11 @@ from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
 import json
+import tempfile
+import wave
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from .config import settings
 from .models import Meeting, MeetingChunk
@@ -464,6 +468,127 @@ def has_meeting_audio(db: Session, meeting_id: uuid.UUID) -> bool:
     return False
 
 
+# Backfill transcription batch length. LIVE RECORDING IS UNAFFECTED — it keeps
+# its 30s chunks, which is what makes the real-time transcript work. This is
+# only for re-processing an old meeting: sending one request per 30s chunk means
+# hundreds of calls, which trips Groq's rate limit (a 90-minute meeting took
+# ~9 minutes, mostly 429 retries). Ten minutes of 16kHz mono is ~10 MB as FLAC,
+# comfortably inside the 25 MB request limit.
+BACKFILL_BATCH_SECONDS = 600
+
+
+def _decode_chunk_pcm(path: str):
+    """Decode one chunk to float32 mono 16k, or None if it holds no audio."""
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
+            "-f", "f32le", "-ac", "1", "-ar", str(diarization.SAMPLE_RATE), "-",
+        ],
+        capture_output=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return np.frombuffer(proc.stdout, dtype=np.float32)
+
+
+def rebuild_timings_in_batches(db: Session, chunks: list[MeetingChunk]) -> int:
+    """
+    Recover segment timings for old chunks by re-transcribing in large batches.
+
+    Fewer, longer requests are both faster and *more* accurate: Whisper sees
+    continuous audio instead of isolated 30-second islands, and timings come
+    back on one axis instead of being stitched from per-chunk offsets.
+
+    Segments are written back onto the chunk they fall in, so the normal merge
+    path is unchanged and a later re-run needs no API calls at all.
+    Returns how many chunks were given timings.
+    """
+    sample_rate = diarization.SAMPLE_RATE
+
+    # Decode once, recording where each chunk sits on the meeting timeline.
+    decoded = []
+    cursor = 0.0
+    for chunk in chunks:
+        pcm = _decode_chunk_pcm(chunk.path)
+        if pcm is None or pcm.size == 0:
+            continue
+        span = len(pcm) / sample_rate
+        decoded.append((chunk, pcm, cursor, cursor + span))
+        cursor += span
+
+    if not decoded:
+        return 0
+
+    # Group into batches of at most BACKFILL_BATCH_SECONDS.
+    batches: list[list] = [[]]
+    for item in decoded:
+        current = batches[-1]
+        current_span = sum(len(p) for _, p, _, _ in current) / sample_rate
+        if current and current_span + (item[3] - item[2]) > BACKFILL_BATCH_SECONDS:
+            batches.append([item])
+        else:
+            current.append(item)
+
+    LOGGER.info(
+        "Re-transcribing %.1f min as %d batch(es) instead of %d single-chunk requests.",
+        cursor / 60, len([b for b in batches if b]), len(decoded),
+    )
+
+    updated = 0
+    with tempfile.TemporaryDirectory(prefix="meetscribe-backfill-") as tmp:
+        for number, batch in enumerate(batches, start=1):
+            if not batch:
+                continue
+            batch_start = batch[0][2]
+            audio = np.concatenate([pcm for _, pcm, _, _ in batch])
+
+            wav_path = Path(tmp) / f"batch_{number:03d}.wav"
+            with wave.open(str(wav_path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(sample_rate)
+                out.writeframes(
+                    np.clip(audio * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+                )
+
+            try:
+                result = transcribe_webm_chunk_in_worker(str(wav_path))
+            except Exception as exc:
+                LOGGER.warning("Batch %d could not be transcribed: %s", number, exc)
+                continue
+            if not result.segments:
+                LOGGER.warning("Batch %d returned no timings; leaving its chunks as they were.", number)
+                continue
+
+            # Put each segment on the meeting timeline, then back into the chunk
+            # containing it, as a chunk-relative time.
+            per_chunk: dict[int, list[dict]] = {}
+            for seg in result.segments:
+                start = batch_start + float(seg.get("start") or 0.0)
+                end = batch_start + float(seg.get("end") or 0.0)
+                for chunk, _pcm, c_start, c_end in batch:
+                    if c_start <= start < c_end:
+                        per_chunk.setdefault(chunk.chunk_index, []).append(
+                            {"start": start - c_start, "end": end - c_start,
+                             "text": seg.get("text") or ""}
+                        )
+                        break
+
+            # Rewrite every chunk in the batch from this transcription. Keeping
+            # the old text for chunks that got no segment would duplicate words
+            # already captured by a neighbouring segment.
+            for chunk, _pcm, _s, _e in batch:
+                segments = per_chunk.get(chunk.chunk_index, [])
+                chunk.segments_json = json.dumps(segments) if segments else None
+                chunk.text = " ".join(s["text"].strip() for s in segments).strip()
+                db.add(chunk)
+                if segments:
+                    updated += 1
+            db.commit()
+
+    return updated
+
+
 def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) -> None:
     """
     Re-run diarization and the summary for a meeting that already finished.
@@ -504,24 +629,7 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
                     db.add(mtg)
                     db.commit()
 
-                    for chunk in missing:
-                        try:
-                            result = transcribe_webm_chunk_in_worker(chunk.path)
-                        except Exception as exc:
-                            LOGGER.warning(
-                                "Chunk %d could not be re-transcribed: %s",
-                                chunk.chunk_index, exc,
-                            )
-                            continue
-                        if not result.segments:
-                            continue
-                        chunk.segments_json = json.dumps(result.segments)
-                        # Store the matching text too, so words and timings can
-                        # never come from different transcription runs.
-                        if result.text:
-                            chunk.text = result.text
-                        db.add(chunk)
-                    db.commit()
+                    rebuild_timings_in_batches(db, chunks)
 
             LOGGER.info("♻️  Meeting %s: re-running diarization and summary.", meeting_id_str)
             mtg.done = False
