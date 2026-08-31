@@ -11,6 +11,7 @@ import AudioSourceSelector from '../components/AudioSourceSelector'
 import FileUpload from '../components/FileUpload'
 import RecordingStatus from '../components/RecordingStatus'
 import HistoryList from '../components/HistoryList'
+import InfoPanel, { InfoButton } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 
@@ -53,6 +54,7 @@ export default function Record() {
 	} = useRecording(summaryLength, languageState)
 
 	const [history, setHistory] = useState<MeetingMeta[]>([])
+	const [infoOpen, setInfoOpen] = useState(false)
 	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true)
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const isUiLocked = isRecording || isProcessing
@@ -233,8 +235,11 @@ export default function Record() {
 
 	return (
 		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
+			<InfoPanel theme={currentThemeColors} open={infoOpen} setOpen={setInfoOpen} />
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-				<div style={{ flex: 1 }} />
+				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
+					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
+				</div>
 				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
 				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
 					<ThemeToggle />

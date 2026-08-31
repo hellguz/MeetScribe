@@ -59,3 +59,25 @@ export function formatMeetingDateShort(value?: string | null): string {
 		return date.toLocaleDateString()
 	}
 }
+
+/**
+ * "31 Aug 2026, 21:44" — date and time for the history list, in the viewer's
+ * timezone. No zone name here: the list would get noisy, and the summary page
+ * spells it out in full when it matters.
+ */
+export function formatMeetingDateTimeShort(value?: string | null): string {
+	const date = parseServerDate(value)
+	if (!date) return ''
+	try {
+		return new Intl.DateTimeFormat(undefined, {
+			day: 'numeric',
+			month: 'short',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: false,
+		}).format(date)
+	} catch {
+		return date.toLocaleString()
+	}
+}
