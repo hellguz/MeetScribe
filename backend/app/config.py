@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # 13+ speakers. The cost is that someone speaking under ~6% of the time
     # gets merged into a neighbour, which barely affects a summary.
     diarization_min_speaker_share: float = 0.06
+    # How far the segmentation window advances, as a fraction of its length.
+    # sherpa-onnx defaults to 0.1 — a 90% overlap that analyses every moment
+    # about ten times over. Measured across six recordings, 0.5 is 4.9x faster
+    # AND slightly more accurate (mean DER 22.6% vs 23.7%), with identical
+    # speaker counts, so the overlap was buying nothing.
+    diarization_window_shift_ratio: float = 0.5
     # Ignore speech/silence runs shorter than these (seconds). Short bursts
     # produce unreliable embeddings and inflate the speaker count.
     diarization_min_duration_on: float = 0.5

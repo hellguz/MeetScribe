@@ -176,6 +176,7 @@ All configuration lives in a single `.env` file in the project root.
 | `DIARIZATION_EMBEDDING_MODEL` | Speaker-embedding model. Biggest single lever on accuracy — see `.env.sample` for benchmarks. | `campplus` |
 | `DIARIZATION_CLUSTER_THRESHOLD` | Higher merges speakers, lower splits them. | `0.9` |
 | `DIARIZATION_MIN_SPEAKER_SHARE` | Clusters below this share of speech are folded into the nearest speaker. | `0.06` |
+| `DIARIZATION_WINDOW_SHIFT_RATIO` | Window advance. Higher is much faster; 0.5 measured 4.9x faster than the library default. | `0.5` |
 | `DIARIZATION_THREADS` / `DIARIZATION_MAX_CONCURRENT` | Threads per job, and concurrent jobs. | `2` / `2` |
 | `WORKER_THREADS` | Number of background threads for transcription/summarization. | `4` |
 | `OPENBLAS_NUM_THREADS` | CPU threads for Whisper's underlying math libraries. | `6` |

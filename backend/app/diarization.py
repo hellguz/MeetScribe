@@ -81,7 +81,10 @@ def _build_diarizer():
     seg, emb = model_paths()
     config = so.OfflineSpeakerDiarizationConfig(
         segmentation=so.OfflineSpeakerSegmentationModelConfig(
-            pyannote=so.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(seg)),
+            pyannote=so.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=str(seg),
+                window_shift_ratio=settings.diarization_window_shift_ratio,
+            ),
             num_threads=settings.diarization_threads,
         ),
         embedding=so.SpeakerEmbeddingExtractorConfig(
