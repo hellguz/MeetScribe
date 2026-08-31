@@ -8,7 +8,7 @@ import Spinner from '../components/Spinner'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -49,6 +49,7 @@ export default function Summary() {
 	const navigate = useNavigate()
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
+	const isDark = theme !== 'light'
 	const { languageState, setLanguageState } = useSummaryLanguage()
 
 	const {
@@ -82,6 +83,9 @@ export default function Summary() {
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const [transcriptCopied, setTranscriptCopied] = useState(false)
+	// Component state only: dismissing hides the hint for this visit and it
+	// reappears next time the meeting is opened, as requested.
+	const [speakerHintDismissed, setSpeakerHintDismissed] = useState(false)
 	const transcriptCopyTimerRef = useRef<NodeJS.Timeout | null>(null)
 	const [, setFavTagTick] = useState(0)
 	const refreshFavTags = useCallback(() => setFavTagTick((t) => t + 1), [])
@@ -447,6 +451,73 @@ export default function Summary() {
 				</div>
 			)}
 
+			{/* Offer diarization only where it can actually run: audio still on
+			    disk, and no speaker labels yet (i.e. recorded before the feature). */}
+			{canRediarize && !isDiarized && !speakerHintDismissed && !busy && (
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '12px',
+						margin: '0 0 12px',
+						padding: '10px 12px',
+						borderRadius: '10px',
+						backgroundColor: isDark ? 'rgba(245, 158, 11, 0.10)' : '#fffbeb',
+						border: `1px solid ${isDark ? 'rgba(245, 158, 11, 0.35)' : '#fde68a'}`,
+						color: currentThemeColors.text,
+						fontSize: '13px',
+						lineHeight: 1.45,
+					}}>
+					<span aria-hidden style={{ display: 'flex', color: '#f59e0b', flexShrink: 0 }}>
+						<SpeakersIcon size={18} />
+					</span>
+					<span style={{ flex: 1, minWidth: 0 }}>
+						<strong>New:</strong> MeetScribe can now tell speakers apart. Re-run this older
+						recording to label who said what — summaries then attribute decisions and action
+						items to the right person.
+					</span>
+					<button
+						onClick={handleRediarize}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '5px',
+							padding: '5px 10px',
+							border: 'none',
+							borderRadius: '6px',
+							// Amber, matching the banner rather than the app's green primary.
+							backgroundColor: '#f59e0b',
+							color: '#ffffff',
+							fontSize: '13px',
+							fontWeight: '500',
+							fontFamily: 'inherit',
+							cursor: 'pointer',
+							whiteSpace: 'nowrap',
+							transition: 'all 0.2s ease',
+						}}>
+						<SpeakersIcon size={13} />
+						Find speakers
+					</button>
+					<button
+						onClick={() => setSpeakerHintDismissed(true)}
+						aria-label="Dismiss"
+						title="Dismiss"
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							padding: '4px',
+							border: 'none',
+							backgroundColor: 'transparent',
+							color: currentThemeColors.secondaryText,
+							lineHeight: 1,
+							cursor: 'pointer',
+							fontFamily: 'inherit',
+						}}>
+						<CloseIcon size={15} />
+					</button>
+				</div>
+			)}
+
 			{showRegeneratingBanner && (
 				<div
 					style={{
@@ -625,39 +696,6 @@ export default function Summary() {
 								</span>
 							) : null}
 						</span>
-						<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-						{canRediarize && (
-							<button
-								onClick={(e) => {
-									e.stopPropagation()
-									handleRediarize()
-								}}
-								disabled={busy}
-								title={
-									isDiarized
-										? 'Re-run speaker identification and summary'
-										: 'Identify speakers in this recording and rewrite the summary'
-								}
-								style={{
-									padding: '5px 9px',
-									border: `1px solid ${currentThemeColors.border}`,
-									borderRadius: '6px',
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									color: currentThemeColors.secondaryText,
-									cursor: busy ? 'not-allowed' : 'pointer',
-									opacity: busy ? 0.6 : 1,
-									display: 'flex',
-									alignItems: 'center',
-									gap: '5px',
-									fontSize: '13px',
-									lineHeight: 1,
-									fontFamily: 'inherit',
-									whiteSpace: 'nowrap',
-								}}>
-								{busy ? <Spinner size={13} /> : <span aria-hidden>🗣️</span>}
-								{isDiarized ? 'Redo speakers' : 'Find speakers'}
-							</button>
-						)}
 						<button
 							onClick={(e) => {
 								e.stopPropagation()
@@ -684,7 +722,6 @@ export default function Summary() {
 							}}>
 							{transcriptCopied ? <span>Copied!</span> : <CopyTextIcon size={13} />}
 						</button>
-						</span>
 					</h5>
 					{isTranscriptVisible && (
 						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '15px', lineHeight: '1.6' }}>{transcript}</pre>
