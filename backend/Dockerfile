@@ -1,5 +1,8 @@
 # backend/Dockerfile  ───────────────────────────────────────────────
-FROM python:3.12-slim
+# Keep PYTHON_VERSION in sync with /.python-version, which local dev reads.
+# `pnpm dev` cross-checks the two and fails loudly if they drift apart.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
 
 # --- system dependencies ----------------------------------------------------
 # Install dos2unix to fix line endings in scripts, which is a common issue

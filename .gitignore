@@ -20,6 +20,9 @@ htmlcov/
 *.sqlite3
 .env
 data/
+.venv/
+venv/
+
 ############################
 # Node / Vite / React
 ############################

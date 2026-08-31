@@ -1,0 +1,7 @@
+packages:
+  - frontend
+
+# pnpm blocks dependency build scripts by default; esbuild needs its postinstall
+# to fetch the platform binary that vite depends on.
+onlyBuiltDependencies:
+  - esbuild

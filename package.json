@@ -1,7 +1,14 @@
 {
+  "name": "meetscribe",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "dev": "concurrently --names \"backend,frontend\" --prefix-colors \"blue,green\" \"cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload\" \"cd frontend && npm run dev\"",
-    "build": "cd frontend && npm run build"
+    "setup": "node scripts/dev.mjs setup",
+    "migrate": "node scripts/dev.mjs migrate",
+    "dev": "concurrently --names \"backend,frontend\" --prefix-colors \"blue,green\" --kill-others \"pnpm dev:backend\" \"pnpm dev:frontend\"",
+    "dev:backend": "node scripts/dev.mjs backend",
+    "dev:frontend": "pnpm -C frontend dev",
+    "build": "pnpm -C frontend build"
   },
   "dependencies": {
     "concurrently": "^9.0.0"
