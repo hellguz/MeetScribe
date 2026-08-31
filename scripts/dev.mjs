@@ -213,6 +213,17 @@ function ensureNodeModules() {
 	run("pnpm", ["install"], { cwd: ROOT, shell: IS_WIN });
 }
 
+/**
+ * Fetch the speaker-diarization models if missing (~36 MB, once). The script
+ * is idempotent and never fatal: without models the app skips speaker labels.
+ */
+function ensureDiarizationModels() {
+	run(VENV_PYTHON, [join(BACKEND, "utils", "fetch_diarization_models.py")], {
+		cwd: BACKEND,
+		allowFailure: true,
+	});
+}
+
 function migrate() {
 	run(VENV_PYTHON, [join(BACKEND, "utils", "run_migrations.py")], { cwd: BACKEND });
 }
@@ -243,6 +254,7 @@ switch (command) {
 		ensureEnvFile();
 		ensureNodeModules();
 		ensurePythonEnv();
+		ensureDiarizationModels();
 		migrate();
 		checkFfmpeg();
 		log("Setup complete. Run `pnpm dev`.");
@@ -256,6 +268,7 @@ switch (command) {
 	case "backend":
 		ensureEnvFile();
 		ensurePythonEnv();
+		ensureDiarizationModels();
 		migrate();
 		checkFfmpeg();
 		backend();

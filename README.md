@@ -14,6 +14,7 @@ Ever been in back-to-back meetings, frantically trying to type notes while also 
       * **Local or Cloud Transcription:** Uses the high-quality `whisper-large-v3` model for speech-to-text. You can configure it to run on your own hardware for maximum privacy or use a faster cloud API (Groq) for transcription.
       * **Intelligent Summarization:** Leverages Claude (Anthropic) for intelligent, context-aware summaries with a sophisticated prompting strategy that ensures high-quality, structured output.
   * **📊 Comprehensive Admin Dashboard:** A dashboard page gives a full overview of platform usage, device statistics, user feedback trends, and interesting facts like the "busiest hour" and "most active day".
+  * **🗣️ Speaker Labels (local):** After the meeting, the recording is diarized **on your own machine** (ONNX/CPU, no PyTorch, nothing uploaded) and the transcript is labelled `Speaker 1`, `Speaker 2`, … before summarization — so the summary can attribute decisions and action items to the right person. Names stay out of it; Claude may infer them from context.
   * **🎤 Live Transcription:** See the text appear in near real-time as you speak, so you know it's working.
   * **🔒 Private & Self-Hostable:** Your recordings and transcripts are processed on your own server, not a third-party service. Run it on your own machine or cloud server.
   * **⚡ Offline-Ready History:** Your past meeting summaries are cached in your browser, so you can access them instantly without hitting the server again.
@@ -171,6 +172,12 @@ All configuration lives in a single `.env` file in the project root.
 | **`SECRET_KEY`** | **Required.** A random string for signing session data. Change this. | — |
 | `VITE_API_BASE_URL` | Public URL of the backend API. Leave blank for local Docker (handled by nginx proxy). | (blank) |
 | `FRONTEND_ORIGIN` | Frontend URL for backend CORS. | `http://localhost:4132` |
+| **`DIARIZATION_ENABLED`** | Label the transcript with `Speaker 1..N` after the meeting, locally on CPU. | `true` |
+| `DIARIZATION_EMBEDDING_MODEL` | Speaker-embedding model. Biggest single lever on accuracy — see `.env.sample` for benchmarks. | `campplus` |
+| `DIARIZATION_CLUSTER_THRESHOLD` | Higher merges speakers, lower splits them. | `0.9` |
+| `DIARIZATION_MIN_SPEAKER_SHARE` | Clusters below this share of speech are folded into the nearest speaker. | `0.06` |
+| `DIARIZATION_WINDOW_SHIFT_RATIO` | Window advance. Higher is much faster; 0.5 measured 4.9x faster than the library default. | `0.5` |
+| `DIARIZATION_THREADS` / `DIARIZATION_MAX_CONCURRENT` | Threads per job, and concurrent jobs. | `2` / `2` |
 | `WORKER_THREADS` | Number of background threads for transcription/summarization. | `4` |
 | `OPENBLAS_NUM_THREADS` | CPU threads for Whisper's underlying math libraries. | `6` |
 

@@ -4,10 +4,11 @@ import { marked } from 'marked'
 import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
+import Spinner from '../components/Spinner'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -48,6 +49,7 @@ export default function Summary() {
 	const navigate = useNavigate()
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
+	const isDark = theme !== 'light'
 	const { languageState, setLanguageState } = useSummaryLanguage()
 
 	const {
@@ -63,6 +65,11 @@ export default function Summary() {
 		currentMeetingLength,
 		submittedFeedback,
 		isRegenerating,
+		canRediarize,
+		speakerCount,
+		processingStage,
+		handleRediarize,
+		handleTranslate,
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
@@ -76,6 +83,9 @@ export default function Summary() {
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
 	const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const [transcriptCopied, setTranscriptCopied] = useState(false)
+	// Component state only: dismissing hides the hint for this visit and it
+	// reappears next time the meeting is opened, as requested.
+	const [speakerHintDismissed, setSpeakerHintDismissed] = useState(false)
 	const transcriptCopyTimerRef = useRef<NodeJS.Timeout | null>(null)
 	const [, setFavTagTick] = useState(0)
 	const refreshFavTags = useCallback(() => setFavTagTick((t) => t + 1), [])
@@ -227,16 +237,7 @@ export default function Summary() {
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
-		try {
-			const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ target_language: targetLanguage, language_mode: newState.mode }),
-			})
-			if (!res.ok) throw new Error()
-		} catch {
-			alert('Could not start translation.')
-		}
+		await handleTranslate(targetLanguage, newState.mode)
 	}
 
 	const handleDelete = async () => {
@@ -253,9 +254,25 @@ export default function Summary() {
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
-	const hasSummary = !!summaryMarkdown && !isProcessing
+	const hasSummary = !!summaryMarkdown
 	const displayLoading = isLoading && !loadedFromCache
-	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
+	// `isRegenerating` only covers the request itself; the work continues while
+	// `isProcessing` polls, so the indicator has to key off both.
+	const busy = isProcessing || isRegenerating
+	// Regenerating with a summary already on screen used to show nothing at all,
+	// so changing the language looked like a no-op. Announce it over the stale text.
+	const showRegeneratingBanner = busy && !!summaryMarkdown
+	const showProcessingMessage = busy && !summaryMarkdown
+	// A transcript recorded before diarization existed has no speaker labels.
+	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
+	const stageLabel =
+		processingStage === 'diarizing'
+			? 'Identifying speakers…'
+			: processingStage === 'transcribing'
+				? 'Re-transcribing audio…'
+				: processingStage === 'summarizing'
+					? 'Writing summary…'
+					: 'Processing summary, please wait…'
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -434,9 +451,98 @@ export default function Summary() {
 				</div>
 			)}
 
+			{/* Offer diarization only where it can actually run: audio still on
+			    disk, and no speaker labels yet (i.e. recorded before the feature). */}
+			{canRediarize && !isDiarized && !speakerHintDismissed && !busy && (
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '12px',
+						margin: '0 0 12px',
+						padding: '10px 12px',
+						borderRadius: '10px',
+						backgroundColor: isDark ? 'rgba(245, 158, 11, 0.10)' : '#fffbeb',
+						border: `1px solid ${isDark ? 'rgba(245, 158, 11, 0.35)' : '#fde68a'}`,
+						color: currentThemeColors.text,
+						fontSize: '13px',
+						lineHeight: 1.45,
+					}}>
+					<span aria-hidden style={{ display: 'flex', color: '#f59e0b', flexShrink: 0 }}>
+						<SpeakersIcon size={18} />
+					</span>
+					<span style={{ flex: 1, minWidth: 0 }}>
+						<strong>New:</strong> MeetScribe can now tell speakers apart. Re-run this older
+						recording to label who said what — summaries then attribute decisions and action
+						items to the right person.
+					</span>
+					<button
+						onClick={handleRediarize}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '5px',
+							padding: '5px 10px',
+							border: 'none',
+							borderRadius: '6px',
+							// Amber, matching the banner rather than the app's green primary.
+							backgroundColor: '#f59e0b',
+							color: '#ffffff',
+							fontSize: '13px',
+							fontWeight: '500',
+							fontFamily: 'inherit',
+							cursor: 'pointer',
+							whiteSpace: 'nowrap',
+							transition: 'all 0.2s ease',
+						}}>
+						<SpeakersIcon size={13} />
+						Find speakers
+					</button>
+					<button
+						onClick={() => setSpeakerHintDismissed(true)}
+						aria-label="Dismiss"
+						title="Dismiss"
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							padding: '4px',
+							border: 'none',
+							backgroundColor: 'transparent',
+							color: currentThemeColors.secondaryText,
+							lineHeight: 1,
+							cursor: 'pointer',
+							fontFamily: 'inherit',
+						}}>
+						<CloseIcon size={15} />
+					</button>
+				</div>
+			)}
+
+			{showRegeneratingBanner && (
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '8px',
+						margin: '0 0 10px',
+						padding: '8px 12px',
+						borderRadius: '8px',
+						backgroundColor: currentThemeColors.backgroundSecondary,
+						border: `1px solid ${currentThemeColors.border}`,
+						color: currentThemeColors.secondaryText,
+						fontSize: '14px',
+					}}>
+					<Spinner label="Regenerating summary" />
+					Regenerating summary…
+				</div>
+			)}
+
 			{/* Summary */}
 			{displayLoading ? (
-				<p>Loading summary...</p>
+				<p style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+					<Spinner label="Loading summary" />
+					Loading summary…
+				</p>
 			) : error ? (
 				<p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>
 			) : hasSummary ? (
@@ -446,7 +552,8 @@ export default function Summary() {
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 						boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
-						transition: 'box-shadow 0.15s ease',
+						opacity: showRegeneratingBanner ? 0.5 : 1,
+						transition: 'box-shadow 0.15s ease, opacity 0.2s ease',
 					}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}
 					<div onBlur={handleContainerBlur}>
@@ -543,7 +650,10 @@ export default function Summary() {
 					</div>
 				</div>
 			) : showProcessingMessage ? (
-				<p>⏳ Processing summary, please wait...</p>
+				<p style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+					<Spinner label={stageLabel} />
+					{stageLabel}
+				</p>
 			) : (
 				<p>No summary is available for this meeting.</p>
 			)}
@@ -580,6 +690,11 @@ export default function Summary() {
 								▶
 							</span>{' '}
 							🎤 Transcript
+							{speakerCount ? (
+								<span style={{ marginLeft: '8px', fontWeight: 400, fontSize: '13px', color: currentThemeColors.secondaryText }}>
+									{speakerCount} {speakerCount === 1 ? 'speaker' : 'speakers'}
+								</span>
+							) : null}
 						</span>
 						<button
 							onClick={(e) => {

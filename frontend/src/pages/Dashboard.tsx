@@ -4,6 +4,7 @@ import { ThemeContext } from '../contexts/ThemeContext'
 import { apiUrl } from '../utils/api'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { DashboardStats, FeatureSuggestion } from '../types'
+import Spinner from '../components/Spinner'
 import StatCard from '../components/dashboard/StatCard'
 import BarChart from '../components/dashboard/BarChart'
 import PieChart from '../components/dashboard/PieChart'
@@ -83,7 +84,21 @@ export default function Dashboard() {
 		sky: { bg: theme === 'light' ? '#f0f9ff' : '#0c2f4a', border: theme === 'light' ? '#bae6fd' : '#0ea5e9', text: theme === 'light' ? '#0ea5e9' : '#bae6fd' },
 	}
 
-	if (isLoading) return <div style={{ color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px' }}>Loading Dashboard...</div>
+	if (isLoading)
+		return (
+			<div
+				style={{
+					color: currentThemeColors.text,
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					gap: '10px',
+					paddingTop: '50px',
+				}}>
+				<Spinner label="Loading dashboard" />
+				Loading dashboard…
+			</div>
+		)
 	if (error) return <div style={{ color: 'red', textAlign: 'center', paddingTop: '50px' }}>Error: {error}</div>
 	if (!stats) return <div style={{ color: currentThemeColors.text, textAlign: 'center', paddingTop: '50px' }}>No stats available.</div>
 

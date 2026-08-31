@@ -3,6 +3,28 @@
 #   {target_language}, {context_section}, {full_transcript}
 #   {date}, {duration}  — minutes mode only
 
+# ── Speaker labels ────────────────────────────────────────────────────────────
+# Appended to {context_section} when the transcript has been diarized, so the
+# model knows what the labels mean and how far to trust them.
+
+SPEAKER_NOTE = """
+<speaker_labels>
+This transcript is diarized: each block is prefixed with an anonymous speaker
+label (`Speaker 1`, `Speaker 2`, …) assigned automatically by voice. The labels
+are consistent within the transcript but contain no names.
+
+Use them to attribute decisions, questions, and action items to the right
+person. If someone's actual name or role becomes clear from the conversation —
+a self-introduction, or another speaker addressing them — you may use it, and
+say that it is inferred.
+
+The labels are imperfect: very short interjections are sometimes misattributed,
+and one person can occasionally appear under two labels. Prefer the reading that
+makes the conversation coherent, and do not invent speakers that the labels do
+not support.
+</speaker_labels>
+"""
+
 # ── Briefing ──────────────────────────────────────────────────────────────────
 # Pure executive digest. What was decided, what's at risk, what to do.
 

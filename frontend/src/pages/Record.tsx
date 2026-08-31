@@ -43,6 +43,7 @@ export default function Record() {
 		resumeRecording,
 		startFileProcessing,
 		transcriptionSpeedLabel,
+		processingStage,
 		analyserRef,
 		animationFrameRef,
 		updateContext,
@@ -165,6 +166,18 @@ export default function Record() {
 		}
 	}, [isPaused, isRecording, drawWaveform, animationFrameRef])
 
+	// Once recording stops the analyser is torn down, so the canvas would keep
+	// showing the last red frame frozen in place. Clear it instead.
+	useEffect(() => {
+		if (isRecording) return
+		if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+		animationFrameRef.current = null
+
+		const canvas = canvasRef.current
+		const ctx = canvas?.getContext('2d')
+		if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+	}, [isRecording, animationFrameRef])
+
 	const handleStart = () => {
 		if (audioSource === 'file') {
 			startFileProcessing(context)
@@ -286,6 +299,7 @@ export default function Record() {
 				expectedTotalChunks={expectedTotalChunks}
 				transcribedChunks={transcribedChunks}
 				transcriptionSpeedLabel={transcriptionSpeedLabel}
+				processingStage={processingStage}
 				liveTranscript={liveTranscript}
 				canvasRef={canvasRef}
 				audioSource={audioSource}

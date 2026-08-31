@@ -75,6 +75,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		isRecordingRef.current = isRecording
 	}, [isRecording])
 
+	// Which post-meeting stage the backend reports: 'diarizing' | 'summarizing'.
+	const [processingStage, setProcessingStage] = useState<string | null>(null)
+
 	const [isPaused, setIsPaused] = useState(false)
 	const isPausedRef = useRef(false)
 	useEffect(() => {
@@ -113,6 +116,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		setTranscribedChunks(0)
 		setFirstChunkProcessedTime(null)
 		setTranscriptionStartTime(null)
+		setProcessingStage(null)
 		chunkIndexRef.current = 0
 		meetingId.current = null
 		setWakeLockStatus('inactive')
@@ -137,6 +141,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			setExpectedTotalChunks(data.expected_chunks ?? null)
 			setLiveTranscript(data.transcript_text ?? '')
 			setTranscribedChunks(data.transcribed_chunks ?? 0)
+			setProcessingStage(data.processing_stage ?? null)
 
 			if (data.transcribed_chunks === 1 && !firstChunkProcessedTime) {
 				setFirstChunkProcessedTime(Date.now())
@@ -539,6 +544,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		resumeRecording,
 		startFileProcessing,
 		transcriptionSpeedLabel,
+		processingStage,
 		analyserRef,
 		animationFrameRef,
 		updateContext,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import datetime as dt
 import uuid
 import time
@@ -19,9 +20,13 @@ from sqlmodel import Session, select, func, create_engine
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
+import json
+from dataclasses import dataclass, field
+
 from .config import settings
 from .models import Meeting, MeetingChunk
 from . import prompts as P
+from . import diarization
 
 LOGGER = logging.getLogger("meetscribe_tasks")
 
@@ -67,7 +72,30 @@ def get_whisper_model() -> WhisperModel:
     return _whisper_model_instance
 
 
-def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
+@dataclass
+class ChunkTranscription:
+    """Text plus per-segment timings, both chunk-relative."""
+
+    text: str
+    segments: list[dict] = field(default_factory=list)
+
+
+def _normalise_segments(raw) -> list[dict]:
+    """Coerce Groq/Whisper segment objects (dicts or attr objects) to plain dicts."""
+    out = []
+    for seg in raw or []:
+        get = seg.get if isinstance(seg, dict) else lambda k, d=None: getattr(seg, k, d)
+        text = (get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            out.append({"start": float(get("start") or 0.0), "end": float(get("end") or 0.0), "text": text})
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> ChunkTranscription:
     """Transcribes an audio chunk using either a cloud API (Groq) or a local model."""
     chunk_path = Path(chunk_path_str)
     try:
@@ -103,7 +131,13 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                         response_format="verbose_json",
                     )
                 LOGGER.info("Cloud transcription succeeded for %s", path_to_transcribe.name)
-                return resp.text.strip()
+                # verbose_json carries segments, but the SDK only types `text`,
+                # so read them from the model's extra fields.
+                extra = getattr(resp, "model_extra", None) or {}
+                raw_segments = getattr(resp, "segments", None) or extra.get("segments")
+                return ChunkTranscription(
+                    text=resp.text.strip(), segments=_normalise_segments(raw_segments)
+                )
             finally:
                 if output_flac_path and output_flac_path.exists():
                     output_flac_path.unlink()
@@ -117,10 +151,17 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> str:
                     threshold=0.1, min_silence_duration_ms=500, speech_pad_ms=300
                 ),
             )
-            return " ".join(s.text for s in segments).strip()
+            segment_list = list(segments)
+            # Text is joined exactly as before, so switching diarization on
+            # cannot change the words themselves.
+            return ChunkTranscription(
+                text=" ".join(s.text for s in segment_list).strip(),
+                segments=_normalise_segments(segment_list),
+            )
     except Exception as e:
         LOGGER.error("Failed to transcribe %s: %s", chunk_path.name, e, exc_info=True)
-        return ""
+        # Must be a ChunkTranscription, not "": callers read .text off it.
+        return ChunkTranscription(text="")
 
 
 def generate_title_for_meeting(summary: str, full_transcript: str) -> str:
@@ -186,6 +227,18 @@ def detect_language_local(text_snippet: str) -> str:
         return "English"
 
 
+_SPEAKER_LINE = re.compile(r"^Speaker \d+:", re.MULTILINE)
+
+
+def looks_diarized(transcript: str) -> bool:
+    """True if the transcript carries speaker labels.
+
+    Derived from the text itself so regenerating a summary from a stored
+    transcript keeps the speaker guidance without extra bookkeeping.
+    """
+    return bool(transcript) and bool(_SPEAKER_LINE.search(transcript))
+
+
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
@@ -208,8 +261,14 @@ def summarise_transcript_in_worker(
             target_language = detected_language
 
         context_section = ""
+        if looks_diarized(full_transcript):
+            # Kept in the instruction section rather than inside the transcript
+            # block, so every summary template picks it up unchanged.
+            context_section += P.SPEAKER_NOTE
         if context and context.strip():
-            context_section = f"""
+            # `+=` not `=`: a plain assignment here discarded the speaker note
+            # whenever the user had supplied context.
+            context_section += f"""
 <user_provided_context>
 Critical context from the user — use as source of truth for names, projects, and technical terms.
 ---
@@ -236,6 +295,17 @@ Critical context from the user — use as source of truth for names, projects, a
             full_transcript=full_transcript,
             date=date_str,
             duration=duration_str,
+        )
+
+        # Restate the target language after the transcript. The instruction at
+        # the top of the template is a long way from where generation starts,
+        # and has been observed to drift (a German transcript summarised in
+        # Polish). This also covers the briefing template, which never
+        # interpolated {target_language} at all.
+        prompt += (
+            f"\n\n---\n\nWrite the entire summary in {target_language}, "
+            "regardless of the language of the transcript. Quotations may stay "
+            "in their original language."
         )
 
         response = _anthropic_client.messages.create(
@@ -265,12 +335,48 @@ def rebuild_full_transcript(
 
 def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     LOGGER.info("Meeting %s: Finalizing. Building transcript and summarizing.", mtg.id)
-    final_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
+    plain_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
+
+    # Word count comes from the unlabelled text so the number stays comparable
+    # with meetings recorded before diarization existed.
+    word_count = len(plain_transcript.split()) if plain_transcript else 0
+
+    final_transcript = plain_transcript
+    duration_seconds = num_chunks * 30
+
+    if plain_transcript and diarization.is_enabled():
+        mtg.processing_stage = "diarizing"
+        db.add(mtg)
+        db.commit()  # publish the stage before a multi-minute job
+
+        chunk_rows = db.exec(
+            select(
+                MeetingChunk.chunk_index, MeetingChunk.text,
+                MeetingChunk.segments_json, MeetingChunk.path,
+            )
+            .where(MeetingChunk.meeting_id == mtg.id)
+            .order_by(MeetingChunk.chunk_index)
+        ).all()
+
+        result = diarization.diarize_meeting(
+            [(r.chunk_index, Path(r.path)) for r in chunk_rows if r.path],
+            [(r.chunk_index, r.text, r.segments_json) for r in chunk_rows],
+        )
+        if result:
+            final_transcript, speakers, audio_seconds = result
+            mtg.speaker_count = speakers
+            # Real decoded length; chunk_count * 30 is only a guess.
+            duration_seconds = int(round(audio_seconds))
+
     mtg.transcript_text = final_transcript
 
     if final_transcript:
-        mtg.word_count = len(final_transcript.split())
-        mtg.duration_seconds = num_chunks * 30
+        mtg.word_count = word_count
+        mtg.duration_seconds = duration_seconds
+
+        mtg.processing_stage = "summarizing"
+        db.add(mtg)
+        db.commit()
 
         summary_md = summarise_transcript_in_worker(
             final_transcript,
@@ -279,7 +385,7 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
             mtg.summary_custom_language,
             mtg.context,
             meeting_date=mtg.started_at.strftime("%Y-%m-%d") if mtg.started_at else None,
-            duration_seconds=num_chunks * 30,
+            duration_seconds=duration_seconds,
         )
         mtg.summary_markdown = summary_md
 
@@ -298,9 +404,144 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
         mtg.duration_seconds = 0
         mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
 
+    mtg.processing_stage = None
     mtg.done = True
     db.add(mtg)
     db.commit()
+
+
+def meeting_audio_chunks(db: Session, meeting_id: uuid.UUID) -> list[MeetingChunk]:
+    """
+    Chunks whose audio is still on disk. Audio is only removed when a meeting is
+    deleted, but meetings recorded before retention existed may have none — and
+    without audio there is nothing to diarize.
+    """
+    chunks = db.exec(
+        select(MeetingChunk)
+        .where(MeetingChunk.meeting_id == meeting_id)
+        .order_by(MeetingChunk.chunk_index)
+    ).all()
+
+    available = []
+    for chunk in chunks:
+        if not chunk.path:
+            continue
+        try:
+            path = Path(chunk.path)
+            # The final chunk is an empty signalling blob; ignore those.
+            if path.exists() and path.stat().st_size > 100:
+                available.append(chunk)
+        except OSError:
+            continue
+    return available
+
+
+def has_meeting_audio(db: Session, meeting_id: uuid.UUID) -> bool:
+    """
+    Whether any chunk audio survives, without paying for the full list.
+
+    Called on every meeting fetch (including polls), so it must stay cheap:
+    one query for a single chunk path, then one directory scan that stops at
+    the first usable file. Statting every chunk cost ~100ms on a 721-chunk
+    meeting locally, and far more over a bind mount.
+    """
+    first = db.exec(
+        select(MeetingChunk.path)
+        .where(MeetingChunk.meeting_id == meeting_id)
+        .where(MeetingChunk.path.is_not(None))
+        .limit(1)
+    ).first()
+    if not first:
+        return False
+
+    try:
+        with os.scandir(Path(first).parent) as entries:
+            for entry in entries:
+                if entry.name.endswith(".webm") and entry.stat().st_size > 100:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) -> None:
+    """
+    Re-run diarization and the summary for a meeting that already finished.
+
+    Used for recordings made before speaker labels existed, and after changing
+    the diarization settings. Meetings from before `segments_json` existed have
+    no timings to merge against, so their chunks are transcribed again first.
+    """
+    engine = get_db_engine()
+    meeting_id = uuid.UUID(meeting_id_str)
+
+    try:
+        with Session(engine) as db:
+            mtg = db.get(Meeting, meeting_id)
+            if not mtg:
+                LOGGER.error("Meeting %s not found for re-diarization.", meeting_id_str)
+                return
+
+            chunks = meeting_audio_chunks(db, meeting_id)
+            if not chunks:
+                LOGGER.error(
+                    "Meeting %s has no audio on disk; cannot re-diarize.", meeting_id_str
+                )
+                mtg.processing_stage = None
+                mtg.done = True
+                db.add(mtg)
+                db.commit()
+                return
+
+            if retranscribe:
+                missing = [c for c in chunks if not c.segments_json]
+                if missing:
+                    LOGGER.info(
+                        "♻️  Meeting %s: rebuilding timings for %d chunk(s).",
+                        meeting_id_str, len(missing),
+                    )
+                    mtg.processing_stage = "transcribing"
+                    db.add(mtg)
+                    db.commit()
+
+                    for chunk in missing:
+                        try:
+                            result = transcribe_webm_chunk_in_worker(chunk.path)
+                        except Exception as exc:
+                            LOGGER.warning(
+                                "Chunk %d could not be re-transcribed: %s",
+                                chunk.chunk_index, exc,
+                            )
+                            continue
+                        if not result.segments:
+                            continue
+                        chunk.segments_json = json.dumps(result.segments)
+                        # Store the matching text too, so words and timings can
+                        # never come from different transcription runs.
+                        if result.text:
+                            chunk.text = result.text
+                        db.add(chunk)
+                    db.commit()
+
+            LOGGER.info("♻️  Meeting %s: re-running diarization and summary.", meeting_id_str)
+            mtg.done = False
+            mtg.summary_task_queued = False
+            finalize_meeting_processing(db, mtg)
+            LOGGER.info("✅ Meeting %s re-diarized.", meeting_id_str)
+
+    except Exception:
+        LOGGER.exception("Re-diarization failed for %s.", meeting_id_str)
+        # Never leave the meeting stuck un-done, or the UI polls forever.
+        try:
+            with Session(engine) as db:
+                mtg = db.get(Meeting, meeting_id)
+                if mtg and not mtg.done:
+                    mtg.processing_stage = None
+                    mtg.done = True
+                    db.add(mtg)
+                    db.commit()
+        except Exception:
+            LOGGER.exception("Could not restore state for %s.", meeting_id_str)
 
 
 def backup_database() -> None:
@@ -436,7 +677,7 @@ def process_transcription_and_summary(
 
     for attempt in range(3):
         try:
-            chunk_text = transcribe_webm_chunk_in_worker(chunk_path_str)
+            transcription = transcribe_webm_chunk_in_worker(chunk_path_str)
             with Session(engine) as db:
                 mc = db.exec(
                     select(MeetingChunk).where(
@@ -450,7 +691,10 @@ def process_transcription_and_summary(
                         meeting_id_str, chunk_index,
                     )
                     return
-                mc.text = chunk_text
+                mc.text = transcription.text
+                mc.segments_json = (
+                    json.dumps(transcription.segments) if transcription.segments else None
+                )
                 db.add(mc)
                 db.commit()
 

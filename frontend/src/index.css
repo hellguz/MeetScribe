@@ -13,6 +13,59 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Native UI colours ──────────────────────────────────────────────────────
+ * `color-scheme` is what makes the browser render scrollbars, text-selection
+ * handles, spinners and form controls dark. Without it they stay light in dark
+ * mode no matter what the app's own colours are. ThemeContext sets data-theme
+ * on <html>, and the media query covers the first paint before it does.
+ */
+:root {
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		color-scheme: dark;
+	}
+}
+
+:root[data-theme='dark'] {
+	color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+	color-scheme: light;
+}
+
+/* Explicit scrollbar colours so dark mode stays dark+grey rather than picking
+ * up a light track. Firefox uses scrollbar-color; WebKit needs the pseudos. */
+:root[data-theme='dark'] {
+	scrollbar-color: #3a4149 #181a1d;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-track {
+	background: #181a1d;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb {
+	background: #3a4149;
+	border-radius: 5px;
+	border: 2px solid #181a1d;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+	background: #4a525c;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-corner {
+	background: #181a1d;
+}
+
 /* Additional global styles can go here */
 
 /* ── Summary title ───────────────────────────────────────────────────────── */
@@ -210,6 +263,24 @@ body {
 
 .paused-label {
 	animation: pausedPulse 2s ease-in-out infinite;
+}
+
+@keyframes spinnerRotate {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.spinner {
+	animation: spinnerRotate 0.8s linear infinite;
+	transform-origin: 50% 50%;
+}
+
+/* Keep the motion cue without it being a fast rotation. */
+@media (prefers-reduced-motion: reduce) {
+	.spinner {
+		animation-duration: 2.5s;
+	}
 }
 
 @media (max-width: 640px) {
