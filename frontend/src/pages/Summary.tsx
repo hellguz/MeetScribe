@@ -48,6 +48,7 @@ export default function Summary() {
 		submittedFeedback,
 		isRegenerating,
 		canRediarize,
+		diarizationAttempted,
 		speakerCount,
 		processingStage,
 		processingTotal,
@@ -246,8 +247,13 @@ export default function Summary() {
 	// so changing the language looked like a no-op. Announce it over the stale text.
 	const showRegeneratingBanner = busy && !!summaryMarkdown
 	const showProcessingMessage = busy && !summaryMarkdown
-	// A transcript recorded before diarization existed has no speaker labels.
+	// Whether this meeting already carries speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
+	// Offer the re-run only for meetings that predate the feature. Inferring
+	// this from "the transcript has no Speaker labels" was wrong: a silent
+	// recording has an empty transcript and no labels either, so brand-new
+	// meetings were being offered a pointless re-run.
+	const offerSpeakerHint = canRediarize && !diarizationAttempted && !isDiarized
 	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
 	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
 
@@ -430,7 +436,7 @@ export default function Summary() {
 
 			{/* Offer diarization only where it can actually run: audio still on
 			    disk, and no speaker labels yet (i.e. recorded before the feature). */}
-			{canRediarize && !isDiarized && !speakerHintDismissed && !busy && (
+			{offerSpeakerHint && !speakerHintDismissed && !busy && (
 				<div
 					style={{
 						display: 'flex',

@@ -27,6 +27,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [isRegenerating, setIsRegenerating] = useState(false)
 	// Whether the original audio survives, so speakers can still be identified.
 	const [canRediarize, setCanRediarize] = useState(false)
+	const [diarizationAttempted, setDiarizationAttempted] = useState(true)
 	const [speakerCount, setSpeakerCount] = useState<number | null>(null)
 	const [processingStage, setProcessingStage] = useState<string | null>(null)
 	const [processingTotal, setProcessingTotal] = useState<number | null>(null)
@@ -60,6 +61,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 
 				setContext(data.context || '')
 				setCanRediarize(!!data.can_rediarize)
+				setDiarizationAttempted(!!data.diarization_attempted)
 				setSpeakerCount(typeof data.speaker_count === 'number' ? data.speaker_count : null)
 				setProcessingStage(data.processing_stage ?? null)
 				setProcessingTotal(typeof data.processing_total === 'number' ? data.processing_total : null)
@@ -304,6 +306,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		submittedFeedback,
 		isRegenerating,
 		canRediarize,
+		diarizationAttempted,
 		speakerCount,
 		processingStage,
 		processingTotal,

@@ -58,10 +58,12 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 	const getTranscriptionProgressPercentage = () => (realTotal === 0 ? 0 : Math.min(100, (transcribedChunks / realTotal) * 100))
 	const allChunksUploaded = realTotal > 0 && uploadedChunks >= realTotal
 	const isUiLocked = isRecording || isProcessing
-	// --- NEW: Custom progress bar colors for dark mode ---
-	const isDarkMode = theme.body === '#18181b'
-	const transcribedColor = isDarkMode ? '#ef4444' : theme.text // Light Red for top bar
-	const uploadedColor = isDarkMode ? '#f87171' : theme.secondaryText // Red for bottom bar
+	// Progress bars. These used to branch on `theme.body === '#18181b'`, a hex
+	// the palette no longer uses — so dark mode silently fell through to
+	// theme.text and rendered a glaring near-white bar. Taking the colours from
+	// the theme means they cannot drift out of sync again.
+	const transcribedColor = theme.button.danger // leading bar: the app's red accent
+	const uploadedColor = theme.secondaryText // trailing bar: muted grey
 
 	const instructionStyle: React.CSSProperties = {
 		fontSize: '13px',

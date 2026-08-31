@@ -56,6 +56,7 @@ export default function Record() {
 	const [isSystemAudioSupported, setIsSystemAudioSupported] = useState(true)
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const isUiLocked = isRecording || isProcessing
+	const startDisabled = isUiLocked || (audioSource === 'file' && !selectedFile)
 	const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
 	const handleContextChange = (newContext: string) => {
@@ -310,20 +311,24 @@ export default function Record() {
 			/>
 
 			<div style={{ textAlign: 'center', marginTop: isRecording ? '24px' : '0' }}>
-				{!isRecording ? (
+				{/* Nothing to offer while the backend is working — the status box
+				    above already says what is happening. */}
+				{isProcessing ? null : !isRecording ? (
 					<button
 						onClick={handleStart}
-						disabled={isUiLocked || (audioSource === 'file' && !selectedFile)}
+						disabled={startDisabled}
 						style={{
 							padding: '16px 32px',
 							fontSize: '18px',
 							fontWeight: 'bold',
-							border: 'none',
 							borderRadius: '8px',
-							cursor: 'pointer',
-							backgroundColor: currentThemeColors.button.primary,
-							color: currentThemeColors.button.primaryText,
-							opacity: isUiLocked || (audioSource === 'file' && !selectedFile) ? 0.5 : 1,
+							// A dimmed green still reads as "press me"; a disabled
+							// control should look inert rather than faded.
+							cursor: startDisabled ? 'not-allowed' : 'pointer',
+							backgroundColor: startDisabled ? currentThemeColors.backgroundSecondary : currentThemeColors.button.primary,
+							color: startDisabled ? currentThemeColors.secondaryText : currentThemeColors.button.primaryText,
+							border: startDisabled ? `1px solid ${currentThemeColors.border}` : '1px solid transparent',
+							transition: 'background-color 0.2s, color 0.2s',
 						}}>
 						{audioSource === 'file' ? 'Start Transcription' : 'Start Recording'}
 					</button>

@@ -43,6 +43,11 @@ class Meeting(SQLModel, table=True):
     processing_total: int | None = None
     # Distinct speakers found by diarization; None if it did not run.
     speaker_count: int | None = None
+    # True once the meeting has been through the diarization pipeline at
+    # all — even if it found nothing, e.g. a silent recording. Meetings
+    # predating the feature are False, which is what the "find speakers"
+    # hint keys off. Absence of Speaker labels is NOT the same thing.
+    diarization_attempted: bool = False
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -142,6 +147,7 @@ class MeetingStatus(SQLModel):
     processing_stage: str | None = None
     processing_total: int | None = None
     speaker_count: int | None = None
+    diarization_attempted: bool = False
     # True when the original audio survives, so speakers can still be identified.
     can_rediarize: bool = False
     feedback: list[str] = []  # List of submitted feedback types

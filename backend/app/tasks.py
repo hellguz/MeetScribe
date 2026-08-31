@@ -451,6 +451,11 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
 
     mtg.processing_stage = None
     mtg.processing_total = None
+    # Mark it seen even when diarization produced nothing (silent recording,
+    # empty transcript): the pipeline had its chance, so the "find speakers"
+    # hint must not keep offering a re-run that would change nothing.
+    if diarization.is_enabled():
+        mtg.diarization_attempted = True
     mtg.done = True
     db.add(mtg)
     db.commit()
