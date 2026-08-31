@@ -68,6 +68,7 @@ export default function Summary() {
 		speakerCount,
 		processingStage,
 		handleRediarize,
+		handleTranslate,
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
@@ -232,16 +233,7 @@ export default function Summary() {
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
-		try {
-			const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ target_language: targetLanguage, language_mode: newState.mode }),
-			})
-			if (!res.ok) throw new Error()
-		} catch {
-			alert('Could not start translation.')
-		}
+		await handleTranslate(targetLanguage, newState.mode)
 	}
 
 	const handleDelete = async () => {
@@ -258,15 +250,17 @@ export default function Summary() {
 
 	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
-	const hasSummary = !!summaryMarkdown && !isProcessing
+	const hasSummary = !!summaryMarkdown
 	const displayLoading = isLoading && !loadedFromCache
-	const showProcessingMessage = (isProcessing || isRegenerating) && !summaryMarkdown
-	// Regenerating with a summary already on screen showed nothing at all, so
-	// changing the language looked like a no-op. Announce it and dim the stale text.
-	const showRegeneratingBanner = isRegenerating && !!summaryMarkdown
+	// `isRegenerating` only covers the request itself; the work continues while
+	// `isProcessing` polls, so the indicator has to key off both.
+	const busy = isProcessing || isRegenerating
+	// Regenerating with a summary already on screen used to show nothing at all,
+	// so changing the language looked like a no-op. Announce it over the stale text.
+	const showRegeneratingBanner = busy && !!summaryMarkdown
+	const showProcessingMessage = busy && !summaryMarkdown
 	// A transcript recorded before diarization existed has no speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
-	const busy = isProcessing || isRegenerating
 	const stageLabel =
 		processingStage === 'diarizing'
 			? 'Identifying speakers…'

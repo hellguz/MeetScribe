@@ -133,6 +133,34 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		}
 	}, [mid, fetchMeetingData])
 
+	/**
+	 * Switch the summary language. The backend clears `done` so progress can be
+	 * polled, but polling only starts once a fetch observes that — without the
+	 * re-fetch below the page sat on a stale summary until a manual refresh.
+	 */
+	const handleTranslate = useCallback(
+		async (targetLanguage: string, languageMode: string) => {
+			if (!mid) return
+			setIsRegenerating(true)
+			setError(null)
+			try {
+				const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ target_language: targetLanguage, language_mode: languageMode }),
+				})
+				if (!res.ok) throw new Error('Could not start translation.')
+				setIsProcessing(true)
+				fetchMeetingData(false)
+			} catch (err) {
+				setError(err instanceof Error ? err.message : 'Could not start translation.')
+			} finally {
+				setIsRegenerating(false)
+			}
+		},
+		[mid, fetchMeetingData],
+	)
+
 	const handleFeedbackToggle = async (type: string, isSelected: boolean) => {
 		if (!mid) return
 		setSubmittedFeedback((prev) => (isSelected ? [...prev, type] : prev.filter((t) => t !== type)))
@@ -277,6 +305,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		speakerCount,
 		processingStage,
 		handleRediarize,
+		handleTranslate,
 		handleFeedbackToggle,
 		handleSuggestionSubmit,
 		handleRegenerate,
