@@ -33,6 +33,11 @@ class Meeting(SQLModel, table=True):
     summary_custom_language: str | None = None
     context: str | None = None
     timezone: str | None = None
+    # Which post-meeting stage is running: 'diarizing' | 'summarizing' | None.
+    # Drives the frontend's progress text; None once `done` is set.
+    processing_stage: str | None = None
+    # Distinct speakers found by diarization; None if it did not run.
+    speaker_count: int | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -45,6 +50,13 @@ class MeetingChunk(SQLModel, table=True):
     chunk_index: int
     path: str
     text: Optional[str] = None
+    # Whisper's segment timings for this chunk, as JSON [{start,end,text}].
+    # Times are chunk-relative; diarization converts them to absolute using
+    # the offsets it measures when decoding the audio.
+    segments_json: Optional[str] = None
+    # True decoded length. Chunks are NOT reliably 30s, so this is the only
+    # trustworthy basis for absolute positions and meeting duration.
+    audio_seconds: Optional[float] = None
 
 
 class Feedback(SQLModel, table=True):
@@ -122,6 +134,10 @@ class MeetingStatus(SQLModel):
     summary_custom_language: str | None = None
     context: str | None = None
     timezone: str | None = None
+    processing_stage: str | None = None
+    speaker_count: int | None = None
+    # True when the original audio survives, so speakers can still be identified.
+    can_rediarize: bool = False
     feedback: list[str] = []  # List of submitted feedback types
 
 

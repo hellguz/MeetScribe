@@ -29,6 +29,7 @@ MIGRATIONS = [
     "add_timezone_column.py",
     "add_meeting_sections_table.py",
     "add_enhanced_section_columns.py",
+    "add_diarization_columns.py",
 ]
 
 

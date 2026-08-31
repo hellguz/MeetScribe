@@ -306,6 +306,9 @@ def get_meeting(mid: uuid.UUID):
         data = mtg.model_dump()
         data["transcript_text"] = mtg.transcript_text if mtg.done else live_tx
         data["transcribed_chunks"] = transcribed_count
+        # Re-diarization needs the original audio, which older meetings may
+        # no longer have. A handful of stat() calls, single meeting only.
+        data["can_rediarize"] = bool(tasks.meeting_audio_chunks(db, mid))
 
         # Get existing feedback
         feedback_results = db.exec(
@@ -314,6 +317,43 @@ def get_meeting(mid: uuid.UUID):
         data["feedback"] = feedback_results
 
         return MeetingStatus(**data)
+
+
+@app.post("/api/meetings/{mid}/rediarize", status_code=202)
+def rediarize_meeting(mid: uuid.UUID):
+    """
+    Re-run transcription timings, diarization and the summary for a meeting.
+
+    For recordings made before speaker labels existed, and after changing the
+    diarization settings. Clearing `done` is what makes the UI poll and show
+    progress; the worker restores it even on failure.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404, "Meeting not found")
+
+        if not tasks.meeting_audio_chunks(db, mid):
+            raise HTTPException(
+                409,
+                "The audio for this meeting is no longer on disk, so speakers "
+                "cannot be identified.",
+            )
+
+        if not mtg.done:
+            # Already being processed; don't start a second pass over it.
+            return {"ok": True, "already_running": True}
+
+        mtg.done = False
+        # Set so the status endpoint does not also queue a plain summary run.
+        mtg.summary_task_queued = True
+        mtg.processing_stage = "diarizing"
+        db.add(mtg)
+        db.commit()
+
+    _executor.submit(tasks.rediarize_meeting_in_worker, str(mid))
+    LOGGER.info("♻️  Queued re-diarization for meeting %s", mid)
+    return {"ok": True}
 
 
 @app.delete("/api/meetings/{mid}", status_code=204)

@@ -22,3 +22,8 @@ groq==0.26.0
 
 # Language detection
 langdetect==1.0.9
+
+# Speaker diarization (local, CPU). ONNX/int8 — no PyTorch, and it reuses the
+# onnxruntime that faster-whisper already pulls in.
+sherpa-onnx==1.13.6
+numpy
