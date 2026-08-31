@@ -1,3 +1,4 @@
+import { serverDateMs } from './datetime'
 // ./frontend/src/utils/history.ts
 /**
  * Browser-side storage for finished meetings.
@@ -47,8 +48,10 @@ export function syncHistory(serverMetas: MeetingMeta[]) {
 /** Return history sorted by date DESC and trimmed to 5 years. */
 export function getHistory(): MeetingMeta[] {
 	const now = Date.now()
-	const recent = readRaw().filter((m) => now - new Date(m.started_at).getTime() <= FIVE_YEARS_MS)
-	recent.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+	const recent = readRaw().filter((m) => now - serverDateMs(m.started_at) <= FIVE_YEARS_MS)
+	// Cached entries mix naive-UTC (from the API) with Z-suffixed (written by
+	// the client), so they must be parsed on one scale before comparing.
+	recent.sort((a, b) => serverDateMs(b.started_at) - serverDateMs(a.started_at))
 	return recent
 }
 

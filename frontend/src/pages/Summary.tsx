@@ -5,6 +5,8 @@ import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
 import ThemeToggle from '../components/ThemeToggle'
 import Spinner from '../components/Spinner'
+import { stageText } from '../utils/processingStage'
+import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
@@ -25,25 +27,6 @@ const turndown = new TurndownService({ headingStyle: 'atx', hr: '---', bulletLis
 // Strip span tags (browsers add them while editing) but keep their text content
 turndown.addRule('spans', { filter: 'span', replacement: (content) => content })
 
-const formatMeetingDate = (isoString?: string, timeZone?: string | null): string | null => {
-	if (!isoString) return null
-	try {
-		const date = new Date(isoString)
-		date.setMinutes(Math.round(date.getMinutes()), 0, 0)
-		return new Intl.DateTimeFormat('en-GB', {
-			day: 'numeric',
-			month: 'long',
-			year: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: false,
-			timeZone: timeZone || undefined,
-		}).format(date)
-	} catch {
-		return 'Invalid Date'
-	}
-}
-
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
@@ -60,14 +43,15 @@ export default function Summary() {
 		error,
 		meetingTitle,
 		meetingStartedAt,
-		meetingTimezone,
 		context,
 		currentMeetingLength,
 		submittedFeedback,
 		isRegenerating,
 		canRediarize,
+		diarizationAttempted,
 		speakerCount,
 		processingStage,
+		processingTotal,
 		handleRediarize,
 		handleTranslate,
 		handleFeedbackToggle,
@@ -207,7 +191,7 @@ export default function Summary() {
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
 		if (!meetingTitle || !summaryMarkdown) return
-		const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone) || ''
+		const formattedDate = formatMeetingDateTime(meetingStartedAt) || ''
 		let textToCopy = ''
 		if (format === 'markdown') {
 			textToCopy = `# ${meetingTitle}\n\n*${formattedDate}*\n\n---\n\n${summaryMarkdown}`
@@ -252,7 +236,7 @@ export default function Summary() {
 		navigate('/record')
 	}
 
-	const formattedDate = formatMeetingDate(meetingStartedAt, meetingTimezone)
+	const formattedDate = formatMeetingDateTime(meetingStartedAt)
 	const contextHasChanged = editedContext !== null && context !== null && editedContext !== context
 	const hasSummary = !!summaryMarkdown
 	const displayLoading = isLoading && !loadedFromCache
@@ -263,16 +247,15 @@ export default function Summary() {
 	// so changing the language looked like a no-op. Announce it over the stale text.
 	const showRegeneratingBanner = busy && !!summaryMarkdown
 	const showProcessingMessage = busy && !summaryMarkdown
-	// A transcript recorded before diarization existed has no speaker labels.
+	// Whether this meeting already carries speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
-	const stageLabel =
-		processingStage === 'diarizing'
-			? 'Identifying speakers…'
-			: processingStage === 'transcribing'
-				? 'Re-transcribing audio…'
-				: processingStage === 'summarizing'
-					? 'Writing summary…'
-					: 'Processing summary, please wait…'
+	// Offer the re-run only for meetings that predate the feature. Inferring
+	// this from "the transcript has no Speaker labels" was wrong: a silent
+	// recording has an empty transcript and no labels either, so brand-new
+	// meetings were being offered a pointless re-run.
+	const offerSpeakerHint = canRediarize && !diarizationAttempted && !isDiarized
+	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
+	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -453,7 +436,7 @@ export default function Summary() {
 
 			{/* Offer diarization only where it can actually run: audio still on
 			    disk, and no speaker labels yet (i.e. recorded before the feature). */}
-			{canRediarize && !isDiarized && !speakerHintDismissed && !busy && (
+			{offerSpeakerHint && !speakerHintDismissed && !busy && (
 				<div
 					style={{
 						display: 'flex',
@@ -532,8 +515,8 @@ export default function Summary() {
 						color: currentThemeColors.secondaryText,
 						fontSize: '14px',
 					}}>
-					<Spinner label="Regenerating summary" />
-					Regenerating summary…
+					<Spinner label={stageLabel} />
+					{stageLabel}
 				</div>
 			)}
 

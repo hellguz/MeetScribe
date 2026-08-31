@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { formatMeetingDateShort } from '../../utils/datetime'
 import { NavigateFunction } from 'react-router-dom'
 import { AppTheme } from '../../styles/theme'
 import { MeetingWithFeedback, Feedback } from '../../types'
@@ -143,7 +144,7 @@ const FeedbackTable: React.FC<FeedbackTableProps> = ({ meetings, theme, navigate
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.body)}>
 									<td style={{ padding: '12px', fontWeight: 500, borderBottom: `1px solid ${theme.border}` }}>{meeting.title}</td>
 									<td style={{ padding: '12px', whiteSpace: 'nowrap', borderBottom: `1px solid ${theme.border}` }}>
-										{new Date(meeting.started_at).toLocaleDateString()}
+										{formatMeetingDateShort(meeting.started_at)}
 									</td>
 									<td style={{ padding: '12px', borderBottom: `1px solid ${theme.border}` }}>
 										<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>

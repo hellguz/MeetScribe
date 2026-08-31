@@ -55,7 +55,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ selectedFile, onFileSelect, dis
 				transition: 'all 0.2s ease',
 				opacity: disabled ? 0.5 : 1,
 			}}>
-			<input ref={fileInputRef} type="file" hidden onChange={handleFileChange} accept="audio/mp3,audio/wav,audio/aac,audio/ogg,audio/m4a" disabled={disabled} />
+			<input ref={fileInputRef} type="file" hidden onChange={handleFileChange} accept="audio/*,video/mp4,video/webm,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac,.webm,.mp4" disabled={disabled} />
 			<p style={{ margin: 0, fontWeight: 500, color: theme.text }}>
 				{selectedFile ? `Selected: ${selectedFile.name}` : 'Drag & drop an audio file, or click to select'}
 			</p>
