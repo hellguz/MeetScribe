@@ -81,6 +81,16 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
 
 ### Local Development (no Docker)
 
+**Prerequisites:** Node 18+, [pnpm](https://pnpm.io/installation), Python (the version
+in [.python-version](.python-version)), and `ffmpeg` on your PATH.
+
+> Local dev and the Docker image run the **same** Python version, so a bug that only
+> appears on one interpreter can't hide until production. The version is declared in
+> [.python-version](.python-version) and mirrored by `ARG PYTHON_VERSION` in
+> [backend/Dockerfile](backend/Dockerfile); `pnpm dev` fails loudly if the two drift
+> apart. To move both, edit those two lines — local dev rebuilds `backend/.venv`
+> automatically on the next run.
+
 1.  **Clone the repository:**
 
     ```bash
@@ -88,34 +98,45 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
     cd meetscribe
     ```
 
-2.  **Configure your environment:**
+2.  **Install and run:**
 
     ```bash
-    cp .env.sample .env
+    pnpm install
+    pnpm dev
     ```
 
-    Open `.env` and fill in your `ANTHROPIC_API_KEY` (and optionally `GROQ_API_KEY`).
+    That's it. On the first run `pnpm dev` will:
 
-3.  **Install dependencies:**
+      * copy `.env.sample` to `.env` if it's missing,
+      * create a Python virtualenv at `backend/.venv` and install `backend/requirements.txt`,
+      * apply all database migrations,
+      * start the backend and frontend together.
 
-    ```bash
-    # Python
-    pip install -r backend/requirements.txt
-
-    # Node (frontend)
-    cd frontend && npm install && cd ..
-    ```
-
-4.  **Run everything:**
-
-    ```bash
-    npm run dev
-    ```
-
-    This starts the backend on `:8000` and the frontend on `:5173` simultaneously.
+    Open `.env` and fill in your `ANTHROPIC_API_KEY` (and optionally `GROQ_API_KEY`)
+    before recording a meeting — the app starts without them, but summarization will fail.
 
       * Frontend: **`http://localhost:5173`**
       * Backend API docs: **`http://localhost:8000/docs`**
+
+    Both services hot-reload on save. Vite proxies `/api` to the backend, so
+    `VITE_API_BASE_URL` should stay empty for local development.
+
+#### Other scripts
+
+| Command | What it does |
+| :--- | :--- |
+| `pnpm dev` | Run backend + frontend with hot reload (bootstraps on first run). |
+| `pnpm setup` | Do the bootstrap only, without starting anything. |
+| `pnpm migrate` | Apply database migrations. |
+| `pnpm build` | Production build of the frontend into `frontend/dist`. |
+| `pnpm dev:backend` / `pnpm dev:frontend` | Run just one side. |
+
+Set `BACKEND_PORT` to move the backend off `8000` (update the proxy target in
+[frontend/vite.config.ts](frontend/vite.config.ts) to match).
+
+Local dev and Docker use **different SQLite databases**: local dev writes to
+`backend/data/db.sqlite3`, while Docker bind-mounts `./data` to `/app/data`. Set
+`DB_PATH` to point the backend at a different file.
 
 ### Docker
 
