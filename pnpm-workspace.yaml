@@ -1,9 +1,6 @@
 packages:
   - frontend
 
-allowBuilds:
-  esbuild: set this to true or false
-
 # pnpm blocks dependency build scripts by default; esbuild needs its postinstall
 # to fetch the platform binary that vite depends on.
 onlyBuiltDependencies:

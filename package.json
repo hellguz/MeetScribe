@@ -7,8 +7,8 @@
     "migrate": "node scripts/dev.mjs migrate",
     "dev": "concurrently --names \"backend,frontend\" --prefix-colors \"blue,green\" --kill-others \"pnpm dev:backend\" \"pnpm dev:frontend\"",
     "dev:backend": "node scripts/dev.mjs backend",
-    "dev:frontend": "pnpm --filter meetscribe-mvp dev",
-    "build": "pnpm --filter meetscribe-mvp build"
+    "dev:frontend": "pnpm -C frontend dev",
+    "build": "pnpm -C frontend build"
   },
   "dependencies": {
     "concurrently": "^9.0.0"
