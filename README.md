@@ -173,9 +173,10 @@ All configuration lives in a single `.env` file in the project root.
 | `VITE_API_BASE_URL` | Public URL of the backend API. Leave blank for local Docker (handled by nginx proxy). | (blank) |
 | `FRONTEND_ORIGIN` | Frontend URL for backend CORS. | `http://localhost:4132` |
 | **`DIARIZATION_ENABLED`** | Label the transcript with `Speaker 1..N` after the meeting, locally on CPU. | `true` |
-| `DIARIZATION_CLUSTER_THRESHOLD` | Lower splits speakers apart, higher merges them. See `.env.sample` for measured values. | `0.6` |
-| `DIARIZATION_MIN_SPEAKER_SHARE` / `_SECONDS` | Clusters below both are treated as noise and folded into the nearest speaker. | `0.06` / `8.0` |
-| `DIARIZATION_THREADS` / `DIARIZATION_MAX_CONCURRENT` | ONNX threads per job, and concurrent diarization jobs. | `2` / `2` |
+| `DIARIZATION_EMBEDDING_MODEL` | Speaker-embedding model. Biggest single lever on accuracy — see `.env.sample` for benchmarks. | `campplus` |
+| `DIARIZATION_CLUSTER_THRESHOLD` | Higher merges speakers, lower splits them. | `0.9` |
+| `DIARIZATION_MIN_SPEAKER_SHARE` | Clusters below this share of speech are folded into the nearest speaker. | `0.06` |
+| `DIARIZATION_THREADS` / `DIARIZATION_MAX_CONCURRENT` | Threads per job, and concurrent jobs. | `2` / `2` |
 | `WORKER_THREADS` | Number of background threads for transcription/summarization. | `4` |
 | `OPENBLAS_NUM_THREADS` | CPU threads for Whisper's underlying math libraries. | `6` |
 
