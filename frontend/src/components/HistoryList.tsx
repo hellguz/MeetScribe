@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react'
+import { formatMeetingDateShort } from '../utils/datetime'
 import { useNavigate } from 'react-router-dom'
 import { MeetingMeta } from '../utils/history'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
@@ -99,7 +100,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
 											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>{m.title}</span>
 											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
-												{new Date(m.started_at).toLocaleDateString()}
+												{formatMeetingDateShort(m.started_at)}
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
