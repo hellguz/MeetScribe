@@ -34,17 +34,25 @@ function warn(msg) {
 	console.warn(`\x1b[33m[dev]\x1b[0m ${msg}`);
 }
 
-/** Run a command to completion; exit the process if it fails. */
+/**
+ * Run a command to completion; exit the process if it fails. Pass
+ * `allowFailure` for best-effort steps (e.g. restoring pip into a venv that
+ * may already have it) where a non-zero exit is not an error.
+ */
 function run(cmd, args, opts = {}) {
-	const result = spawnSync(cmd, args, { stdio: "inherit", ...opts });
+	const { allowFailure = false, ...spawnOpts } = opts;
+	const result = spawnSync(cmd, args, { stdio: "inherit", ...spawnOpts });
 	if (result.error) {
+		if (allowFailure) return false;
 		console.error(`\x1b[31m[dev]\x1b[0m failed to launch ${cmd}: ${result.error.message}`);
 		process.exit(1);
 	}
 	if (result.status !== 0) {
+		if (allowFailure) return false;
 		console.error(`\x1b[31m[dev]\x1b[0m ${cmd} exited with code ${result.status}`);
 		process.exit(result.status ?? 1);
 	}
+	return true;
 }
 
 /**
@@ -126,19 +134,53 @@ function ensureEnvFile() {
 }
 
 /**
- * Create the venv and install requirements.txt when missing or changed. Also
- * rebuilds the venv if its interpreter no longer matches .python-version, so
- * bumping that file is all it takes to move local dev.
+ * A venv is only trustworthy if its interpreter runs AND the packages the app
+ * imports are actually importable. An interrupted install leaves a directory
+ * tree with missing files, which a plain existsSync check happily accepts.
+ */
+const VENV_HEALTH_IMPORTS = "import sqlmodel, apscheduler.schedulers.background, fastapi";
+
+function venvIsHealthy() {
+	const probe = spawnSync(VENV_PYTHON, ["-c", VENV_HEALTH_IMPORTS], { encoding: "utf8" });
+	return probe.status === 0;
+}
+
+/**
+ * Create the venv and install requirements.txt when missing, changed, or
+ * damaged. Also rebuilds if the interpreter no longer matches .python-version,
+ * so bumping that file is all it takes to move local dev.
  */
 function ensurePythonEnv() {
 	const required = requiredPythonVersion();
+	const wanted = createHash("sha256").update(readFileSync(REQUIREMENTS)).digest("hex");
+	const stamped = existsSync(STAMP) ? readFileSync(STAMP, "utf8").trim() : "";
 
-	if (existsSync(VENV_PYTHON)) {
-		const found = probePythonVersion(VENV_PYTHON, []);
-		if (found !== required) {
-			warn(`backend/.venv is Python ${found ?? "unknown"}, but ${required} is required — rebuilding it.`);
-			rmSync(VENV, { recursive: true, force: true });
+	// `distrust` means the existing venv must be replaced outright rather than
+	// installed into — a damaged venv can have a gutted pip, which makes
+	// `pip install` unable to repair anything.
+	let distrust = null;
+	if (!existsSync(VENV_PYTHON)) {
+		distrust = existsSync(VENV) ? "no interpreter" : null;
+	} else {
+		// Retry once: a transient probe failure must not be read as "wrong
+		// version", which would discard a perfectly good venv.
+		const found = probePythonVersion(VENV_PYTHON, []) ?? probePythonVersion(VENV_PYTHON, []);
+		if (found === null) {
+			distrust = "its interpreter will not run";
+		} else if (found !== required) {
+			distrust = `it is Python ${found}, but ${required} is required`;
+		} else if (!venvIsHealthy()) {
+			// Checked independently of the stamp: damage can delete the stamp
+			// too, and then a stamp comparison would silently miss it.
+			distrust = "its installed packages are not importable";
+		} else if (stamped === wanted) {
+			return; // healthy and up to date
 		}
+	}
+
+	if (distrust) {
+		warn(`Rebuilding backend/.venv: ${distrust}.`);
+		rmSync(VENV, { recursive: true, force: true });
 	}
 
 	if (!existsSync(VENV_PYTHON)) {
@@ -147,13 +189,19 @@ function ensurePythonEnv() {
 		run(cmd, [...args, "-m", "venv", VENV]);
 	}
 
-	const wanted = createHash("sha256").update(readFileSync(REQUIREMENTS)).digest("hex");
-	const current = existsSync(STAMP) ? readFileSync(STAMP, "utf8").trim() : "";
-	if (current === wanted) return;
-
 	log("Installing Python dependencies from backend/requirements.txt...");
 	run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", "pip", "--quiet"]);
 	run(VENV_PYTHON, ["-m", "pip", "install", "-r", REQUIREMENTS]);
+
+	// Stamp only once the install is proven good, so an interrupted run is
+	// retried next time instead of being skipped forever.
+	if (!venvIsHealthy()) {
+		console.error(
+			"[31m[dev][0m Dependencies installed but the app still cannot import them. " +
+				"Delete backend/.venv and retry.",
+		);
+		process.exit(1);
+	}
 	writeFileSync(STAMP, wanted);
 }
 
