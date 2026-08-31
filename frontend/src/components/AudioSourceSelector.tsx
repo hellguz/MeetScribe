@@ -12,6 +12,12 @@ interface AudioSourceSelectorProps {
 	theme: AppTheme
 }
 
+const SOURCES: { value: AudioSource; label: string }[] = [
+	{ value: 'mic', label: 'Microphone' },
+	{ value: 'system', label: 'System Audio' },
+	{ value: 'file', label: 'Upload File' },
+]
+
 const AudioSourceSelector: React.FC<AudioSourceSelectorProps> = ({
 	audioSource,
 	setAudioSource,
@@ -23,28 +29,51 @@ const AudioSourceSelector: React.FC<AudioSourceSelectorProps> = ({
 }) => {
 	return (
 		<div style={{ marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '20px', opacity: disabled ? 0.5 : 1 }}>
-			<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
-				<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-					<label htmlFor="audio-source-select" style={{ fontWeight: 500, color: theme.text }}>
-						Audio Source:
-					</label>
-					<select
-						id="audio-source-select"
-						value={audioSource}
-						onChange={(e) => setAudioSource(e.target.value as AudioSource)}
-						disabled={disabled}
-						style={{
-							padding: '8px 12px',
-							borderRadius: '6px',
-							border: `1px solid ${theme.input.border}`,
-							fontSize: '16px',
-							backgroundColor: theme.input.background,
-							color: theme.input.text,
-						}}>
-						<option value="mic">Microphone</option>
-						<option value="system">System Audio (Speakers)</option>
-						<option value="file">Upload Audio File</option>
-					</select>
+			{/* Segmented toggle rather than a native <select>: three fixed options
+			    read better as buttons, and it matches the app's own controls
+			    instead of the browser's. */}
+			<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+				<span style={{ fontWeight: 500, color: theme.text, fontSize: '15px' }}>Audio Source</span>
+				<div
+					role="group"
+					aria-label="Audio source"
+					style={{
+						display: 'flex',
+						backgroundColor: theme.backgroundSecondary,
+						border: `1px solid ${theme.border}`,
+						borderRadius: '8px',
+						padding: '4px',
+						gap: '4px',
+						flexWrap: 'wrap',
+						justifyContent: 'center',
+					}}>
+					{SOURCES.map(({ value, label }) => {
+						const active = audioSource === value
+						return (
+							<button
+								key={value}
+								type="button"
+								aria-pressed={active}
+								disabled={disabled}
+								onClick={() => setAudioSource(value)}
+								style={{
+									padding: '7px 14px',
+									border: 'none',
+									borderRadius: '6px',
+									backgroundColor: active ? theme.body : 'transparent',
+									color: active ? theme.text : theme.secondaryText,
+									fontWeight: active ? 600 : 400,
+									fontSize: '15px',
+									fontFamily: 'inherit',
+									cursor: disabled ? 'not-allowed' : 'pointer',
+									boxShadow: active ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+									transition: 'background-color 0.15s, color 0.15s',
+									whiteSpace: 'nowrap',
+								}}>
+								{label}
+							</button>
+						)
+					})}
 				</div>
 			</div>
 

@@ -21,7 +21,12 @@ from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
 import json
+import math
+import tempfile
+import wave
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from .config import settings
 from .models import Meeting, MeetingChunk
@@ -80,18 +85,49 @@ class ChunkTranscription:
     segments: list[dict] = field(default_factory=list)
 
 
+def _is_hallucination(get) -> bool:
+    """
+    Whether a Whisper segment looks invented rather than heard.
+
+    Uses Whisper's own published heuristics on the metrics it returns, which
+    the Groq API exposes too. The no-speech and confidence tests are ANDed on
+    purpose: genuinely quiet speech scores a low no_speech_prob and survives,
+    so this does not cost sensitivity on soft recordings.
+    """
+    no_speech = get("no_speech_prob")
+    logprob = get("avg_logprob")
+    if (
+        no_speech is not None
+        and logprob is not None
+        and no_speech > settings.whisper_no_speech_threshold
+        and logprob < settings.whisper_logprob_threshold
+    ):
+        return True
+
+    # Repetition loops compress unusually well.
+    ratio = get("compression_ratio")
+    return ratio is not None and ratio > settings.whisper_compression_ratio_threshold
+
+
 def _normalise_segments(raw) -> list[dict]:
-    """Coerce Groq/Whisper segment objects (dicts or attr objects) to plain dicts."""
+    """Coerce Groq/Whisper segments (dicts or objects) to plain dicts, dropping
+    anything that looks hallucinated."""
     out = []
+    dropped = []
     for seg in raw or []:
         get = seg.get if isinstance(seg, dict) else lambda k, d=None: getattr(seg, k, d)
         text = (get("text") or "").strip()
         if not text:
             continue
+        if _is_hallucination(get):
+            dropped.append(text[:40])
+            continue
         try:
             out.append({"start": float(get("start") or 0.0), "end": float(get("end") or 0.0), "text": text})
         except (TypeError, ValueError):
             continue
+    if dropped:
+        LOGGER.info("Dropped %d likely-hallucinated segment(s): %s", len(dropped), dropped[:3])
     return out
 
 
@@ -146,6 +182,9 @@ def transcribe_webm_chunk_in_worker(chunk_path_str: str) -> ChunkTranscription:
             segments, _info = whisper.transcribe(
                 str(chunk_path),
                 beam_size=5,
+                # Without this, one hallucinated segment becomes the prompt for
+                # the next and the model spirals.
+                condition_on_previous_text=False,
                 vad_filter=True,
                 vad_parameters=dict(
                     threshold=0.1, min_silence_duration_ms=500, speech_pad_ms=300
@@ -345,6 +384,10 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     duration_seconds = num_chunks * 30
 
     if plain_transcript and diarization.is_enabled():
+        # A fresh recording was transcribed live, so this run is diarize +
+        # summarize. Reprocessing sets 3 before calling us.
+        if mtg.processing_total is None:
+            mtg.processing_total = 2
         mtg.processing_stage = "diarizing"
         db.add(mtg)
         db.commit()  # publish the stage before a multi-minute job
@@ -375,6 +418,8 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
         mtg.duration_seconds = duration_seconds
 
         mtg.processing_stage = "summarizing"
+        if mtg.processing_total is None:
+            mtg.processing_total = 1  # diarization skipped; summarizing only
         db.add(mtg)
         db.commit()
 
@@ -405,6 +450,12 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
         mtg.summary_markdown = "Error: Transcript was empty, summary could not be generated."
 
     mtg.processing_stage = None
+    mtg.processing_total = None
+    # Mark it seen even when diarization produced nothing (silent recording,
+    # empty transcript): the pipeline had its chance, so the "find speakers"
+    # hint must not keep offering a re-run that would change nothing.
+    if diarization.is_enabled():
+        mtg.diarization_attempted = True
     mtg.done = True
     db.add(mtg)
     db.commit()
@@ -464,6 +515,142 @@ def has_meeting_audio(db: Session, meeting_id: uuid.UUID) -> bool:
     return False
 
 
+# Backfill transcription batch length. LIVE RECORDING IS UNAFFECTED — it keeps
+# its 30s chunks, which is what makes the real-time transcript work. This is
+# only for re-processing an old meeting: sending one request per 30s chunk means
+# hundreds of calls, which trips Groq's rate limit (a 90-minute meeting took
+# ~9 minutes, mostly 429 retries). Ten minutes of 16kHz mono is ~10 MB as FLAC,
+# comfortably inside the 25 MB request limit.
+BACKFILL_BATCH_SECONDS = 600
+
+
+def _decode_chunk_pcm(path: str):
+    """Decode one chunk to float32 mono 16k, or None if it holds no audio."""
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
+            "-f", "f32le", "-ac", "1", "-ar", str(diarization.SAMPLE_RATE), "-",
+        ],
+        capture_output=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return np.frombuffer(proc.stdout, dtype=np.float32)
+
+
+def rebuild_timings_in_batches(db: Session, chunks: list[MeetingChunk]) -> int:
+    """
+    Recover segment timings by re-transcribing the audio in fixed-length windows.
+
+    Windows are cut on TIME, not on chunk boundaries. An uploaded file is stored
+    as a single chunk, so grouping by chunk would put a 90-minute recording in
+    one request and Groq rejects it with 413. Slicing the decoded stream keeps
+    every request the same size whether the source was one file or 200 chunks.
+
+    Fewer, longer requests are also more accurate than per-chunk ones: Whisper
+    sees continuous audio rather than isolated islands. Segments are written
+    back onto the chunk they fall in, so the merge path is unchanged and a later
+    re-run needs no API calls.
+
+    Returns how many chunks were given timings.
+    """
+    sample_rate = diarization.SAMPLE_RATE
+    updated = 0
+
+    with tempfile.TemporaryDirectory(prefix="meetscribe-backfill-") as tmp:
+        tmp_dir = Path(tmp)
+        raw_path = tmp_dir / "all.f32"
+
+        # Decode once to disk, remembering where each chunk sits on the timeline.
+        spans: list[tuple[MeetingChunk, float, float]] = []
+        cursor = 0  # samples
+        with raw_path.open("wb") as out:
+            for chunk in chunks:
+                pcm = _decode_chunk_pcm(chunk.path)
+                if pcm is None or pcm.size == 0:
+                    continue
+                out.write(pcm.tobytes())
+                spans.append((chunk, cursor / sample_rate, (cursor + len(pcm)) / sample_rate))
+                cursor += len(pcm)
+
+        if not spans or cursor == 0:
+            LOGGER.warning("No decodable audio; cannot rebuild timings.")
+            return 0
+
+        window_samples = int(BACKFILL_BATCH_SECONDS * sample_rate)
+        window_count = math.ceil(cursor / window_samples)
+        LOGGER.info(
+            "Re-transcribing %.1f min as %d window(s) of up to %d min.",
+            cursor / sample_rate / 60, window_count, BACKFILL_BATCH_SECONDS // 60,
+        )
+
+        per_chunk: dict[int, list[dict]] = {}
+        covered: list[tuple[float, float]] = []
+        failures = 0
+
+        for index in range(window_count):
+            offset = index * window_samples
+            count = min(window_samples, cursor - offset)
+            samples = np.fromfile(raw_path, dtype=np.float32, count=count, offset=offset * 4)
+            base = offset / sample_rate
+
+            wav_path = tmp_dir / f"window_{index + 1:03d}.wav"
+            with wave.open(str(wav_path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(sample_rate)
+                out.writeframes(
+                    np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+                )
+
+            try:
+                result = transcribe_webm_chunk_in_worker(str(wav_path))
+            except Exception as exc:
+                LOGGER.warning("Window %d could not be transcribed: %s", index + 1, exc)
+                failures += 1
+                continue
+            finally:
+                wav_path.unlink(missing_ok=True)
+
+            if not result.segments:
+                LOGGER.warning("Window %d returned no timings.", index + 1)
+                failures += 1
+                continue
+
+            covered.append((base, base + count / sample_rate))
+            for seg in result.segments:
+                seg_start = base + float(seg.get("start") or 0.0)
+                seg_end = base + float(seg.get("end") or 0.0)
+                for chunk, c_start, c_end in spans:
+                    if c_start <= seg_start < c_end:
+                        per_chunk.setdefault(chunk.chunk_index, []).append(
+                            {"start": seg_start - c_start, "end": seg_end - c_start,
+                             "text": seg.get("text") or ""}
+                        )
+                        break
+
+        if failures:
+            LOGGER.error(
+                "%d of %d transcription window(s) failed; their audio keeps whatever text it had.",
+                failures, window_count,
+            )
+
+        # Only rewrite chunks whose audio a window actually covered — otherwise a
+        # failed window would blank text we still have.
+        for chunk, c_start, c_end in spans:
+            if not any(w_start < c_end and c_start < w_end for w_start, w_end in covered):
+                continue
+            segments = per_chunk.get(chunk.chunk_index, [])
+            chunk.segments_json = json.dumps(segments) if segments else None
+            chunk.text = " ".join(s["text"].strip() for s in segments).strip()
+            db.add(chunk)
+            if segments:
+                updated += 1
+        db.commit()
+
+    return updated
+
+
 def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) -> None:
     """
     Re-run diarization and the summary for a meeting that already finished.
@@ -501,27 +688,11 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
                         meeting_id_str, len(missing),
                     )
                     mtg.processing_stage = "transcribing"
+                    mtg.processing_total = 3
                     db.add(mtg)
                     db.commit()
 
-                    for chunk in missing:
-                        try:
-                            result = transcribe_webm_chunk_in_worker(chunk.path)
-                        except Exception as exc:
-                            LOGGER.warning(
-                                "Chunk %d could not be re-transcribed: %s",
-                                chunk.chunk_index, exc,
-                            )
-                            continue
-                        if not result.segments:
-                            continue
-                        chunk.segments_json = json.dumps(result.segments)
-                        # Store the matching text too, so words and timings can
-                        # never come from different transcription runs.
-                        if result.text:
-                            chunk.text = result.text
-                        db.add(chunk)
-                    db.commit()
+                    rebuild_timings_in_batches(db, chunks)
 
             LOGGER.info("♻️  Meeting %s: re-running diarization and summary.", meeting_id_str)
             mtg.done = False

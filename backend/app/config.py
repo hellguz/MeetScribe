@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     # Seconds of inactivity before a recording is auto-finalized
     inactivity_timeout_seconds: int = 120
 
+    # ===== Whisper hallucination guards =====
+    # Whisper invents text when it hears noise or silence — one 30s chunk of
+    # street noise here produced the Korean "3분간" (no_speech_prob 0.76,
+    # avg_logprob -1.18). These are Whisper's own published heuristics applied
+    # to the segments we get back, so they work for the cloud API too.
+    #
+    # The first two are deliberately an AND: quiet-but-real speech has a LOW
+    # no_speech_prob, so it survives. Only low-confidence output on probable
+    # silence is dropped, which keeps sensitivity on quiet recordings.
+    whisper_no_speech_threshold: float = 0.6
+    whisper_logprob_threshold: float = -1.0
+    # A high compression ratio means the decoder is looping ("yeah yeah yeah…").
+    whisper_compression_ratio_threshold: float = 2.4
+
     # ===== Speaker diarization (local, CPU) =====
     # Runs after the meeting ends, over the concatenated audio, and labels the
     # transcript with Speaker 1..N before it is sent for summarization.

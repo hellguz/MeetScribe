@@ -301,6 +301,10 @@ def get_meeting(mid: uuid.UUID):
             mtg.summary_task_queued = True
             db.add(mtg)
             db.commit()
+            # commit() expires the instance, and model_dump() reads __dict__
+            # without triggering a reload — so without this refresh the response
+            # below is built from a half-empty dict and fails validation.
+            db.refresh(mtg)
 
         data = mtg.model_dump()
         # Only assemble the live transcript while it is still needed. A finished
@@ -321,6 +325,59 @@ def get_meeting(mid: uuid.UUID):
         data["feedback"] = feedback_results
 
         return MeetingStatus(**data)
+
+
+@app.post("/api/meetings/{mid}/upload", status_code=202)
+async def upload_full_recording(mid: uuid.UUID, file: UploadFile = File(...)):
+    """
+    Accept a complete audio file and process it server-side.
+
+    The browser used to decode the file, slice it into 30s pieces and re-encode
+    each one through a MediaRecorder — which runs in REAL TIME, so an hour of
+    audio cost an hour before anything was transcribed. Here the file is stored
+    once and handed to the same batched pipeline used for reprocessing:
+    transcribe in ~10 minute batches, diarize, summarize.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404, "Meeting not found")
+
+        mtg_dir = AUDIO_DIR / str(mid)
+        mtg_dir.mkdir(parents=True, exist_ok=True)
+        # Keep the original extension so ffmpeg can sniff the format.
+        suffix = Path(file.filename or "").suffix.lower() or ".audio"
+        target = mtg_dir / f"chunk_000{suffix}"
+        with target.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+
+        size_mb = target.stat().st_size / 1e6
+        if size_mb < 0.001:
+            target.unlink(missing_ok=True)
+            raise HTTPException(400, "The uploaded file is empty.")
+        LOGGER.info("⬆️  Uploaded %s (%.1f MB) for meeting %s", target.name, size_mb, mid)
+
+        # Stored as a single chunk so the existing pipeline applies unchanged.
+        existing = db.exec(
+            select(MeetingChunk).where(MeetingChunk.meeting_id == mid)
+        ).all()
+        for chunk in existing:
+            db.delete(chunk)
+        db.add(MeetingChunk(meeting_id=mid, chunk_index=0, path=str(target)))
+
+        mtg.received_chunks = 1
+        mtg.expected_chunks = 1
+        mtg.final_received = True
+        mtg.done = False
+        mtg.summary_task_queued = True
+        mtg.processing_stage = "transcribing"
+        mtg.processing_total = 3
+        mtg.last_activity = dt.datetime.utcnow()
+        db.add(mtg)
+        db.commit()
+
+    _executor.submit(tasks.rediarize_meeting_in_worker, str(mid))
+    return {"ok": True}
 
 
 @app.post("/api/meetings/{mid}/rediarize", status_code=202)
@@ -351,7 +408,10 @@ def rediarize_meeting(mid: uuid.UUID):
         mtg.done = False
         # Set so the status endpoint does not also queue a plain summary run.
         mtg.summary_task_queued = True
-        mtg.processing_stage = "diarizing"
+        # Reprocessing re-transcribes first, so three stages. Published now so
+        # the first poll already knows, rather than after the worker starts.
+        mtg.processing_stage = "transcribing"
+        mtg.processing_total = 3
         db.add(mtg)
         db.commit()
 

@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react'
+import { formatMeetingDateTimeShort } from '../utils/datetime'
 import { useNavigate } from 'react-router-dom'
 import { MeetingMeta } from '../utils/history'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
@@ -6,7 +7,8 @@ import { useTheme } from '../contexts/ThemeContext'
 import { EditIcon, TrashIcon } from './Icons'
 import FavoriteButton from './FavoriteButton'
 import TagsManager from './TagsManager'
-import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMeetingTag } from '../utils/tags'
+import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMeetingTag, getTags } from '../utils/tags'
+import { StarIcon } from './Icons'
 
 interface HistoryListProps {
 	history: MeetingMeta[]
@@ -25,6 +27,49 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 	// Force re-render when favorites/tags change
 	const [, setTick] = useState(0)
 	const refresh = useCallback(() => setTick((t) => t + 1), [])
+
+	const [favouritesOnly, setFavouritesOnly] = useState(false)
+	const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+
+	const allTags = getTags()
+	// A tag deleted while still selected would otherwise filter everything out.
+	const activeTagIds = selectedTagIds.filter((id) => allTags.some((tag) => tag.id === id))
+	const filtersActive = favouritesOnly || activeTagIds.length > 0
+
+	const visible = history.filter((m) => {
+		if (favouritesOnly && !checkFavorite(m.id)) return false
+		if (activeTagIds.length === 0) return true
+		// Any of the chosen tags, not all — narrowing to "all" gets empty fast.
+		const ids = getMeetingTagIds(m.id)
+		return activeTagIds.some((id) => ids.includes(id))
+	})
+
+	const toggleTagFilter = (id: string) =>
+		setSelectedTagIds((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+
+	const clearFilters = () => {
+		setFavouritesOnly(false)
+		setSelectedTagIds([])
+	}
+
+	// Nothing to filter by yet: no favourites and no tags anywhere.
+	const anyFavourites = history.some((m) => checkFavorite(m.id))
+	const showFilters = anyFavourites || allTags.length > 0
+
+	const chipStyle = (active: boolean, accent: string): React.CSSProperties => ({
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '6px',
+		padding: '4px 10px',
+		borderRadius: '999px',
+		border: `1px solid ${active ? accent : currentThemeColors.border}`,
+		backgroundColor: active ? `${accent}22` : 'transparent',
+		color: active ? currentThemeColors.text : currentThemeColors.secondaryText,
+		fontSize: '13px',
+		fontFamily: 'inherit',
+		cursor: 'pointer',
+		transition: 'background-color 0.15s, border-color 0.15s, color 0.15s',
+	})
 
 	const handleTitleChangeConfirm = async () => {
 		if (!editingMeetingId || !editingTitle.trim()) {
@@ -50,8 +95,54 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 	return (
 		<div style={{ marginTop: '40px', marginBottom: '20px' }}>
 			<h2 style={{ margin: '12px 0 12px 0', fontSize: 16, textAlign: 'center', color: currentThemeColors.text }}>Previous Meetings</h2>
-			<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: `1px solid ${currentThemeColors.border}`, borderRadius: '8px' }}>
-				{history.map((m, index) => {
+
+			{showFilters && (
+				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', alignItems: 'center', marginBottom: '10px' }}>
+					{anyFavourites && (
+						<button
+							onClick={() => setFavouritesOnly((v) => !v)}
+							aria-pressed={favouritesOnly}
+							style={chipStyle(favouritesOnly, '#eab308')}>
+							<StarIcon size={12} filled={favouritesOnly} />
+							Favourites
+						</button>
+					)}
+					{allTags.map((tag) => {
+						const active = activeTagIds.includes(tag.id)
+						return (
+							<button key={tag.id} onClick={() => toggleTagFilter(tag.id)} aria-pressed={active} style={chipStyle(active, tag.color)}>
+								<span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: tag.color, flexShrink: 0 }} />
+								{tag.name}
+							</button>
+						)
+					})}
+					{filtersActive && (
+						<button
+							onClick={clearFilters}
+							style={{
+								padding: '4px 8px',
+								border: 'none',
+								background: 'none',
+								color: currentThemeColors.secondaryText,
+								fontSize: '13px',
+								fontFamily: 'inherit',
+								cursor: 'pointer',
+								textDecoration: 'underline',
+							}}>
+							Clear
+						</button>
+					)}
+				</div>
+			)}
+
+			{filtersActive && visible.length === 0 ? (
+				<p style={{ textAlign: 'center', color: currentThemeColors.secondaryText, fontSize: '14px', margin: '16px 0' }}>
+					No meetings match these filters.
+				</p>
+			) : null}
+
+			<ul style={{ listStyle: 'none', padding: 0, margin: 0, border: visible.length ? `1px solid ${currentThemeColors.border}` : 'none', borderRadius: '8px' }}>
+				{visible.map((m, index) => {
 					const fav = checkFavorite(m.id)
 					const tagIds = getMeetingTagIds(m.id)
 					const isHovered = hoveredMeetingId === m.id
@@ -64,7 +155,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 							key={m.id}
 							style={{
 								padding: '12px 12px',
-								borderBottom: index === history.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
+								borderBottom: index === visible.length - 1 ? 'none' : `1px solid ${currentThemeColors.border}`,
 								color: currentThemeColors.text,
 							}}
 							onMouseEnter={() => setHoveredMeetingId(m.id)}
@@ -99,7 +190,7 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
 											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>{m.title}</span>
 											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
-												{new Date(m.started_at).toLocaleDateString()}
+												{formatMeetingDateTimeShort(m.started_at)}
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>

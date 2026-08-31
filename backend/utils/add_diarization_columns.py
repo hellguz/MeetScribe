@@ -27,6 +27,10 @@ log = logging.getLogger("migration")
 COLUMNS = [
     ("meeting", "processing_stage", "TEXT"),
     ("meeting", "speaker_count", "INTEGER"),
+    ("meeting", "processing_total", "INTEGER"),
+    # Defaults to 0, so every pre-existing meeting correctly reads as
+    # "never diarized" and is offered the re-run.
+    ("meeting", "diarization_attempted", "BOOLEAN DEFAULT 0"),
     ("meetingchunk", "segments_json", "TEXT"),
     ("meetingchunk", "audio_seconds", "REAL"),
 ]
