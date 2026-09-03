@@ -21,14 +21,31 @@ DynamicQuantizeLinear. Two consequences:
 Weight-only quantization stores just the *weights* as int8 and dequantizes
 each block back to fp16 at runtime, so the arithmetic keeps fp16 precision.
 It compiles to a single op, MatMulNBits, which ORT Web *does* implement on
-WebGPU as well as on CPU. One file then serves both paths:
-
-    ~0.65 GB      vs 1.26 GB for fp16 — half the download
-    GPU           same speed and accuracy as fp16
-    CPU           same weights, so near-lossless instead of the above
+WebGPU as well as on CPU, so one file can serve both paths.
 
 8 bits, not 4: measured through six stacked layers, 8-bit weight-only came
 out at 1.6% relative error while 4-bit hit 24%. 4-bit is not usable here.
+
+Measured on the real encoder
+────────────────────────────
+By scripts/eval_parakeet_encoders.py, against the fp32 encoder over 47 s of
+speech (six clips, English and Spanish), everything on the CPU:
+
+    file          896 MB — 217 of 289 MatMuls became MatMulNBits. Not the
+                  ~650 MB predicted: 302 MB of the encoder is pointwise Conv
+                  weights, which this quantizer leaves in fp32.
+    accuracy      1.8% encoder output error, and identical transcripts on
+                  every clip. The upstream *dynamic* int8 file scores 44%
+                  encoder error on the same audio.
+    CPU speed     3.2-3.4x realtime, against 7.6-9.3x for the dynamic int8
+                  file — weight-only is ~2.5x *slower* on the CPU, because
+                  MatMulNBits dequantizes per block on every pass while
+                  MatMulInteger runs as straight int8 GEMM.
+
+So the accuracy case holds and the size case is weaker than hoped, but a CPU
+device pays for it in speed. What is still unmeasured is the WebGPU side,
+where MatMulNBits has a kernel and the dynamic int8 ops have none.
+
 
 Usage
 ─────
