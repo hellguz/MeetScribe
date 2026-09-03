@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import type { OnDeviceController } from '../ondevice/useOnDevice'
 import { PLAN_DOWNLOAD_BYTES, PLAN_LABELS, type PlanChoice } from '../ondevice/capabilities'
@@ -27,7 +27,15 @@ const STAGE_LABEL: Record<string, string> = {
  */
 const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked }) => {
 	const { state, setEnabled, setPlanChoice } = controller
-	const { enabled, phase, caps, plan, download, transcription, diarization, error } = state
+	const { enabled, phase, caps, plan, download, transcription, diarization, error, statusText, log, autoFallbackPlan, autoFallbackReason } = state
+	const [showLog, setShowLog] = useState(false)
+	// Re-render once a second while loading, so "… 42s" ticks.
+	const [, setTick] = useState(0)
+	useEffect(() => {
+		if (phase !== 'loading') return
+		const id = setInterval(() => setTick((t) => t + 1), 1000)
+		return () => clearInterval(id)
+	}, [phase])
 
 	const chip = (active: boolean): React.CSSProperties => ({
 		padding: '4px 10px',
@@ -51,15 +59,19 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 		if (phase === 'error') return { icon: '❌', text: error ?? 'Failed' }
 		if (phase === 'fallback') return { icon: '↩️', text: `Handed over to the server${error ? ` (${error})` : ''}` }
 		if (phase === 'loading') {
-			if (download && !download.done && download.total > 0) return { icon: '⬇️', text: `Downloading Parakeet ${formatBytes(download.loaded)} / ${formatBytes(download.total)} · ${formatBytes(download.bytesPerSec)}/s${downloadEta !== null ? ` · ~${formatSeconds(downloadEta)} left` : ''}` }
-			return { icon: '⏳', text: download?.done ? 'Loading model into memory…' : caps ? 'Preparing model (cached files load instantly)…' : 'Checking this device…' }
+			const downloading = download && !download.done && download.total > 0 && download.loaded < download.total
+			if (downloading) return { icon: '⬇️', text: `Downloading Parakeet ${formatBytes(download.loaded)} / ${formatBytes(download.total)} · ${formatBytes(download.bytesPerSec)}/s${downloadEta !== null ? ` · ~${formatSeconds(downloadEta)} left` : ''}` }
+			const since = download?.doneAt ?? download?.startedAt ?? null
+			const elapsed = since ? ` · ${formatSeconds((Date.now() - since) / 1000)}` : ''
+			const slow = since && Date.now() - since > 120_000 ? ' — taking long; if it never finishes the model may not fit in memory (try the CPU plan, or turn the switch off to record via the server)' : ''
+			return { icon: '⏳', text: `${statusText ?? (download?.cached ? 'Loading cached model…' : 'Preparing model…')}${elapsed}${slow}` }
 		}
 		if (phase === 'ready' || phase === 'diarizing' || phase === 'finalizing') {
 			const parts: string[] = []
 			if (state.backend) parts.push(state.backend === 'webgpu' ? 'GPU (WebGPU)' : `CPU · ${state.threads ?? 1} thread${(state.threads ?? 1) === 1 ? '' : 's'}`)
 			if (state.modelLoadMs !== null) parts.push(`ready in ${formatSeconds(state.modelLoadMs / 1000)}`)
-			if (download?.done && download.total > 0) parts.push(`downloaded ${formatBytes(download.total)} in ${formatSeconds((download.loaded / Math.max(download.bytesPerSec, 1)))}`)
-			else if (download?.done) parts.push('models were cached')
+			if (download?.done && download.total > 0 && !download.cached) parts.push(`downloaded ${formatBytes(download.total)} in ${formatSeconds(download.loaded / Math.max(download.bytesPerSec, 1))}`)
+			else if (download?.done) parts.push(`${formatBytes(download.total)} from cache`)
 			return { icon: '✅', text: parts.join(' · ') }
 		}
 		return null
@@ -113,7 +125,24 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 				</div>
 			)}
 
-			{enabled && phase === 'loading' && download && !download.done && download.total > 0 && (
+			{enabled && autoFallbackPlan && (
+				<div style={{ margin: `6px 0 0 ${locked ? 0 : 26}px`, color: '#d97706', wordBreak: 'break-word' }}>
+					⚠️ GPU plan failed ({autoFallbackReason}); switched to CPU · int8.
+				</div>
+			)}
+
+			{enabled && log.length > 0 && (phase === 'loading' || phase === 'error' || phase === 'fallback') && (
+				<div style={{ margin: `6px 0 0 ${locked ? 0 : 26}px`, fontSize: '11px', color: theme.secondaryText, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+					<div style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => setShowLog((v) => !v)} title="Worker log">
+						{showLog ? '▾' : '▸'} {log[log.length - 1]}
+					</div>
+					{showLog && (
+						<pre style={{ margin: '4px 0 0', maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: '6px 8px', borderRadius: 6, backgroundColor: theme.backgroundSecondary }}>{log.join('\n')}</pre>
+					)}
+				</div>
+			)}
+
+			{enabled && phase === 'loading' && download && !download.done && download.total > 0 && download.loaded < download.total && (
 				<div style={{ height: 6, borderRadius: 3, backgroundColor: theme.backgroundSecondary, overflow: 'hidden', margin: `6px 0 0 ${locked ? 0 : 26}px` }}>
 					<div style={{ width: `${downloadPct}%`, height: '100%', backgroundColor: theme.text, transition: 'width 0.3s' }} />
 				</div>

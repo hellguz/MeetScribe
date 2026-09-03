@@ -3,55 +3,117 @@
  * Web Worker: speech recognition on this device with NVIDIA Parakeet TDT
  * 0.6B v3 through parakeet.js (ONNX Runtime Web).
  *
- * Model files come from the Hugging Face Hub and are cached by parakeet.js in
- * IndexedDB, so the ~0.6–1.2 GB download happens once per browser. Two plans:
- * the encoder on WebGPU in fp16, or everything on WASM with an int8 encoder.
+ * Two plans: the encoder on WebGPU in fp16 (decoder on WASM), or everything
+ * on WASM with an int8 encoder. Model files stream into the Cache API once
+ * (see hub.ts) and load from disk afterwards. Every console line from
+ * parakeet.js / ORT is forwarded to the page so a stall is diagnosable.
  */
-import { fromHub, type ParakeetModel } from 'parakeet.js'
-import type { TranscribeWord } from './types'
+import { fromUrls, type ParakeetModel } from 'parakeet.js'
 import { configureOrt } from './ortSetup'
+import { downloadToObjectUrl, resolveModelFiles } from './hub'
 import type { ParakeetPlan } from './capabilities'
+import type { TranscribeWord } from './types'
 
 export type ParakeetWorkerRequest =
-	| { type: 'load'; plan: ParakeetPlan }
+	| { type: 'load'; plan: ParakeetPlan; modelBase?: string }
 	| { type: 'transcribe'; id: number; audio: Float32Array; sampleRate: number }
 
 export type ParakeetWorkerResponse =
-	| { type: 'download'; file: string; loaded: number; total: number; files: Record<string, { loaded: number; total: number }> }
-	| { type: 'loaded'; plan: ParakeetPlan; backend: 'webgpu' | 'wasm'; encoderQuant: string; decoderQuant: string; loadMs: number; downloadBytes: number; threads: number }
+	| { type: 'download'; files: Record<string, { loaded: number; total: number }>; cached: boolean }
+	| { type: 'status'; text: string }
+	| { type: 'log'; level: 'log' | 'warn' | 'error'; text: string }
+	| { type: 'loaded'; plan: ParakeetPlan; backend: 'webgpu' | 'wasm'; encoderQuant: string; decoderQuant: string; loadMs: number; downloadBytes: number; cached: boolean; threads: number; source: string }
 	| { type: 'transcribed'; id: number; text: string; words: TranscribeWord[]; audioSeconds: number; ms: number }
-	| { type: 'error'; id?: number; message: string }
+	| { type: 'error'; id?: number; stage?: 'resolve' | 'download' | 'session' | 'transcribe'; message: string }
 
-const MODEL_KEY = 'parakeet-tdt-0.6b-v3'
 const post = (msg: ParakeetWorkerResponse) => self.postMessage(msg)
+
+// Mirror the worker's console to the page (parakeet.js and ORT log there).
+for (const level of ['log', 'warn', 'error'] as const) {
+	const original = console[level].bind(console)
+	console[level] = (...args: unknown[]) => {
+		original(...args)
+		try {
+			post({ type: 'log', level, text: args.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : JSON.stringify(a))).join(' ').slice(0, 400) })
+		} catch {
+			/* not serialisable */
+		}
+	}
+}
+self.addEventListener('unhandledrejection', (e) => post({ type: 'error', stage: 'session', message: `Unhandled: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}` }))
 
 let model: ParakeetModel | null = null
 
-async function load(plan: ParakeetPlan) {
+async function load(plan: ParakeetPlan, modelBase?: string) {
 	const { threads } = configureOrt()
 	const t0 = performance.now()
-	const files: Record<string, { loaded: number; total: number }> = {}
+
+	post({ type: 'status', text: 'Locating model files…' })
+	let files
+	try {
+		files = await resolveModelFiles(plan, modelBase)
+	} catch (err) {
+		post({ type: 'error', stage: 'resolve', message: err instanceof Error ? err.message : String(err) })
+		return
+	}
+
+	const progress: Record<string, { loaded: number; total: number }> = {}
+	let allCached = true
+	const report = (file: string, loaded: number, total: number) => {
+		progress[file] = { loaded, total }
+		post({ type: 'download', files: { ...progress }, cached: allCached })
+	}
+	const urls: Record<string, string> = {}
 	let downloadBytes = 0
-	const progress = ({ file, loaded, total }: { file: string; loaded: number; total: number }) => {
-		files[file] = { loaded, total }
-		downloadBytes = Object.values(files).reduce((s, f) => s + f.loaded, 0)
-		post({ type: 'download', file, loaded, total, files: { ...files } })
+	try {
+		// Sequential on purpose: one big stream saturates the link, and the
+		// progress bar is easier to read.
+		for (const [key, url] of Object.entries({ encoder: files.encoder, encoderData: files.encoderData, decoder: files.decoder, tokenizer: files.tokenizer })) {
+			if (!url) continue
+			const { objectUrl, bytes, cached } = await downloadToObjectUrl(url, report)
+			urls[key] = objectUrl
+			downloadBytes += bytes
+			if (!cached) allCached = false
+		}
+	} catch (err) {
+		post({ type: 'error', stage: 'download', message: err instanceof Error ? err.message : String(err) })
+		return
 	}
 
 	const backend = plan === 'gpu-fp16' ? 'webgpu' : 'wasm'
-	const encoderQuant = plan === 'gpu-fp16' ? 'fp16' : 'int8'
-	// parakeet.js can only run the decoder on WASM, and int8 is its fastest
-	// form there.
-	const decoderQuant = 'int8'
-	model = await fromHub(MODEL_KEY, {
+	post({ type: 'status', text: `Loading ${(downloadBytes / 1e9).toFixed(2)} GB into ${backend === 'webgpu' ? 'GPU + ' : ''}memory…` })
+	try {
+		model = await fromUrls({
+			encoderUrl: urls.encoder,
+			encoderDataUrl: urls.encoderData ?? null,
+			decoderUrl: urls.decoder,
+			tokenizerUrl: files.tokenizer, // small text file, fetched directly
+			filenames: files.filenames,
+			// parakeet.js only knows 'webgpu-hybrid' | 'webgpu-strict' | 'wasm'
+			// when it builds the execution-provider list; plain 'webgpu' leaves it empty.
+			backend: backend === 'webgpu' ? 'webgpu-hybrid' : 'wasm',
+			preprocessorBackend: 'js',
+			cpuThreads: threads,
+		})
+	} catch (err) {
+		post({ type: 'error', stage: 'session', message: err instanceof Error ? err.message : String(err) })
+		return
+	} finally {
+		for (const u of Object.values(urls)) URL.revokeObjectURL(u)
+	}
+
+	post({
+		type: 'loaded',
+		plan,
 		backend,
-		encoderQuant,
-		decoderQuant,
-		preprocessorBackend: 'js',
-		cpuThreads: threads,
-		progress,
+		encoderQuant: plan === 'gpu-fp16' ? 'fp16' : 'int8',
+		decoderQuant: 'int8',
+		loadMs: performance.now() - t0,
+		downloadBytes,
+		cached: allCached,
+		threads,
+		source: files.base,
 	})
-	post({ type: 'loaded', plan, backend, encoderQuant, decoderQuant, loadMs: performance.now() - t0, downloadBytes, threads })
 }
 
 async function transcribe(id: number, audio: Float32Array, sampleRate: number) {
@@ -62,7 +124,7 @@ async function transcribe(id: number, audio: Float32Array, sampleRate: number) {
 		type: 'transcribed',
 		id,
 		text: result.utterance_text ?? '',
-		words: result.words ?? [],
+		words: (result.words ?? []) as TranscribeWord[],
 		audioSeconds: audio.length / sampleRate,
 		ms: performance.now() - t0,
 	})
@@ -71,9 +133,9 @@ async function transcribe(id: number, audio: Float32Array, sampleRate: number) {
 self.onmessage = async (event: MessageEvent<ParakeetWorkerRequest>) => {
 	const msg = event.data
 	try {
-		if (msg.type === 'load') await load(msg.plan)
+		if (msg.type === 'load') await load(msg.plan, msg.modelBase)
 		else if (msg.type === 'transcribe') await transcribe(msg.id, msg.audio, msg.sampleRate)
 	} catch (err) {
-		post({ type: 'error', id: msg.type === 'transcribe' ? msg.id : undefined, message: err instanceof Error ? err.message : String(err) })
+		post({ type: 'error', id: msg.type === 'transcribe' ? msg.id : undefined, stage: msg.type === 'transcribe' ? 'transcribe' : 'session', message: err instanceof Error ? err.message : String(err) })
 	}
 }

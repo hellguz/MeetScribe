@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => {
       // the value is injected as a build arg (ARG/ENV in Dockerfile).
       'import.meta.env.VITE_API_BASE_URL': JSON.stringify(
         env.VITE_API_BASE_URL ?? process.env.VITE_API_BASE_URL ?? ''
+      ),
+      // Optional: self-host the Parakeet model files (same names as the
+      // Hugging Face repo) instead of downloading them from Hugging Face.
+      'import.meta.env.VITE_PARAKEET_MODEL_BASE': JSON.stringify(
+        env.VITE_PARAKEET_MODEL_BASE ?? process.env.VITE_PARAKEET_MODEL_BASE ?? ''
       )
     },
     // Module workers so the on-device workers can import npm packages.

@@ -32,7 +32,12 @@ export interface DownloadState {
 	total: number
 	startedAt: number
 	bytesPerSec: number
+	/** Every file is on disk; the model is now being loaded into memory. */
 	done: boolean
+	/** All files came from the on-disk cache (no network). */
+	cached: boolean
+	/** When `done` flipped, so the panel can show how long loading takes. */
+	doneAt: number | null
 }
 
 export interface OnDeviceState {
@@ -43,6 +48,13 @@ export interface OnDeviceState {
 	phase: OnDevicePhase
 	error: string | null
 	download: DownloadState | null
+	/** Worker's own description of what it is doing right now. */
+	statusText: string | null
+	/** Last console lines from the worker (parakeet.js / ORT), newest last. */
+	log: string[]
+	/** Set when the GPU plan failed and the CPU plan was loaded instead. */
+	autoFallbackPlan: ParakeetPlan | null
+	autoFallbackReason: string | null
 	modelLoadMs: number | null
 	backend: 'webgpu' | 'wasm' | null
 	threads: number | null
@@ -85,6 +97,10 @@ const initialState = (): OnDeviceState => ({
 	phase: 'idle',
 	error: null,
 	download: null,
+	statusText: null,
+	log: [],
+	autoFallbackPlan: null,
+	autoFallbackReason: null,
 	modelLoadMs: null,
 	backend: null,
 	threads: null,
@@ -173,7 +189,11 @@ export function useOnDevice(): OnDeviceController {
 		detectCapabilities().then((caps) => patch({ caps }))
 	}, [patch])
 
-	const plan = useMemo(() => (state.caps ? resolvePlan(state.planChoice, state.caps) : null), [state.caps, state.planChoice])
+	const plan = useMemo(() => {
+		if (!state.caps) return null
+		if (state.planChoice === 'auto' && state.autoFallbackPlan) return state.autoFallbackPlan
+		return resolvePlan(state.planChoice, state.caps)
+	}, [state.caps, state.planChoice, state.autoFallbackPlan])
 
 	// ---- workers -----------------------------------------------------------
 	const terminateWorkers = useCallback(() => {
@@ -188,10 +208,20 @@ export function useOnDevice(): OnDeviceController {
 	const loadWorkers = useCallback(
 		(chosen: ParakeetPlan) => {
 			terminateWorkers()
-			patch({ phase: 'loading', error: null, plan: chosen, download: null, modelLoadMs: null, backend: null })
+			patch({ phase: 'loading', error: null, plan: chosen, download: null, statusText: null, log: [], modelLoadMs: null, backend: null })
 
 			const parakeet = new Worker(new URL('./parakeet.worker.ts', import.meta.url), { type: 'module' })
 			parakeetRef.current = parakeet
+			const fail = (message: string) => {
+				// The GPU plan can fail for reasons the CPU plan does not share
+				// (fp16 files missing, GPU memory, driver quirks). When the plan
+				// was picked automatically, try the CPU one before giving up.
+				if (chosen === 'gpu-fp16' && stateRef.current.planChoice === 'auto' && !stateRef.current.autoFallbackPlan) {
+					patch({ autoFallbackPlan: 'cpu-int8', autoFallbackReason: message })
+					return
+				}
+				patch({ phase: 'error', error: `Parakeet failed to load: ${message} — flip the switch off and on to retry, or pick the other plan.` })
+			}
 			parakeetReady.current = new Promise<void>((resolve, reject) => {
 				parakeet.onmessage = (event: MessageEvent<ParakeetWorkerResponse>) => {
 					const msg = event.data
@@ -201,15 +231,26 @@ export function useOnDevice(): OnDeviceController {
 							const total = Object.values(msg.files).reduce((sum, f) => sum + f.total, 0)
 							const startedAt = s.download?.startedAt ?? Date.now()
 							const elapsed = (Date.now() - startedAt) / 1000
-							return { download: { loaded, total, startedAt, bytesPerSec: elapsed > 0.5 ? loaded / elapsed : 0, done: false } }
+							return { download: { loaded, total, startedAt, bytesPerSec: elapsed > 0.5 ? loaded / elapsed : 0, done: false, cached: msg.cached, doneAt: null } }
 						})
+					} else if (msg.type === 'status') {
+						patch((s) => ({
+							statusText: msg.text,
+							// The first status after the last byte marks the start of the load-into-memory step.
+							download: s.download && !s.download.done && s.download.loaded >= s.download.total && s.download.total > 0 ? { ...s.download, done: true, doneAt: Date.now() } : s.download,
+						}))
+					} else if (msg.type === 'log') {
+						patch((s) => ({ log: [...s.log.slice(-29), `${msg.level === 'error' ? '❌ ' : msg.level === 'warn' ? '⚠️ ' : ''}${msg.text}`] }))
 					} else if (msg.type === 'loaded') {
 						patch((s) => ({
 							phase: 'ready',
+							statusText: null,
 							modelLoadMs: msg.loadMs,
 							backend: msg.backend,
 							threads: msg.threads,
-							download: s.download ? { ...s.download, done: true } : { loaded: 0, total: 0, startedAt: Date.now(), bytesPerSec: 0, done: true },
+							download: s.download
+								? { ...s.download, done: true, cached: msg.cached, loaded: msg.downloadBytes, total: msg.downloadBytes }
+								: { loaded: msg.downloadBytes, total: msg.downloadBytes, startedAt: Date.now(), bytesPerSec: 0, done: true, cached: msg.cached, doneAt: Date.now() },
 						}))
 						resolve()
 					} else if (msg.type === 'transcribed') {
@@ -220,18 +261,19 @@ export function useOnDevice(): OnDeviceController {
 							pendingResolvers.current.get(msg.id)?.reject(new Error(msg.message))
 							pendingResolvers.current.delete(msg.id)
 						} else {
-							patch({ phase: 'error', error: `Parakeet failed to load: ${msg.message} — flip the switch off and on to retry.` })
+							fail(`${msg.stage ? `${msg.stage}: ` : ''}${msg.message}`)
 							reject(new Error(msg.message))
 						}
 					}
 				}
 				parakeet.onerror = (e) => {
-					patch({ phase: 'error', error: `Parakeet worker crashed: ${e.message}` })
+					fail(`worker crashed: ${e.message}`)
 					reject(new Error(e.message))
 				}
 			})
 			parakeetReady.current.catch(() => {})
-			parakeet.postMessage({ type: 'load', plan: chosen } satisfies ParakeetWorkerRequest)
+			const modelBase = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
+			parakeet.postMessage({ type: 'load', plan: chosen, modelBase } satisfies ParakeetWorkerRequest)
 
 			const diarizer = new Worker(new URL('./diarization.worker.ts', import.meta.url), { type: 'module' })
 			diarizerRef.current = diarizer
@@ -263,7 +305,7 @@ export function useOnDevice(): OnDeviceController {
 		if (!state.enabled) {
 			if (state.phase !== 'idle' || state.plan !== null) {
 				terminateWorkers()
-				patch({ phase: 'idle', error: null, download: null, plan: null })
+				patch({ phase: 'idle', error: null, download: null, plan: null, statusText: null, log: [], autoFallbackPlan: null, autoFallbackReason: null })
 			}
 			return
 		}
@@ -295,7 +337,7 @@ export function useOnDevice(): OnDeviceController {
 			} catch {
 				/* private mode */
 			}
-			patch({ planChoice: choice })
+			patch({ planChoice: choice, autoFallbackPlan: null, autoFallbackReason: null })
 		},
 		[patch],
 	)
@@ -470,7 +512,7 @@ export function useOnDevice(): OnDeviceController {
 				plan: s.plan,
 				backend: s.backend,
 				threads: s.threads,
-				download: s.download ? { bytes: s.download.total, ms: s.download.total > 0 ? Math.round(s.download.loaded / Math.max(s.download.bytesPerSec, 1) * 1000) : 0, cached: s.download.total === 0 } : null,
+				download: s.download ? { bytes: s.download.total, ms: s.download.cached ? 0 : Math.round((s.download.loaded / Math.max(s.download.bytesPerSec, 1)) * 1000), cached: s.download.cached } : null,
 				model_load_ms: s.modelLoadMs,
 				transcription: { chunks: s.transcription.done, audio_seconds: Math.round(s.transcription.audioSeconds), process_ms: Math.round(s.transcription.processMs) },
 				diarization: { audio_seconds: durationSeconds, ms: diarizationMs === null ? null : Math.round(diarizationMs), speakers, model_bytes: s.diarization.modelBytes, model_load_ms: s.diarization.modelLoadMs },
