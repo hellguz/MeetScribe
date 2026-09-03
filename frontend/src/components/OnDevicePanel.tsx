@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import type { OnDeviceController } from '../ondevice/useOnDevice'
-import { PLAN_DOWNLOAD_BYTES, PLAN_LABELS, type PlanChoice } from '../ondevice/capabilities'
+import { PLAN_LABELS, type ParakeetPlan, type PlanChoice } from '../ondevice/capabilities'
+import { measurePlanBytes } from '../ondevice/hub'
 
 interface OnDevicePanelProps {
 	controller: OnDeviceController
@@ -37,6 +38,23 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 		return () => clearInterval(id)
 	}, [phase])
 
+	// What each plan actually downloads from the configured host, which is a
+	// build-time setting and so not knowable from a constant here.
+	const [planSizes, setPlanSizes] = useState<Partial<Record<ParakeetPlan, number>>>({})
+	useEffect(() => {
+		if (!enabled || locked) return
+		let live = true
+		const base = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
+		for (const p of ['gpu-fp16', 'cpu-int8'] as ParakeetPlan[]) {
+			measurePlanBytes(p, base).then((bytes) => {
+				if (live && bytes) setPlanSizes((sizes) => ({ ...sizes, [p]: bytes }))
+			})
+		}
+		return () => {
+			live = false
+		}
+	}, [enabled, locked])
+
 	const chip = (active: boolean): React.CSSProperties => ({
 		padding: '4px 10px',
 		borderRadius: '999px',
@@ -51,7 +69,7 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 	const speed = transcription.processMs > 0 ? transcription.audioSeconds / (transcription.processMs / 1000) : null
 	const downloadPct = download && download.total > 0 ? Math.min(100, (download.loaded / download.total) * 100) : 0
 	const downloadEta = download && download.bytesPerSec > 0 && !download.done ? (download.total - download.loaded) / download.bytesPerSec : null
-	const planBytes = plan ? PLAN_DOWNLOAD_BYTES[plan] : null
+	const planBytes = plan ? planSizes[plan] ?? null : null
 
 	const statusLine = (() => {
 		if (!enabled) return null
@@ -106,7 +124,7 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '8px 0 0 26px', alignItems: 'center' }}>
 					{(['auto', 'gpu-fp16', 'cpu-int8'] as PlanChoice[]).map((choice) => (
 						<span key={choice} style={chip(state.planChoice === choice)} onClick={() => !locked && setPlanChoice(choice)}>
-							{choice === 'auto' ? `Auto${caps ? ` → ${PLAN_LABELS[caps.recommended].split(' · ')[0]}` : ''}` : PLAN_LABELS[choice]}
+							{choice === 'auto' ? `Auto${caps ? ` → ${PLAN_LABELS[caps.recommended]}` : ''}` : `${PLAN_LABELS[choice]}${planSizes[choice] ? ` · ${formatBytes(planSizes[choice]!)}` : ''}`}
 						</span>
 					))}
 					{planBytes && phase === 'idle' && <span style={{ color: theme.secondaryText }}>~{formatBytes(planBytes)} once, then cached</span>}
@@ -129,7 +147,7 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 
 			{enabled && autoFallbackPlan && (
 				<div style={{ margin: `6px 0 0 ${locked ? 0 : 26}px`, color: '#d97706', wordBreak: 'break-word' }}>
-					⚠️ GPU plan failed ({autoFallbackReason}); switched to CPU · int8.
+					⚠️ GPU plan failed ({autoFallbackReason}); switched to the CPU plan.
 				</div>
 			)}
 

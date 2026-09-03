@@ -55,6 +55,42 @@ async function probe(url: string): Promise<boolean | null> {
 	return null
 }
 
+/** Content-Length of `url`, or null if the host will not say. */
+async function contentLength(url: string): Promise<number | null> {
+	try {
+		const res = await fetch(url, { method: 'HEAD' })
+		const length = Number(res.headers.get('content-length'))
+		return res.ok && length > 0 ? length : null
+	} catch {
+		return null
+	}
+}
+
+const measured = new Map<string, Promise<number | null>>()
+
+/**
+ * How many bytes a plan downloads, asked of whichever host is configured.
+ * Not a constant: VITE_PARAKEET_MODEL_BASE can point at a custom build whose
+ * files are nothing like the upstream sizes — a self-quantized encoder serves
+ * the same weights under both plan filenames. Null when the host hides
+ * Content-Length, and cached per plan+base, since the panel shows a chip per
+ * plan and nothing here changes while the page lives.
+ */
+export async function measurePlanBytes(plan: ParakeetPlan, customBase?: string): Promise<number | null> {
+	const key = `${plan}@${customBase ?? HF_REPO}`
+	const pending =
+		measured.get(key) ??
+		(async () => {
+			const files = await resolveModelFiles(plan, customBase)
+			const urls = [files.encoder, files.decoder, files.tokenizer, ...(files.encoderData ? [files.encoderData] : [])]
+			const sizes = await Promise.all(urls.map(contentLength))
+			// One unknown file makes the total a lie, so report nothing.
+			return sizes.some((size) => size === null) ? null : sizes.reduce((total, size) => total! + size!, 0)
+		})().catch(() => null)
+	measured.set(key, pending)
+	return pending
+}
+
 /** Find a base URL that has the files this plan needs. */
 export async function resolveModelFiles(plan: ParakeetPlan, customBase?: string): Promise<ResolvedFiles> {
 	const encoderName = plan === 'gpu-fp16' ? 'encoder-model.fp16.onnx' : 'encoder-model.int8.onnx'

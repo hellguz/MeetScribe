@@ -2,8 +2,12 @@
  * What this device can realistically run. Decides between the two Parakeet
  * plans and produces the warnings shown next to the toggle:
  *
- *   gpu-fp16 — encoder on WebGPU in fp16 (~1.2 GB download), decoder on WASM.
- *   cpu-int8 — everything on WASM with an int8 encoder (~0.6 GB download).
+ *   gpu-fp16 — encoder on WebGPU, decoder on WASM.
+ *   cpu-int8 — everything on WASM, with the int8 encoder.
+ *
+ * Download sizes are not listed here: they depend on which files
+ * VITE_PARAKEET_MODEL_BASE points at, so the panel asks the host instead
+ * (see measurePlanBytes in hub.ts).
  *
  * Nothing here is fatal: the user can always try, and a failed model load
  * hands the meeting back to the server (see useOnDevice).
@@ -25,16 +29,9 @@ export interface DeviceCapabilities {
 	warnings: string[]
 }
 
-export const PLAN_DOWNLOAD_BYTES: Record<ParakeetPlan, number> = {
-	// encoder fp16 ≈ 1.2 GB + decoder int8 + tokenizer
-	'gpu-fp16': 1.25e9,
-	// encoder int8 ≈ 0.62 GB + decoder int8 + tokenizer
-	'cpu-int8': 0.65e9,
-}
-
 export const PLAN_LABELS: Record<ParakeetPlan, string> = {
-	'gpu-fp16': 'GPU · fp16 · ~1.2 GB',
-	'cpu-int8': 'CPU · int8 · ~0.6 GB',
+	'gpu-fp16': 'GPU',
+	'cpu-int8': 'CPU',
 }
 
 const isIOSDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
