@@ -180,7 +180,7 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 			{enabled && phase === 'diarizing' && (
 				<div style={{ marginTop: 6, color: theme.secondaryText }}>
 					🗣️ {STAGE_LABEL[diarization.stage ?? ''] ?? 'Identifying speakers'}
-					{diarization.total > 0 ? ` ${diarization.done}/${diarization.total}` : ''}…
+					{diarization.total > 0 ? ` ${Math.min(100, Math.round((diarization.done / diarization.total) * 100))}%` : ''}…
 					{diarization.total > 0 && (
 						<div style={{ height: 6, borderRadius: 3, backgroundColor: theme.backgroundSecondary, overflow: 'hidden', marginTop: 6 }}>
 							<div style={{ width: `${Math.min(100, (diarization.done / diarization.total) * 100)}%`, height: '100%', backgroundColor: theme.text, transition: 'width 0.2s' }} />
