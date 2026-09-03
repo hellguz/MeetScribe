@@ -5,10 +5,11 @@ import { saveMeeting } from '../utils/history'
 import { AudioSource } from '../types'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
+import type { OnDeviceController } from '../ondevice/useOnDevice'
 
 const CHUNK_DURATION_MS = 30_000
 
-export const useRecording = (summaryLength: SummaryLength, languageState: SummaryLanguageState) => {
+export const useRecording = (summaryLength: SummaryLength, languageState: SummaryLanguageState, onDevice: OnDeviceController | null = null) => {
 	const navigate = useNavigate()
 	const [isRecording, setRecording] = useState(false)
 	const [isProcessing, setIsProcessing] = useState(false)
@@ -30,6 +31,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const wakeLockSentinelRef = useRef<WakeLockSentinel | null>(null)
 
 	const meetingId = useRef<string | null>(null)
+	// True while the current meeting is transcribed/diarized in the browser.
+	const onDeviceActiveRef = useRef(false)
 	const mediaRef = useRef<MediaRecorder | null>(null)
 	const streamRef = useRef<MediaStream | null>(null)
 	const displayStreamRef = useRef<MediaStream | null>(null)
@@ -92,6 +95,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		setProcessingTotal(null)
 		chunkIndexRef.current = 0
 		meetingId.current = null
+		onDeviceActiveRef.current = false
 		setWakeLockStatus('inactive')
 		setIsPaused(false)
 		isPausedRef.current = false
@@ -141,6 +145,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const createMeetingOnBackend = useCallback(
 		async (title: string, context: string) => {
 			const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+			const useOnDeviceNow = !!onDevice?.isUsable
 			const res = await fetch(apiUrl(`/api/meetings`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -151,15 +156,18 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 					summary_custom_language: languageState.lastCustomLanguage,
 					context: context,
 					timezone: timezone,
+					client_processing: useOnDeviceNow,
 				}),
 			})
 			if (!res.ok) throw new Error('Failed to create meeting')
 			const data = await res.json()
 			meetingId.current = data.id
+			onDeviceActiveRef.current = useOnDeviceNow
+			if (useOnDeviceNow) onDevice?.beginMeeting(data.id)
 			saveMeeting({ id: data.id, title, started_at: new Date().toISOString(), status: 'pending' })
 			return data.id
 		},
-		[summaryLength, languageState],
+		[summaryLength, languageState, onDevice],
 	)
 
 	const uploadChunk = useCallback(async (blob: Blob, index: number, isFinal = false) => {
@@ -260,9 +268,16 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				await new Promise((resolve) => setTimeout(resolve, 500))
 				const finalBlob = new Blob([], { type: mediaRef.current?.mimeType || 'audio/webm' })
 				await uploadChunk(finalBlob, chunkIndexRef.current, true)
+
+				// On-device: wait for the last chunks, identify speakers and
+				// hand the transcript over. Polling then sees the summary
+				// exactly as it would for a server-processed meeting.
+				if (onDeviceActiveRef.current && onDevice) {
+					await onDevice.finish()
+				}
 			}
 		},
-		[uploadChunk],
+		[uploadChunk, onDevice],
 	)
 
 	const pauseRecording = useCallback(() => {
@@ -378,7 +393,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 					mediaRef.current = recorder
 					recorder.ondataavailable = (e) => {
 						if (e.data.size > 0) {
-							uploadChunk(e.data, chunkIndexRef.current++)
+							const index = chunkIndexRef.current++
+							uploadChunk(e.data, index)
+							if (onDeviceActiveRef.current) onDevice?.addChunk(e.data, index)
 							setLocalChunksCount((c) => c + 1)
 						}
 					}
@@ -403,7 +420,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				resetState()
 			}
 		},
-		[createMeetingOnBackend, includeMic, pollMeetingStatus, stopRecording, uploadChunk],
+		[createMeetingOnBackend, includeMic, pollMeetingStatus, stopRecording, uploadChunk, onDevice],
 	)
 
 	const startFileProcessing = useCallback(
@@ -509,8 +526,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		resumeRecording,
 		startFileProcessing,
 		transcriptionSpeedLabel,
-		processingStage,
-		processingTotal,
+		processingStage: onDevice?.localStage ?? processingStage,
+		processingTotal: onDevice?.localStage ? 2 : processingTotal,
 		analyserRef,
 		animationFrameRef,
 		updateContext,

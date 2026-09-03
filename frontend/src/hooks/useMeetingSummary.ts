@@ -4,6 +4,7 @@ import { getHistory, saveMeeting } from '../utils/history'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
+import type { ClientStats } from '../components/OnDeviceStats'
 
 interface UseMeetingSummaryProps {
 	mid: string | undefined
@@ -29,6 +30,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [canRediarize, setCanRediarize] = useState(false)
 	const [diarizationAttempted, setDiarizationAttempted] = useState(true)
 	const [speakerCount, setSpeakerCount] = useState<number | null>(null)
+	const [clientStats, setClientStats] = useState<ClientStats | null>(null)
 	const [processingStage, setProcessingStage] = useState<string | null>(null)
 	const [processingTotal, setProcessingTotal] = useState<number | null>(null)
 
@@ -63,6 +65,11 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				setCanRediarize(!!data.can_rediarize)
 				setDiarizationAttempted(!!data.diarization_attempted)
 				setSpeakerCount(typeof data.speaker_count === 'number' ? data.speaker_count : null)
+				try {
+					setClientStats(data.client_stats ? (JSON.parse(data.client_stats) as ClientStats) : null)
+				} catch {
+					setClientStats(null)
+				}
 				setProcessingStage(data.processing_stage ?? null)
 				setProcessingTotal(typeof data.processing_total === 'number' ? data.processing_total : null)
 				const trn = data.transcript_text || null
@@ -308,6 +315,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		canRediarize,
 		diarizationAttempted,
 		speakerCount,
+		clientStats,
 		processingStage,
 		processingTotal,
 		handleRediarize,

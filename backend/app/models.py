@@ -48,6 +48,14 @@ class Meeting(SQLModel, table=True):
     # predating the feature are False, which is what the "find speakers"
     # hint keys off. Absence of Speaker labels is NOT the same thing.
     diarization_attempted: bool = False
+    # Experimental: transcription and diarization ran in the user's browser
+    # (Parakeet + pyannote/campplus via ONNX Runtime Web). The server still
+    # stores the audio and chunk texts as usual, but must neither transcribe
+    # nor diarize — it only summarizes the transcript the client hands over.
+    client_processing: bool = False
+    # JSON blob of what the browser measured: model download size/time,
+    # transcription speed, diarization time, backend used. Purely informative.
+    client_stats: str | None = None
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -96,6 +104,7 @@ class MeetingCreate(SQLModel):
     summary_custom_language: str | None = None
     context: str | None = None
     timezone: str | None = None
+    client_processing: bool = False
 
 
 class FeedbackCreate(SQLModel):
@@ -150,7 +159,35 @@ class MeetingStatus(SQLModel):
     diarization_attempted: bool = False
     # True when the original audio survives, so speakers can still be identified.
     can_rediarize: bool = False
+    client_processing: bool = False
+    client_stats: str | None = None
     feedback: list[str] = []  # List of submitted feedback types
+
+
+class ChunkSegment(SQLModel):
+    start: float
+    end: float
+    text: str
+
+
+class ChunkTranscriptUpdate(SQLModel):
+    """One chunk transcribed in the browser (on-device mode)."""
+
+    text: str
+    segments: list[ChunkSegment] = []
+    audio_seconds: float | None = None
+
+
+class ClientFinalizePayload(SQLModel):
+    """
+    The browser finished transcribing and diarizing: here is the labelled
+    transcript, summarize it. `client_stats` is free-form JSON for the UI.
+    """
+
+    transcript: str
+    speaker_count: int | None = None
+    duration_seconds: int | None = None
+    client_stats: dict | None = None
 
 
 class MeetingTitleUpdate(SQLModel):
