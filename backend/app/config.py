@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     worker_threads: int = 4
 
     # Model used for summarization and title generation
-    summary_model: str = "claude-sonnet-4-6"
+    summary_model: str = "claude-sonnet-5"
 
     # Seconds of inactivity before a recording is auto-finalized
     inactivity_timeout_seconds: int = 120
