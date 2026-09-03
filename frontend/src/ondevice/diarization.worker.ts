@@ -7,7 +7,7 @@
  * port in ./diarization/pipeline.ts. Both models are small (~36 MB together)
  * and int8/fp32 CPU models, so WASM is the right backend for them.
  */
-import { configureOrt, ort } from './ortSetup'
+import { configureOrt, isOrtHelperWorker, ort } from './ortSetup'
 import { diarize, DEFAULT_DIARIZATION_CONFIG, type DiarizationConfig, type DiarizationModels, type DiarizationProgress } from './diarization/pipeline'
 import type { SpeakerTurn } from './diarization/label'
 
@@ -74,12 +74,16 @@ async function run(audio: Float32Array, config: Partial<DiarizationConfig>) {
 	post({ type: 'result', turns, ms: performance.now() - t0 })
 }
 
-self.onmessage = async (event: MessageEvent<DiarizationWorkerRequest>) => {
-	const msg = event.data
-	try {
-		if (msg.type === 'load') await load(msg.segmentationUrl, msg.embeddingUrl)
-		else if (msg.type === 'run') await run(msg.audio, msg.config)
-	} catch (err) {
-		post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+// An ORT pthread may evaluate this file too (see isOrtHelperWorker); it must
+// not take over the message handler.
+if (!isOrtHelperWorker()) {
+	self.onmessage = async (event: MessageEvent<DiarizationWorkerRequest>) => {
+		const msg = event.data
+		try {
+			if (msg.type === 'load') await load(msg.segmentationUrl, msg.embeddingUrl)
+			else if (msg.type === 'run') await run(msg.audio, msg.config)
+		} catch (err) {
+			post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+		}
 	}
 }

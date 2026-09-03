@@ -37,6 +37,15 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': 'http://localhost:8000'
       }
+    },
+    preview: {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+      },
+      proxy: {
+        '/api': 'http://localhost:8000'
+      }
     }
   }
 });

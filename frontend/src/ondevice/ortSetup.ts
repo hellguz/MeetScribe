@@ -9,13 +9,28 @@
  */
 import * as ort from 'onnxruntime-web'
 import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url'
+import mjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url'
+
+/**
+ * True inside one of ONNX Runtime's own helper workers. ORT spawns its
+ * pthreads from `import.meta.url` of its glue code; when that glue is bundled
+ * into one of our workers, each pthread evaluates our worker file too. Our
+ * top-level code (message handlers above all) must then stay out of the way,
+ * or it overwrites the handler the pthread needs and ORT waits forever.
+ */
+export const isOrtHelperWorker = (): boolean => {
+	const name = (self as unknown as { name?: string }).name
+	return name === 'em-pthread' || name === 'ort-wasm-proxy-worker'
+}
 
 let configured = false
 
 export function configureOrt(): { threads: number } {
 	if (!configured) {
-		// The bundled entry point carries its own JS glue; only the binary is external.
-		ort.env.wasm.wasmPaths = { wasm: wasmUrl }
+		// Point ORT at the standalone glue + binary. With only the binary set, the
+		// bundled entry uses its inlined glue, whose import.meta.url is *our* worker
+		// chunk — so every pthread would re-run this whole file (see isOrtHelperWorker).
+		ort.env.wasm.wasmPaths = { mjs: mjsUrl, wasm: wasmUrl }
 		const isolated = typeof SharedArrayBuffer !== 'undefined' && (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true
 		// Leave a core for the UI thread and the audio pipeline.
 		ort.env.wasm.numThreads = isolated ? Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1)) : 1

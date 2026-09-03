@@ -231,14 +231,21 @@ export function useOnDevice(): OnDeviceController {
 							const total = Object.values(msg.files).reduce((sum, f) => sum + f.total, 0)
 							const startedAt = s.download?.startedAt ?? Date.now()
 							const elapsed = (Date.now() - startedAt) / 1000
-							return { download: { loaded, total, startedAt, bytesPerSec: elapsed > 0.5 ? loaded / elapsed : 0, done: false, cached: msg.cached, doneAt: null } }
+							return { statusText: null, download: { loaded, total, startedAt, bytesPerSec: elapsed > 0.5 ? loaded / elapsed : 0, done: false, cached: msg.cached, doneAt: null } }
 						})
-					} else if (msg.type === 'status') {
+					} else if (msg.type === 'downloaded') {
 						patch((s) => ({
-							statusText: msg.text,
-							// The first status after the last byte marks the start of the load-into-memory step.
-							download: s.download && !s.download.done && s.download.loaded >= s.download.total && s.download.total > 0 ? { ...s.download, done: true, doneAt: Date.now() } : s.download,
+							download: {
+								...(s.download ?? { startedAt: Date.now(), bytesPerSec: 0 }),
+								loaded: msg.bytes,
+								total: msg.bytes,
+								cached: msg.cached,
+								done: true,
+								doneAt: Date.now(),
+							},
 						}))
+					} else if (msg.type === 'status') {
+						patch({ statusText: msg.text })
 					} else if (msg.type === 'log') {
 						patch((s) => ({ log: [...s.log.slice(-29), `${msg.level === 'error' ? '❌ ' : msg.level === 'warn' ? '⚠️ ' : ''}${msg.text}`] }))
 					} else if (msg.type === 'loaded') {

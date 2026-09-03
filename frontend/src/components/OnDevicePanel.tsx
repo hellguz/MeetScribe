@@ -59,8 +59,10 @@ const OnDevicePanel: React.FC<OnDevicePanelProps> = ({ controller, theme, locked
 		if (phase === 'error') return { icon: '❌', text: error ?? 'Failed' }
 		if (phase === 'fallback') return { icon: '↩️', text: `Handed over to the server${error ? ` (${error})` : ''}` }
 		if (phase === 'loading') {
-			const downloading = download && !download.done && download.total > 0 && download.loaded < download.total
-			if (downloading) return { icon: '⬇️', text: `Downloading Parakeet ${formatBytes(download.loaded)} / ${formatBytes(download.total)} · ${formatBytes(download.bytesPerSec)}/s${downloadEta !== null ? ` · ~${formatSeconds(downloadEta)} left` : ''}` }
+			if (download && !download.done) {
+				const known = download.total > download.loaded
+				return { icon: '⬇️', text: `Downloading Parakeet ${formatBytes(download.loaded)}${known ? ` / ${formatBytes(download.total)}` : ''} · ${formatBytes(download.bytesPerSec)}/s${downloadEta !== null && known ? ` · ~${formatSeconds(downloadEta)} left` : ''}` }
+			}
 			const since = download?.doneAt ?? download?.startedAt ?? null
 			const elapsed = since ? ` · ${formatSeconds((Date.now() - since) / 1000)}` : ''
 			const slow = since && Date.now() - since > 120_000 ? ' — taking long; if it never finishes the model may not fit in memory (try the CPU plan, or turn the switch off to record via the server)' : ''

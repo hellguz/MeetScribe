@@ -9,7 +9,7 @@
  * parakeet.js / ORT is forwarded to the page so a stall is diagnosable.
  */
 import { fromUrls, type ParakeetModel } from 'parakeet.js'
-import { configureOrt } from './ortSetup'
+import { configureOrt, isOrtHelperWorker } from './ortSetup'
 import { downloadToObjectUrl, resolveModelFiles } from './hub'
 import type { ParakeetPlan } from './capabilities'
 import type { TranscribeWord } from './types'
@@ -21,6 +21,7 @@ export type ParakeetWorkerRequest =
 export type ParakeetWorkerResponse =
 	| { type: 'download'; files: Record<string, { loaded: number; total: number }>; cached: boolean }
 	| { type: 'status'; text: string }
+	| { type: 'downloaded'; bytes: number; cached: boolean }
 	| { type: 'log'; level: 'log' | 'warn' | 'error'; text: string }
 	| { type: 'loaded'; plan: ParakeetPlan; backend: 'webgpu' | 'wasm'; encoderQuant: string; decoderQuant: string; loadMs: number; downloadBytes: number; cached: boolean; threads: number; source: string }
 	| { type: 'transcribed'; id: number; text: string; words: TranscribeWord[]; audioSeconds: number; ms: number }
@@ -28,19 +29,21 @@ export type ParakeetWorkerResponse =
 
 const post = (msg: ParakeetWorkerResponse) => self.postMessage(msg)
 
-// Mirror the worker's console to the page (parakeet.js and ORT log there).
-for (const level of ['log', 'warn', 'error'] as const) {
-	const original = console[level].bind(console)
-	console[level] = (...args: unknown[]) => {
-		original(...args)
-		try {
-			post({ type: 'log', level, text: args.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : JSON.stringify(a))).join(' ').slice(0, 400) })
-		} catch {
-			/* not serialisable */
+function installDiagnostics() {
+	// Mirror the worker's console to the page (parakeet.js and ORT log there).
+	for (const level of ['log', 'warn', 'error'] as const) {
+		const original = console[level].bind(console)
+		console[level] = (...args: unknown[]) => {
+			original(...args)
+			try {
+				post({ type: 'log', level, text: args.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : JSON.stringify(a))).join(' ').slice(0, 400) })
+			} catch {
+				/* not serialisable */
+			}
 		}
 	}
+	self.addEventListener('unhandledrejection', (e) => post({ type: 'error', stage: 'session', message: `Unhandled: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}` }))
 }
-self.addEventListener('unhandledrejection', (e) => post({ type: 'error', stage: 'session', message: `Unhandled: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}` }))
 
 let model: ParakeetModel | null = null
 
@@ -80,6 +83,7 @@ async function load(plan: ParakeetPlan, modelBase?: string) {
 		return
 	}
 
+	post({ type: 'downloaded', bytes: downloadBytes, cached: allCached })
 	const backend = plan === 'gpu-fp16' ? 'webgpu' : 'wasm'
 	post({ type: 'status', text: `Loading ${(downloadBytes / 1e9).toFixed(2)} GB into ${backend === 'webgpu' ? 'GPU + ' : ''}memory…` })
 	try {
@@ -130,12 +134,17 @@ async function transcribe(id: number, audio: Float32Array, sampleRate: number) {
 	})
 }
 
-self.onmessage = async (event: MessageEvent<ParakeetWorkerRequest>) => {
-	const msg = event.data
-	try {
-		if (msg.type === 'load') await load(msg.plan, msg.modelBase)
-		else if (msg.type === 'transcribe') await transcribe(msg.id, msg.audio, msg.sampleRate)
-	} catch (err) {
-		post({ type: 'error', id: msg.type === 'transcribe' ? msg.id : undefined, stage: msg.type === 'transcribe' ? 'transcribe' : 'session', message: err instanceof Error ? err.message : String(err) })
+// Only the real worker installs handlers; an ORT pthread evaluating this
+// file must leave `self.onmessage` to ORT.
+if (!isOrtHelperWorker()) {
+	installDiagnostics()
+	self.onmessage = async (event: MessageEvent<ParakeetWorkerRequest>) => {
+		const msg = event.data
+		try {
+			if (msg.type === 'load') await load(msg.plan, msg.modelBase)
+			else if (msg.type === 'transcribe') await transcribe(msg.id, msg.audio, msg.sampleRate)
+		} catch (err) {
+			post({ type: 'error', id: msg.type === 'transcribe' ? msg.id : undefined, stage: msg.type === 'transcribe' ? 'transcribe' : 'session', message: err instanceof Error ? err.message : String(err) })
+		}
 	}
 }
