@@ -47,9 +47,23 @@ function installDiagnostics() {
 
 let model: ParakeetModel | null = null
 
+/**
+ * Before hub.ts existed, parakeet.js's own downloader kept the model files in
+ * its IndexedDB (up to ~2 GB across both plans). Nothing reads that database
+ * any more, so drop it here instead of asking people to clear site data.
+ */
+function dropLegacyParakeetCache() {
+	try {
+		indexedDB.deleteDatabase('parakeet-cache-db')
+	} catch {
+		/* no IndexedDB in this context */
+	}
+}
+
 async function load(plan: ParakeetPlan, modelBase?: string) {
 	const { threads } = configureOrt()
 	const t0 = performance.now()
+	dropLegacyParakeetCache()
 
 	post({ type: 'status', text: 'Locating model files…' })
 	let files

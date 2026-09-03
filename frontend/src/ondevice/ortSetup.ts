@@ -9,7 +9,6 @@
  */
 import * as ort from 'onnxruntime-web'
 import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url'
-import mjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url'
 
 /**
  * True inside one of ONNX Runtime's own helper workers. ORT spawns its
@@ -27,10 +26,12 @@ let configured = false
 
 export function configureOrt(): { threads: number } {
 	if (!configured) {
-		// Point ORT at the standalone glue + binary. With only the binary set, the
-		// bundled entry uses its inlined glue, whose import.meta.url is *our* worker
-		// chunk — so every pthread would re-run this whole file (see isOrtHelperWorker).
-		ort.env.wasm.wasmPaths = { mjs: mjsUrl, wasm: wasmUrl }
+		// Only the binary is external. ORT's bundled entry keeps its JS glue
+		// inlined, so no extra `.mjs` asset is emitted — a file many static
+		// hosts serve with a non-JS MIME type, which a module import rejects.
+		// The cost is that ORT spawns its pthreads from *our* worker chunk;
+		// isOrtHelperWorker() below is what makes that safe.
+		ort.env.wasm.wasmPaths = { wasm: wasmUrl }
 		const isolated = typeof SharedArrayBuffer !== 'undefined' && (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true
 		// Leave a core for the UI thread and the audio pipeline.
 		ort.env.wasm.numThreads = isolated ? Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1)) : 1
