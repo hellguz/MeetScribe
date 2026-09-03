@@ -29,6 +29,22 @@ export type ParakeetWorkerResponse =
 
 const post = (msg: ParakeetWorkerResponse) => self.postMessage(msg)
 
+/** ANSI colour codes ORT emits, which would otherwise show up as "[0;93m". */
+// eslint-disable-next-line no-control-regex -- matching the escape byte is the point
+const ANSI = /\u001b\[[0-9;]*m/g
+
+/**
+ * ORT writes *all* of its native log lines to console.error, including
+ * warnings such as the harmless "Unknown CPU vendor". Take the real severity
+ * from the line's own "[W:" / "[E:" marker so a warning is not shown as a
+ * failure.
+ */
+function severityOf(text: string, fallback: 'log' | 'warn' | 'error'): 'log' | 'warn' | 'error' {
+	const marker = /\[([VIWE]):onnxruntime/.exec(text)
+	if (!marker) return fallback
+	return marker[1] === 'E' ? 'error' : marker[1] === 'W' ? 'warn' : 'log'
+}
+
 function installDiagnostics() {
 	// Mirror the worker's console to the page (parakeet.js and ORT log there).
 	for (const level of ['log', 'warn', 'error'] as const) {
@@ -36,7 +52,12 @@ function installDiagnostics() {
 		console[level] = (...args: unknown[]) => {
 			original(...args)
 			try {
-				post({ type: 'log', level, text: args.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : JSON.stringify(a))).join(' ').slice(0, 400) })
+				const text = args
+					.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : JSON.stringify(a)))
+					.join(' ')
+					.replace(ANSI, '')
+					.slice(0, 400)
+				post({ type: 'log', level: severityOf(text, level), text })
 			} catch {
 				/* not serialisable */
 			}
