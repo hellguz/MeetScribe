@@ -31,20 +31,25 @@ Measured on the real encoder
 By scripts/eval_parakeet_encoders.py, against the fp32 encoder over 47 s of
 speech (six clips, English and Spanish), everything on the CPU:
 
-    file          896 MB — 217 of 289 MatMuls became MatMulNBits. Not the
-                  ~650 MB predicted: 302 MB of the encoder is pointwise Conv
-                  weights, which this quantizer leaves in fp32.
-    accuracy      1.8% encoder output error, and identical transcripts on
-                  every clip. The upstream *dynamic* int8 file scores 44%
-                  encoder error on the same audio.
-    CPU speed     3.2-3.4x realtime, against 7.6-9.3x for the dynamic int8
-                  file — weight-only is ~2.5x *slower* on the CPU, because
-                  MatMulNBits dequantizes per block on every pass while
-                  MatMulInteger runs as straight int8 GEMM.
+                    size    CPU speed   encoder error   WER
+    fp32           2477 MB    7.2-7.8x       —           —
+    weight-only     896 MB    3.2-3.9x      1.8%        0.0%
+    + convs folded  672 MB    2.8x          1.9%        0.0%
+    dynamic int8    652 MB    7.6-9.3x     44.0%        1.8%
 
-So the accuracy case holds and the size case is weaker than hoped, but a CPU
-device pays for it in speed. What is still unmeasured is the WebGPU side,
-where MatMulNBits has a kernel and the dynamic int8 ops have none.
+The accuracy case is settled: weight-only int8 reproduces the fp32
+transcripts word for word, in both languages, either way. Two costs came out
+worse than predicted:
+
+  * Size needed the conv fold to reach ~0.65 GB. Plain weight-only leaves
+    302 MB of pointwise Conv weights in fp32 — see fold_pointwise_convs.
+  * CPU speed drops ~2.5x against the dynamic int8 file, because
+    MatMulNBits dequantizes per block on every pass while MatMulInteger
+    runs as a straight int8 GEMM. Folding the convs costs a further ~28%,
+    trading it for the 224 MB.
+
+What is still unmeasured is the WebGPU side, the reason the file exists:
+MatMulNBits has a WebGPU kernel and the dynamic int8 ops have none.
 
 
 Usage
@@ -144,12 +149,95 @@ def count_ops(model) -> dict[str, int]:
     return counts
 
 
-def quantize(encoder_path: Path, out_path: Path, bits: int, block_size: int) -> None:
+def fold_pointwise_convs(model) -> int:
+    """Rewrite every 1x1 grouped-by-1 Conv as Transpose-MatMul-Transpose.
+
+    A pointwise conv over [N, C_in, T] is arithmetically a MatMul: each time
+    step is multiplied by the same [C_in, C_out] matrix. ONNX keeps them as
+    Conv, and MatMulNBitsQuantizer only rewrites MatMul — so in the Parakeet
+    encoder the 48 pointwise convs of the conformer conv modules (302 MB of
+    the 2.4 GB) would stay fp32 and dominate the quantized file.
+
+    MatMul contracts over the *last* axis, so the channel axis has to come
+    last: hence a Transpose on either side. Those are bandwidth, not
+    arithmetic, and the conformer conv module already transposes around this
+    block, so ORT's transpose optimizer cancels most of them at load.
+
+    Depthwise convs (group == channels) are left alone: they hold little
+    weight and are not matrix products. Returns the number folded.
+    """
+    import numpy as np
+    from onnx import helper, numpy_helper
+
+    graph = model.graph
+    initializers = {init.name: init for init in graph.initializer}
+    produced_here = set()
+    new_nodes = []
+    folded = 0
+
+    for node in graph.node:
+        weight = initializers.get(node.input[1]) if node.op_type == "Conv" and len(node.input) >= 2 else None
+        attrs = {a.name: list(a.ints) if a.ints else a.i for a in node.attribute}
+        eligible = (
+            weight is not None
+            and len(weight.dims) == 3  # [C_out, C_in, 1] — the 1-D convs
+            and weight.dims[2] == 1
+            and attrs.get("group", 1) == 1
+            and attrs.get("strides", [1]) == [1]
+            and attrs.get("dilations", [1]) == [1]
+            and not any(attrs.get("pads", [0, 0]))
+        )
+        if not eligible:
+            new_nodes.append(node)
+            continue
+
+        base = node.name or f"conv_{folded}"
+        x, out = node.input[0], node.output[0]
+
+        # [C_out, C_in, 1] -> [C_in, C_out], the B operand of a MatMul.
+        w = numpy_helper.to_array(weight).reshape(weight.dims[0], weight.dims[1]).T
+        w_name = f"{base}/matmul_weight"
+        graph.initializer.append(numpy_helper.from_array(np.ascontiguousarray(w), w_name))
+
+        pre, mm, post = f"{base}/nct", f"{base}/matmul", f"{base}/ntc"
+        new_nodes.append(helper.make_node("Transpose", [x], [pre], name=f"{base}/pre", perm=[0, 2, 1]))
+        new_nodes.append(helper.make_node("MatMul", [pre, w_name], [mm], name=mm))
+        last = mm
+        if len(node.input) > 2:  # bias [C_out] broadcasts over the last axis
+            last = f"{base}/biased"
+            new_nodes.append(helper.make_node("Add", [mm, node.input[2]], [last], name=f"{base}/add"))
+        new_nodes.append(helper.make_node("Transpose", [last], [out], name=f"{base}/post", perm=[0, 2, 1]))
+
+        produced_here.update({pre, mm, last})
+        folded += 1
+
+    if not folded:
+        return 0
+
+    del graph.node[:]
+    graph.node.extend(new_nodes)
+    # Drop the now-unused Conv weights, then let ONNX re-derive shapes for the
+    # tensors we introduced.
+    keep = {name for node in graph.node for name in node.input}
+    stale = [init for init in graph.initializer if init.name not in keep]
+    for init in stale:
+        graph.initializer.remove(init)
+    graph.value_info.extend(helper.make_empty_tensor_value_info(name) for name in sorted(produced_here))
+    # No onnx.checker here: it serializes the model to bytes, and the fp32
+    # encoder is over the 2 GB protobuf limit. The quantized result is checked
+    # for real by verify(), which loads it in ONNX Runtime.
+    return folded
+
+
+def quantize(encoder_path: Path, out_path: Path, bits: int, block_size: int, fold_convs: bool = True) -> None:
     import onnx
     from onnxruntime.quantization import matmul_nbits_quantizer as q
 
     print(f"[load] {encoder_path.name} ({encoder_path.stat().st_size / 1e6:.0f} MB)")
     model = onnx.load(str(encoder_path))
+    if fold_convs:
+        folded = fold_pointwise_convs(model)
+        print(f"[fold] {folded} pointwise Conv -> MatMul" if folded else "[fold] no pointwise Conv found")
     before = count_ops(model)
 
     print(f"[quant] weight-only, {bits}-bit, block size {block_size} — takes a few minutes")
@@ -184,6 +272,63 @@ def verify(model_path: Path) -> None:
     print(f"[check] loads OK\n        inputs : {ins}\n        outputs: {outs}")
 
 
+def write_model_card(out: Path, repo: str, bits: int, block_size: int, folded: bool) -> None:
+    """Write a Hugging Face model card, so `out` can be uploaded as-is."""
+    sizes = "\n".join(f"| `{p.name}` | {p.stat().st_size / 1e6:.0f} MB |" for p in sorted(out.iterdir()) if p.is_file() and p.suffix in (".onnx", ".txt"))
+    (out / "README.md").write_text(
+        f"""---
+license: cc-by-4.0
+base_model: {repo}
+library_name: onnx
+pipeline_tag: automatic-speech-recognition
+tags: [onnx, onnxruntime-web, webgpu, parakeet, tdt, asr, quantized]
+---
+
+# Parakeet TDT 0.6B v3 — weight-only int{bits} encoder (ONNX)
+
+The encoder of [{repo}](https://huggingface.co/{repo}), requantized so that
+**one file runs on both WebGPU and CPU** in ONNX Runtime Web. Built by
+[MeetScribe](https://github.com/hellguz/MeetScribe)'s
+`scripts/quantize_parakeet_encoder.py`; the decoder and vocabulary here are
+copied from the base repo unchanged.
+
+The upstream int8 encoder is *dynamically* quantized — weights and
+activations both — which compiles to `MatMulInteger` and
+`DynamicQuantizeLinear`. Neither op has a WebGPU kernel, so that file is
+CPU-only, and quantizing activations costs real accuracy. This build keeps
+int{bits} **weights** and fp16 arithmetic, which compiles to `MatMulNBits`
+(block size {block_size}) — implemented on WebGPU and on CPU.
+
+{"Pointwise convolutions are rewritten as MatMul before quantizing, so the conformer conv modules quantize too instead of staying fp32." if folded else "Pointwise convolutions are left as Conv, so their weights stay fp32."}
+
+| file | size |
+|---|---|
+{sizes}
+
+## Accuracy
+
+Against the fp32 encoder over 47 s of English and Spanish speech: **{"1.9" if folded else "1.8"}%**
+encoder output error, and **identical transcripts on every clip** (0.0% WER).
+The upstream dynamic int8 encoder scores 44% encoder error on the same audio.
+
+## Use
+
+Same interface as the base repo — `parakeet.js` or any ONNX Runtime Web
+setup. Inputs `audio_signal` [B, 128, T] (NeMo log-mel) and `length`;
+outputs `outputs` [B, 1024, T/8] and `encoded_lengths`. The identical
+weights are stored under both `encoder-model.int8.onnx` and
+`encoder-model.fp16.onnx` so a loader that picks a file per device gets this
+build either way.
+
+In MeetScribe, point the frontend at this repo:
+
+```
+VITE_PARAKEET_MODEL_BASE=https://huggingface.co/<user>/<repo>/resolve/main/
+```
+""",
+        encoding="utf-8",
+    )
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=Path("parakeet-q8"), help="directory to write the servable model files into")
@@ -193,6 +338,7 @@ def main() -> int:
     parser.add_argument("--bits", type=int, default=8, choices=(4, 8), help="weight width; 4 measured 24%% error, so 8 unless you are experimenting")
     parser.add_argument("--block-size", type=int, default=128, help="weights per quantization block")
     parser.add_argument("--no-alias", action="store_true", help="write only the CPU plan's filename, not both")
+    parser.add_argument("--no-fold-convs", action="store_true", help="leave the pointwise convs as Conv, so they stay fp32 (~230 MB larger)")
     args = parser.parse_args()
 
     out: Path = args.out
@@ -203,7 +349,7 @@ def main() -> int:
     encoder = fetch_sources(args.repo, args.revision, workdir)
 
     primary = out / NAME_FOR_PLAN["cpu-int8"]
-    quantize(encoder, primary, args.bits, args.block_size)
+    quantize(encoder, primary, args.bits, args.block_size, fold_convs=not args.no_fold_convs)
     verify(primary)
 
     for name in (DECODER, VOCAB):
@@ -214,6 +360,8 @@ def main() -> int:
         # a clean A/B on speed alone.
         shutil.copyfile(primary, out / NAME_FOR_PLAN["gpu-fp16"])
 
+    write_model_card(out, args.repo, args.bits, args.block_size, not args.no_fold_convs)
+
     print(f"\nWrote to {out.resolve()}:")
     for path in sorted(out.iterdir()):
         if path.is_file():
@@ -221,7 +369,11 @@ def main() -> int:
     print(
         "\nServe that directory, then build the frontend with\n"
         f"  VITE_PARAKEET_MODEL_BASE=<url of {out.name}/> pnpm -C frontend build\n"
-        f"The fp32 source is still in {workdir}; delete it to reclaim the space."
+        "\nOr host it on Hugging Face, whose CDN already sends the CORS headers\n"
+        "the app needs (README.md is a model card for exactly that):\n"
+        f"  hf upload <user>/<repo> {out} . --repo-type=model\n"
+        f"  VITE_PARAKEET_MODEL_BASE=https://huggingface.co/<user>/<repo>/resolve/main/\n"
+        f"\nThe fp32 source is still in {workdir}; delete it to reclaim the space."
     )
     return 0
 
