@@ -278,6 +278,91 @@ def looks_diarized(transcript: str) -> bool:
     return bool(transcript) and bool(_SPEAKER_LINE.search(transcript))
 
 
+def build_summary_prompt(
+    full_transcript: str,
+    summary_length: str,
+    summary_language_mode: str | None,
+    summary_custom_language: str | None,
+    context: str | None,
+    meeting_date: str | None = None,
+    duration_seconds: int | None = None,
+) -> tuple[str, str, str]:
+    """Assemble the exact prompt the summariser sends to Claude.
+
+    Split out of `summarise_transcript_in_worker` so the experimental
+    on-device summariser can be handed byte-for-byte the same prompt (see
+    GET /api/meetings/{mid}/summary-prompt). If the two ever drift, the
+    cloud-vs-local comparison stops measuring the model and starts
+    measuring the prompt.
+
+    Returns (prompt, target_language, mode).
+    """
+    detected_language = detect_language_local(full_transcript[:2000])
+
+    if summary_language_mode == "custom" and summary_custom_language:
+        target_language = summary_custom_language
+    elif summary_language_mode == "english":
+        target_language = "English"
+    else:
+        target_language = detected_language
+
+    context_section = ""
+    if looks_diarized(full_transcript):
+        # Kept in the instruction section rather than inside the transcript
+        # block, so every summary template picks it up unchanged.
+        context_section += P.SPEAKER_NOTE
+    if context and context.strip():
+        # `+=` not `=`: a plain assignment here discarded the speaker note
+        # whenever the user had supplied context.
+        context_section += f"""
+<user_provided_context>
+Critical context from the user — use as source of truth for names, projects, and technical terms.
+---
+{context}
+---
+</user_provided_context>
+"""
+
+    # Map legacy / unknown modes to narrative
+    mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
+
+    date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
+    duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
+
+    template_map = {
+        "briefing": P.BRIEFING,
+        "essence": P.ESSENCE,
+        "narrative": P.NARRATIVE,
+        "minutes": P.MINUTES,
+    }
+    prompt = template_map[mode].format(
+        target_language=target_language,
+        context_section=context_section,
+        full_transcript=full_transcript,
+        date=date_str,
+        duration=duration_str,
+    )
+
+    # Restate the target language after the transcript. The instruction at
+    # the top of the template is a long way from where generation starts,
+    # and has been observed to drift (a German transcript summarised in
+    # Polish). This also covers the briefing template, which never
+    # interpolated {target_language} at all.
+    prompt += (
+        f"\n\n---\n\nWrite the entire summary in {target_language}, "
+        "regardless of the language of the transcript. Quotations may stay "
+        "in their original language."
+    )
+    return prompt, target_language, mode
+
+
+TOO_BRIEF = "Recording is too brief to generate a meaningful summary."
+
+
+def transcript_too_brief(full_transcript: str) -> bool:
+    return not full_transcript or len(full_transcript.strip().split()) < 25
+
+
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
@@ -287,66 +372,18 @@ def summarise_transcript_in_worker(
     meeting_date: str | None = None,
     duration_seconds: int | None = None,
 ) -> str:
-    if not full_transcript or len(full_transcript.strip().split()) < 25:
-        return "Recording is too brief to generate a meaningful summary."
+    if transcript_too_brief(full_transcript):
+        return TOO_BRIEF
     try:
-        detected_language = detect_language_local(full_transcript[:2000])
-
-        if summary_language_mode == "custom" and summary_custom_language:
-            target_language = summary_custom_language
-        elif summary_language_mode == "english":
-            target_language = "English"
-        else:
-            target_language = detected_language
-
-        context_section = ""
-        if looks_diarized(full_transcript):
-            # Kept in the instruction section rather than inside the transcript
-            # block, so every summary template picks it up unchanged.
-            context_section += P.SPEAKER_NOTE
-        if context and context.strip():
-            # `+=` not `=`: a plain assignment here discarded the speaker note
-            # whenever the user had supplied context.
-            context_section += f"""
-<user_provided_context>
-Critical context from the user — use as source of truth for names, projects, and technical terms.
----
-{context}
----
-</user_provided_context>
-"""
-
-        # Map legacy / unknown modes to narrative
-        mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
-
-        date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
-        duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
-
-        template_map = {
-            "briefing": P.BRIEFING,
-            "essence": P.ESSENCE,
-            "narrative": P.NARRATIVE,
-            "minutes": P.MINUTES,
-        }
-        prompt = template_map[mode].format(
-            target_language=target_language,
-            context_section=context_section,
-            full_transcript=full_transcript,
-            date=date_str,
-            duration=duration_str,
+        prompt, _target_language, _mode = build_summary_prompt(
+            full_transcript,
+            summary_length,
+            summary_language_mode,
+            summary_custom_language,
+            context,
+            meeting_date,
+            duration_seconds,
         )
-
-        # Restate the target language after the transcript. The instruction at
-        # the top of the template is a long way from where generation starts,
-        # and has been observed to drift (a German transcript summarised in
-        # Polish). This also covers the briefing template, which never
-        # interpolated {target_language} at all.
-        prompt += (
-            f"\n\n---\n\nWrite the entire summary in {target_language}, "
-            "regardless of the language of the transcript. Quotations may stay "
-            "in their original language."
-        )
-
         response = _anthropic_client.messages.create(
             model=settings.summary_model,
             max_tokens=8096,

@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     build: { outDir: "dist", emptyOutDir: true },
     resolve: {
+      // One `resolve` key only. This was two, and because the second was
+      // spread in *after* the first, PARAKEET_MOCK=1 replaced the whole
+      // alias list — silently dropping the ORT redirect below, so the
+      // browser tests loaded a different ONNX Runtime than production does.
       alias: [
         // parakeet.js does its own `import('onnxruntime-web')` and pins 1.24.1
         // as a dependency, so it would load a second ORT — an older one, whose
@@ -20,13 +24,18 @@ export default defineConfig(({ mode }) => {
         // "onnxruntime-web/webgpu" would resolve again from parakeet.js's own
         // nested copy. Anchored, so this package's own subpath imports (the
         // /webgpu entry, the ?url wasm) are left alone.
+        //
+        // @huggingface/transformers is deliberately untouched by this: it
+        // imports the "onnxruntime-web/webgpu" subpath, which the anchored
+        // pattern does not match, so the summariser keeps the ORT build it
+        // pins and the two never meet (they run in separate workers).
         { find: /^onnxruntime-web$/, replacement: ORT_WEBGPU_ENTRY },
+        // Browser tests swap the real model for a fake one (no 600 MB download).
+        ...(process.env.PARAKEET_MOCK === "1"
+          ? [{ find: "parakeet.js", replacement: path.resolve(process.cwd(), "src/ondevice/testing/parakeetMock.ts") }]
+          : []),
       ],
     },
-    // Browser tests swap the real model for a fake one (no 600 MB download).
-    ...(process.env.PARAKEET_MOCK === "1"
-      ? { resolve: { alias: { "parakeet.js": path.resolve(process.cwd(), "src/ondevice/testing/parakeetMock.ts") } } }
-      : {}),
     define: {
       // env.VITE_API_BASE_URL comes from the root .env file (local dev).
       // process.env.VITE_API_BASE_URL is the fallback for Docker builds where
@@ -38,6 +47,17 @@ export default defineConfig(({ mode }) => {
       // Hugging Face repo) instead of downloading them from Hugging Face.
       'import.meta.env.VITE_PARAKEET_MODEL_BASE': JSON.stringify(
         env.VITE_PARAKEET_MODEL_BASE ?? process.env.VITE_PARAKEET_MODEL_BASE ?? ''
+      ),
+      // Same idea for the experimental on-device summariser: point it at a
+      // mirror of the Hugging Face layout instead of huggingface.co.
+      'import.meta.env.VITE_SUMMARY_MODEL_BASE': JSON.stringify(
+        env.VITE_SUMMARY_MODEL_BASE ?? process.env.VITE_SUMMARY_MODEL_BASE ?? ''
+      ),
+      // Optional mirror for ONNX Runtime's own wasm + glue, for a
+      // deployment that must not reach jsdelivr at runtime. See the
+      // note in src/ondevice/summary/summarizer.worker.ts.
+      'import.meta.env.VITE_ORT_WASM_BASE': JSON.stringify(
+        env.VITE_ORT_WASM_BASE ?? process.env.VITE_ORT_WASM_BASE ?? ''
       )
     },
     // Module workers so the on-device workers can import npm packages.
