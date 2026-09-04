@@ -2,6 +2,8 @@ packages:
   - frontend
 
 # pnpm blocks dependency build scripts by default; esbuild needs its postinstall
-# to fetch the platform binary that vite depends on.
-onlyBuiltDependencies:
-  - esbuild
+# to fetch the platform binary that vite depends on. protobufjs (pulled in by
+# onnxruntime-web) has a postinstall that only prints a notice, so it stays off.
+allowBuilds:
+  esbuild: true
+  protobufjs: false

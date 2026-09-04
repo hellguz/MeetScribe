@@ -383,7 +383,18 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     final_transcript = plain_transcript
     duration_seconds = num_chunks * 30
 
-    if plain_transcript and diarization.is_enabled():
+    if mtg.client_processing:
+        # The browser transcribed and diarized. It handed us the labelled
+        # transcript and the real duration via /finalize; if it never did
+        # (tab closed mid-way), the plain chunk texts are the best we have.
+        if mtg.transcript_text and mtg.transcript_text.strip():
+            final_transcript = mtg.transcript_text
+        if mtg.duration_seconds:
+            duration_seconds = mtg.duration_seconds
+        if mtg.processing_total is None:
+            mtg.processing_total = 1
+
+    if plain_transcript and diarization.is_enabled() and not mtg.client_processing:
         # A fresh recording was transcribed live, so this run is diarize +
         # summarize. Reprocessing sets 3 before calling us.
         if mtg.processing_total is None:
@@ -414,7 +425,8 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     mtg.transcript_text = final_transcript
 
     if final_transcript:
-        mtg.word_count = word_count
+        # An on-device transcript may hold text the chunk rows never got.
+        mtg.word_count = word_count or len(final_transcript.split())
         mtg.duration_seconds = duration_seconds
 
         mtg.processing_stage = "summarizing"
@@ -454,7 +466,7 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     # Mark it seen even when diarization produced nothing (silent recording,
     # empty transcript): the pipeline had its chance, so the "find speakers"
     # hint must not keep offering a re-run that would change nothing.
-    if diarization.is_enabled():
+    if diarization.is_enabled() and not mtg.client_processing:
         mtg.diarization_attempted = True
     mtg.done = True
     db.add(mtg)
@@ -697,6 +709,9 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
             LOGGER.info("♻️  Meeting %s: re-running diarization and summary.", meeting_id_str)
             mtg.done = False
             mtg.summary_task_queued = False
+            # From here on the server owns the transcript, even if the browser
+            # produced the original one; finalize would otherwise keep it.
+            mtg.client_processing = False
             finalize_meeting_processing(db, mtg)
             LOGGER.info("✅ Meeting %s re-diarized.", meeting_id_str)
 

@@ -14,6 +14,8 @@ import HistoryList from '../components/HistoryList'
 import InfoPanel, { InfoButton } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
+import { useOnDevice } from '../ondevice/useOnDevice'
+import OnDevicePanel from '../components/OnDevicePanel'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -21,6 +23,7 @@ export default function Record() {
 	const { summaryLength, setSummaryLength } = useSummaryLength()
 	const { languageState, setLanguageState } = useSummaryLanguage()
 	const [context, setContext] = useState('')
+	const onDevice = useOnDevice()
 
 	const {
 		isRecording,
@@ -51,7 +54,7 @@ export default function Record() {
 		updateContext,
 		updateMeetingConfig,
 		wakeLockStatus,
-	} = useRecording(summaryLength, languageState)
+	} = useRecording(summaryLength, languageState, onDevice)
 
 	const [history, setHistory] = useState<MeetingMeta[]>([])
 	const [infoOpen, setInfoOpen] = useState(false)
@@ -265,8 +268,11 @@ export default function Record() {
 							<FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
 						</div>
 					)}
+					{audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={false} />}
 				</>
 			)}
+
+			{isUiLocked && onDevice.state.enabled && audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={true} />}
 
 			{isRecording && (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '10px' }}>
