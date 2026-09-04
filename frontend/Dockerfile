@@ -7,6 +7,13 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 # Empty means Hugging Face's own copy; see .env.sample.
 ARG VITE_PARAKEET_MODEL_BASE
 ENV VITE_PARAKEET_MODEL_BASE=${VITE_PARAKEET_MODEL_BASE}
+# Same, for the experimental on-device summariser's Qwen3.5 weights, and for
+# ONNX Runtime's own wasm + glue (which transformers.js otherwise fetches
+# from jsdelivr at runtime). Empty is the working default for both.
+ARG VITE_SUMMARY_MODEL_BASE
+ENV VITE_SUMMARY_MODEL_BASE=${VITE_SUMMARY_MODEL_BASE}
+ARG VITE_ORT_WASM_BASE
+ENV VITE_ORT_WASM_BASE=${VITE_ORT_WASM_BASE}
 
 WORKDIR /web
 COPY package.json package-lock.json ./
