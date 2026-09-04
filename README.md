@@ -82,7 +82,7 @@ MeetScribe is a modern web application with a decoupled frontend and backend. Th
 
 ### Local Development (no Docker)
 
-**Prerequisites:** Node 18+, [pnpm](https://pnpm.io/installation), Python (the version
+**Prerequisites:** Node 20+, [pnpm](https://pnpm.io/installation), Python (the version
 in [.python-version](.python-version)), and `ffmpeg` on your PATH.
 
 > Local dev and the Docker image run the **same** Python version, so a bug that only
