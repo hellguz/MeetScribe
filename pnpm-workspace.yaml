@@ -4,6 +4,12 @@ packages:
 # pnpm blocks dependency build scripts by default; esbuild needs its postinstall
 # to fetch the platform binary that vite depends on. protobufjs (pulled in by
 # onnxruntime-web) has a postinstall that only prints a notice, so it stays off.
+#
+# onnxruntime-node and sharp arrive with @huggingface/transformers, which uses
+# them only in its Node build. The browser bundle touches neither, so their
+# postinstalls — a native binary download apiece — stay off too.
 allowBuilds:
   esbuild: true
+  onnxruntime-node: false
   protobufjs: false
+  sharp: false

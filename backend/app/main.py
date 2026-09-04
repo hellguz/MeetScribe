@@ -41,6 +41,10 @@ from .models import (
     SummaryUpdate,
     ChunkTranscriptUpdate,
     ClientFinalizePayload,
+    LocalSummaryRun,
+    LocalSummaryRunCreate,
+    LocalSummaryVerdictUpdate,
+    SummaryPromptOut,
 )
 from . import tasks
 from . import diarization
@@ -861,6 +865,112 @@ def get_dashboard_stats():
         "length_distribution": length_distribution,
         "language_distribution": language_distribution,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimental: summarization on the user's own device
+#
+# The browser can run Qwen3.5 over a transcript instead of Claude (see
+# frontend/src/ondevice/summary/). Nothing here replaces the real summary:
+# these endpoints hand the browser the server's own prompt so the comparison
+# is fair, then store what came back plus its measurements, so the question
+# "is a 4B model in a tab good enough?" is answered from data rather than
+# from one impression.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/meetings/{mid}/summary-prompt", response_model=SummaryPromptOut)
+def get_summary_prompt(mid: uuid.UUID, summary_length: str | None = None):
+    """
+    The exact prompt this meeting's summary was (or would be) generated from.
+
+    Built by `tasks.build_summary_prompt`, the same function the Claude path
+    uses, rather than a copy in the frontend: a local model given a
+    hand-rolled prompt would be measuring the prompt, not the model.
+    `summary_length` overrides the meeting's stored mode, so one transcript
+    can be tried in briefing and narrative form without a regenerate.
+    """
+    with Session(engine) as db:
+        meeting = db.get(Meeting, mid)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        transcript = meeting.transcript_text or _build_live_transcript(db, mid)
+        if tasks.transcript_too_brief(transcript):
+            raise HTTPException(status_code=409, detail=tasks.TOO_BRIEF)
+
+        # `is_valid_summary_length(None)` is True (it guards optional payload
+        # fields elsewhere), so test for a value explicitly or an absent
+        # query param would override the meeting's own mode with None.
+        length = summary_length if summary_length and is_valid_summary_length(summary_length) else meeting.summary_length
+        prompt, target_language, mode = tasks.build_summary_prompt(
+            transcript,
+            length,
+            meeting.summary_language_mode,
+            meeting.summary_custom_language,
+            meeting.context,
+            meeting.started_at.strftime("%Y-%m-%d") if meeting.started_at else None,
+            meeting.duration_seconds,
+        )
+    return SummaryPromptOut(
+        prompt=prompt,
+        target_language=target_language,
+        summary_length=mode,
+        prompt_chars=len(prompt),
+    )
+
+
+@app.get("/api/meetings/{mid}/local-summaries", response_model=list[LocalSummaryRun])
+def list_local_summaries(mid: uuid.UUID):
+    """Every on-device summary recorded for this meeting, oldest first."""
+    with Session(engine) as db:
+        return list(
+            db.exec(
+                select(LocalSummaryRun)
+                .where(LocalSummaryRun.meeting_id == mid)
+                .order_by(LocalSummaryRun.created_at)
+            ).all()
+        )
+
+
+@app.post("/api/meetings/{mid}/local-summaries", response_model=LocalSummaryRun, status_code=201)
+def create_local_summary(mid: uuid.UUID, body: LocalSummaryRunCreate, request: Request):
+    """Store a summary the browser just generated, with its measurements."""
+    with Session(engine) as db:
+        if not db.get(Meeting, mid):
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        run = LocalSummaryRun(
+            meeting_id=mid,
+            user_agent=request.headers.get("user-agent"),
+            device_info=json.dumps(body.device_info) if body.device_info else None,
+            **body.model_dump(exclude={"device_info"}),
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        LOGGER.info(
+            "Meeting %s: on-device summary from %s (%s/%s) — %s chars in %sms",
+            mid, run.model, run.device, run.dtype, len(run.markdown), run.total_ms,
+        )
+        return run
+
+
+@app.patch("/api/meetings/{mid}/local-summaries/{run_id}", response_model=LocalSummaryRun)
+def update_local_summary_verdict(mid: uuid.UUID, run_id: int, body: LocalSummaryVerdictUpdate):
+    """Record which summary the user judged better — the eval label."""
+    if body.verdict is not None and body.verdict not in ("cloud", "tie", "local"):
+        raise HTTPException(status_code=422, detail="verdict must be cloud, tie or local")
+    with Session(engine) as db:
+        run = db.get(LocalSummaryRun, run_id)
+        if not run or run.meeting_id != mid:
+            raise HTTPException(status_code=404, detail="Run not found")
+        run.verdict = body.verdict
+        run.verdict_note = body.verdict_note
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
 
 
 @app.get("/healthz")
