@@ -29,7 +29,17 @@ export interface LocalSummaryState {
 	statusText: string | null
 	error: string | null
 	log: string[]
-	download: { loaded: number; total: number } | null
+	download: { loaded: number; total: number; file: string | null } | null
+	/**
+	 * What the worker found to run on, reported before the download starts.
+	 * Named rather than assumed: "GPU" on the old panel was a hard-coded
+	 * string, and a machine that quietly has no adapter looked identical.
+	 */
+	hardware: { device: string; adapter: string | null; maxBufferSize: number | null; threads: number | null; cores: number | null } | null
+	/** Prompt tokens already in the KV cache, updated once per slice. */
+	prefill: { processed: number; total: number; tokensPerSecond: number | null; etaMs: number | null } | null
+	/** Tokens written so far, against the cap the run was given. */
+	decode: { tokens: number; max: number; tokensPerSecond: number | null } | null
 	/** Markdown as it streams in, before the run is saved. */
 	streaming: string
 	/** Filled progressively so the panel can show numbers as they land. */
@@ -70,6 +80,9 @@ const initialState = (): LocalSummaryState => ({
 	error: null,
 	log: [],
 	download: null,
+	hardware: null,
+	prefill: null,
+	decode: null,
 	streaming: '',
 	measured: emptyMeasured(),
 })
@@ -177,8 +190,42 @@ export function useLocalSummary(meetingId: string | undefined) {
 							setState((s) => ({ ...s, statusText: msg.text }))
 							break
 						case 'download':
-							setState((s) => ({ ...s, download: { loaded: msg.loaded, total: msg.total } }))
+							setState((s) => ({ ...s, download: { loaded: msg.loaded, total: msg.total, file: msg.file } }))
 							break
+						case 'device': {
+							const adapter =
+								[msg.adapter?.vendor, msg.adapter?.architecture, msg.adapter?.device].filter(Boolean).join(' ') || msg.adapter?.description || null
+							Object.assign(measuredRef.current, { device: msg.device })
+							setState((s) => ({
+								...s,
+								hardware: { device: msg.device, adapter, maxBufferSize: msg.adapter?.maxBufferSize ?? null, threads: msg.threads, cores: msg.cores },
+								measured: { ...s.measured, device: msg.device },
+							}))
+							break
+						}
+						case 'prefill': {
+							// Rate over the whole prefill so far, not the last
+							// slice: slices vary, the average does not.
+							const rate = msg.ms > 0 && msg.processed > 0 ? msg.processed / (msg.ms / 1000) : null
+							setState((s) => ({
+								...s,
+								prefill: {
+									processed: msg.processed,
+									total: msg.total,
+									tokensPerSecond: rate,
+									etaMs: rate ? ((msg.total - msg.processed) / rate) * 1000 : null,
+								},
+							}))
+							break
+						}
+						case 'decode': {
+							const ctx = runContextRef.current
+							setState((s) => ({
+								...s,
+								decode: { tokens: msg.tokens, max: ctx?.maxNewTokens ?? msg.tokens, tokensPerSecond: msg.ms > 0 ? msg.tokens / (msg.ms / 1000) : null },
+							}))
+							break
+						}
 						case 'loaded':
 							Object.assign(measuredRef.current, {
 								device: msg.device,
@@ -197,7 +244,20 @@ export function useLocalSummary(meetingId: string | undefined) {
 							break
 						case 'prefilled':
 							Object.assign(measuredRef.current, { promptTokens: msg.promptTokens, prefillMs: msg.prefillMs })
-							setState((s) => ({ ...s, phase: 'generating', statusText: 'Writing the summary…', measured: { ...s.measured, ...measuredRef.current } }))
+							setState((s) => ({
+								...s,
+								phase: 'generating',
+								statusText: 'Writing the summary…',
+								// The last slice is only counted here: it is the
+								// streaming call that reads it, not the loop.
+								prefill: {
+									processed: msg.promptTokens,
+									total: msg.promptTokens,
+									tokensPerSecond: msg.prefillMs > 0 ? msg.promptTokens / (msg.prefillMs / 1000) : null,
+									etaMs: 0,
+								},
+								measured: { ...s.measured, ...measuredRef.current },
+							}))
 							break
 						case 'token':
 							setState((s) => ({ ...s, streaming: s.streaming + msg.text }))
@@ -205,7 +265,13 @@ export function useLocalSummary(meetingId: string | undefined) {
 						case 'done': {
 							Object.assign(measuredRef.current, { outputTokens: msg.outputTokens, decodeMs: msg.decodeMs, totalMs: msg.totalMs })
 							const ctx = runContextRef.current
-							setState((s) => ({ ...s, phase: 'saving', statusText: 'Saving the run…', streaming: msg.text, measured: { ...s.measured, ...measuredRef.current } }))
+							setState((s) => ({
+								...s,
+								phase: 'saving',
+								statusText: 'Saving the run…',
+								streaming: msg.text,
+								measured: { ...s.measured, ...measuredRef.current },
+							}))
 							if (!ctx) return
 							try {
 								const saved = await saveLocalSummary(meetingId, {
@@ -257,7 +323,10 @@ export function useLocalSummary(meetingId: string | undefined) {
 	const cancel = useCallback(() => {
 		workerRef.current?.terminate()
 		workerRef.current = null
-		setState((s) => ({ ...initialState(), log: s.log }))
+		// The log and the hardware survive: what this machine is does not
+		// change because a run was stopped, and the log is the only record
+		// of why it was.
+		setState((s) => ({ ...initialState(), log: s.log, hardware: s.hardware }))
 	}, [])
 
 	const setVerdict = useCallback(

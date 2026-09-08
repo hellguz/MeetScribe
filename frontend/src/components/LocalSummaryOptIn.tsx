@@ -31,16 +31,39 @@ const LocalSummaryOptIn: React.FC<{ theme: AppTheme }> = ({ theme }) => {
 				color: theme.text,
 			}}>
 			<label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-				<input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} style={{ width: 16, height: 16, margin: 0, accentColor: theme.text }} />
+				<input
+					type="checkbox"
+					checked={enabled}
+					onChange={(e) => setEnabled(e.target.checked)}
+					style={{ width: 16, height: 16, margin: 0, accentColor: theme.text }}
+				/>
 				<span style={{ fontWeight: 600 }}>🧠 Summarize on this device</span>
-				<span style={{ fontSize: '11px', color: theme.secondaryText, letterSpacing: '0.08em', border: `1px solid ${theme.border}`, borderRadius: 4, padding: '1px 5px' }}>EXPERIMENTAL</span>
+				<span
+					style={{
+						fontSize: '11px',
+						color: theme.secondaryText,
+						letterSpacing: '0.08em',
+						border: `1px solid ${theme.border}`,
+						borderRadius: 4,
+						padding: '1px 5px',
+					}}>
+					EXPERIMENTAL
+				</span>
 			</label>
 
 			<p style={{ margin: '6px 0 0 26px', color: theme.secondaryText, lineHeight: 1.45 }}>
-				Adds a <strong>Generate here</strong> button to every summary page, which runs {chosen ? shortModelName(model) : 'Qwen3.5'} in your
-				browser over the same prompt Claude gets. The Claude summary is never replaced — the two sit side by side so you can judge which is
-				better.
+				Adds a <strong>Generate here</strong> button to every summary page, which runs {chosen ? shortModelName(model) : 'Qwen3.5'} in your browser over the
+				same prompt Claude gets. The Claude summary is never replaced — the two sit side by side so you can judge which is better.
 			</p>
+
+			{/* Ticking the box does nothing visible on this page, which reads
+			    as a broken switch. Say where the thing it just unlocked is. */}
+			{enabled && (
+				<p style={{ margin: '8px 0 0 26px', lineHeight: 1.45 }}>
+					✅ Turned on. Open any meeting — from the list below, or one you record next — and the <strong>🧠 Summarize on this device</strong> card is waiting
+					above its summary, with a <strong>Generate here</strong> button.
+				</p>
+			)}
 
 			{enabled && (
 				<ul style={{ margin: '8px 0 0 26px', padding: 0, listStyle: 'none', color: webgpu ? theme.secondaryText : '#d97706', lineHeight: 1.4 }}>

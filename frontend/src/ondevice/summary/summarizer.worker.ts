@@ -93,18 +93,73 @@ export interface SummarizeRequest {
 
 export type SummarizerRequest = SummarizeRequest
 
+/** What the run is actually executing on, asked of the browser itself. */
+export interface AdapterInfo {
+	vendor: string | null
+	architecture: string | null
+	device: string | null
+	description: string | null
+	/** Biggest single allocation the GPU will accept — the limit prefill lives under. */
+	maxBufferSize: number | null
+	maxStorageBufferBindingSize: number | null
+}
+
 export type SummarizerResponse =
 	| { type: 'log'; line: string }
 	| { type: 'status'; text: string }
+	/** Sent before anything is downloaded, so the panel can name the hardware early. */
+	| { type: 'device'; device: 'webgpu'; adapter: AdapterInfo | null; threads: number | null; cores: number | null }
 	/** Aggregate over every file transformers.js is fetching. */
-	| { type: 'download'; loaded: number; total: number }
+	| { type: 'download'; loaded: number; total: number; file: string | null }
 	| { type: 'loaded'; device: string; dtype: string; loadMs: number; downloadBytes: number; downloadMs: number; cached: boolean }
+	/** One per prefill slice: `processed` of `total` prompt tokens are in the cache. */
+	| { type: 'prefill'; processed: number; total: number; ms: number }
 	| { type: 'prefilled'; promptTokens: number; prefillMs: number }
 	| { type: 'token'; text: string }
+	/** Running count while writing, so the panel can show a live rate. */
+	| { type: 'decode'; tokens: number; ms: number }
 	| { type: 'done'; text: string; outputTokens: number; decodeMs: number; totalMs: number; truncated: boolean }
 	| { type: 'error'; message: string }
 
 const post = (msg: SummarizerResponse) => self.postMessage(msg)
+
+/** Bytes as GB/MB, for log lines. Panel numbers go through formatBytes. */
+const gb = (n: number | null) => (n === null ? '?' : n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
+
+/**
+ * Ask the browser what we are about to run on, before spending 3 GB of
+ * download finding out.
+ *
+ * "WebGPU is available" (`navigator.gpu` exists) and "WebGPU works here"
+ * (an adapter can be had) are different questions — a machine with a
+ * blocklisted driver answers yes to the first and no to the second — and
+ * only the second one decides whether this feature runs. Returning the
+ * adapter's own description also settles the question the panel used to
+ * answer by assertion: which GPU, and how big an allocation it will take.
+ */
+async function probeDevice(): Promise<AdapterInfo | null> {
+	// The project has no @webgpu/types; the shape we need is three fields
+	// deep, so it is spelled out here the way `capabilities.ts` does it.
+	type Adapter = { info?: Record<string, string | undefined>; limits?: Record<string, number | undefined> }
+	const gpu = (navigator as Navigator & { gpu?: { requestAdapter(options?: { powerPreference?: string }): Promise<Adapter | null> } }).gpu
+	if (!gpu) return null
+	let adapter: Adapter | null = null
+	try {
+		adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
+	} catch {
+		return null
+	}
+	if (!adapter) return null
+	const info = adapter.info ?? null
+	return {
+		vendor: info?.vendor || null,
+		architecture: info?.architecture || null,
+		device: info?.device || null,
+		description: info?.description || null,
+		maxBufferSize: adapter.limits?.maxBufferSize ?? null,
+		maxStorageBufferBindingSize: adapter.limits?.maxStorageBufferBindingSize ?? null,
+	}
+}
 
 /**
  * Loading a multi-gigabyte model is slow enough that a second run against
@@ -115,16 +170,44 @@ let loaded: {
 	key: string
 	tokenizer: PreTrainedTokenizer
 	model: PreTrainedModel
-	device: string
+	device: 'webgpu'
 	dtype: string
 	loadMs: number
 	downloadBytes: number
 	downloadMs: number
 	cached: boolean
+	adapter: AdapterInfo | null
+	threads: number | null
+	cores: number | null
 } | null = null
 
+/**
+ * Re-send what the page needs to describe this model, every run.
+ *
+ * A second run against a model still in memory used to skip straight to
+ * prefill, leaving the panel stuck on "Starting the model…" and the saved
+ * row without a device or a load time. The facts have not changed, so say
+ * them again.
+ */
+function announce(l: NonNullable<typeof loaded>) {
+	post({ type: 'device', device: l.device, adapter: l.adapter, threads: l.threads, cores: l.cores })
+	post({
+		type: 'loaded',
+		device: l.device,
+		dtype: l.dtype,
+		loadMs: Math.round(l.loadMs),
+		downloadBytes: l.downloadBytes,
+		downloadMs: l.downloadMs,
+		cached: l.cached,
+	})
+}
+
 async function load(modelId: string) {
-	if (loaded?.key === modelId) return loaded
+	if (loaded?.key === modelId) {
+		post({ type: 'log', line: `model already in memory (${modelId})` })
+		announce(loaded)
+		return loaded
+	}
 
 	// A model already in memory is a couple of GB we are about to need again.
 	if (loaded) {
@@ -140,15 +223,37 @@ async function load(modelId: string) {
 	let downloadBytes = 0
 	let downloadMs = 0
 	let firstByteAt: number | null = null
+	let currentFile: string | null = null
+
+	// Asked first: a 3 GB download is a rude way to discover there is no GPU.
+	post({ type: 'status', text: 'Checking this device…' })
+	const adapter = await probeDevice()
+	const cores = (navigator as Navigator & { hardwareConcurrency?: number }).hardwareConcurrency ?? null
+	const threads = env.backends.onnx.wasm?.numThreads ?? null
+	if (!adapter) {
+		throw new Error(
+			'WebGPU did not give this browser a GPU adapter, and 4-bit weights on the CPU would take hours rather than minutes. ' +
+				'Chrome or Edge on a desktop with an up-to-date driver, or Safari 26+.',
+		)
+	}
+	post({ type: 'device', device: 'webgpu', adapter, threads, cores })
+	post({
+		type: 'log',
+		line: `device: WebGPU · ${[adapter.vendor, adapter.architecture, adapter.device].filter(Boolean).join(' ') || 'unnamed adapter'} · max buffer ${gb(adapter.maxBufferSize)}`,
+	})
+	post({ type: 'log', line: `model: ${modelId} · ${DTYPE} · prefill chunk ${PREFILL_CHUNK} · ${cores ?? '?'} cores, ${threads ?? '?'} wasm threads` })
 
 	const progress_callback = (info: { status: string; loaded?: number; total?: number; file?: string }) => {
 		if (info.status === 'progress_total' && typeof info.loaded === 'number' && typeof info.total === 'number') {
 			if (firstByteAt === null) firstByteAt = performance.now()
 			downloadBytes = info.loaded
 			downloadMs = performance.now() - firstByteAt
-			post({ type: 'download', loaded: info.loaded, total: info.total })
+			post({ type: 'download', loaded: info.loaded, total: info.total, file: currentFile })
 		} else if (info.status === 'initiate' && info.file) {
+			currentFile = info.file
 			post({ type: 'log', line: `fetch ${info.file}` })
+		} else if (info.status === 'done' && info.file) {
+			post({ type: 'log', line: `ready ${info.file}` })
 		}
 	}
 
@@ -167,6 +272,11 @@ async function load(modelId: string) {
 		progress_callback,
 	})
 
+	post({
+		type: 'log',
+		line: `sessions ready on WebGPU in ${Math.round(performance.now() - startedAt)}ms (${firstByteAt === null ? 'from cache' : `after ${gb(downloadBytes)} downloaded`})`,
+	})
+
 	loaded = {
 		key: modelId,
 		tokenizer,
@@ -178,16 +288,11 @@ async function load(modelId: string) {
 		downloadMs: Math.round(downloadMs),
 		// No progress events at all means every file came from the cache.
 		cached: firstByteAt === null,
+		adapter,
+		threads,
+		cores,
 	}
-	post({
-		type: 'loaded',
-		device: loaded.device,
-		dtype: loaded.dtype,
-		loadMs: Math.round(loaded.loadMs),
-		downloadBytes: loaded.downloadBytes,
-		downloadMs: loaded.downloadMs,
-		cached: loaded.cached,
-	})
+	announce(loaded)
 	return loaded
 }
 
@@ -218,8 +323,11 @@ function stripThinking(text: string): string {
  */
 async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attention_mask: Tensor, promptTokens: number): Promise<unknown | null> {
 	let past: unknown = null
+	const startedAt = performance.now()
+	if (promptTokens > PREFILL_CHUNK)
+		post({ type: 'log', line: `prefill: ${promptTokens.toLocaleString()} tokens in ${Math.ceil(promptTokens / PREFILL_CHUNK)} slices of ${PREFILL_CHUNK}` })
 	for (let consumed = PREFILL_CHUNK; consumed < promptTokens; consumed += PREFILL_CHUNK) {
-		post({ type: 'status', text: `Reading the transcript… ${consumed.toLocaleString()} / ${promptTokens.toLocaleString()} tokens` })
+		post({ type: 'prefill', processed: consumed - PREFILL_CHUNK, total: promptTokens, ms: performance.now() - startedAt })
 		const out = (await model.generate({
 			input_ids: input_ids.slice(null, [0, consumed]),
 			attention_mask: attention_mask.slice(null, [0, consumed]),
@@ -233,6 +341,7 @@ async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attent
 		// Same object every time: transformers.js updates the cache in
 		// place and disposes the GPU tensors it replaces.
 		past = out.past_key_values
+		post({ type: 'prefill', processed: consumed, total: promptTokens, ms: performance.now() - startedAt })
 	}
 	return past
 }
@@ -256,6 +365,7 @@ async function summarize(req: SummarizeRequest) {
 	// how long the transcript took to read, not just its last slice.
 	const generateStartedAt = performance.now()
 	let prefillMs: number | null = null
+	let decodeStartedAt: number | null = null
 	let text = ''
 	let streamedTokens = 0
 
@@ -269,6 +379,7 @@ async function summarize(req: SummarizeRequest) {
 			// that decides whether a two-hour meeting is viable at all.
 			if (prefillMs === null) {
 				prefillMs = performance.now() - generateStartedAt
+				decodeStartedAt = performance.now()
 				post({ type: 'prefilled', promptTokens, prefillMs: Math.round(prefillMs) })
 			}
 			text += chunk
@@ -276,6 +387,9 @@ async function summarize(req: SummarizeRequest) {
 		},
 		token_callback_function: (tokens: bigint[]) => {
 			streamedTokens += tokens.length
+			// Cheap enough to send every token: the panel turns it into a
+			// live rate, which is the number people actually watch.
+			post({ type: 'decode', tokens: streamedTokens, ms: performance.now() - (decodeStartedAt ?? generateStartedAt) })
 		},
 	})
 
@@ -293,6 +407,7 @@ async function summarize(req: SummarizeRequest) {
 	} as unknown as Parameters<typeof model.generate>[0])
 
 	const totalMs = performance.now() - generateStartedAt
+	post({ type: 'log', line: `generated ${streamedTokens.toLocaleString()} tokens in ${Math.round(totalMs)}ms` })
 
 	// Passing a cache in tells `generate` someone else owns it, so it stops
 	// freeing it for us. A run's worth of KV is hundreds of megabytes of

@@ -7,7 +7,43 @@ import type { LocalSummaryState } from '../ondevice/summary/useLocalSummary'
 import { formatBytes } from './OnDevicePanel'
 import Spinner from './Spinner'
 
-const fmtMs = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`)
+const fmtMs = (ms: number) =>
+	ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`
+const fmtRate = (tps: number) => `${tps >= 10 ? Math.round(tps) : tps.toFixed(1)} tok/s`
+
+type StepState = 'pending' | 'active' | 'done' | 'failed'
+
+/**
+ * One line of the run's progress: where it is, what that step has done so
+ * far, and — while it is the live one — how far along.
+ *
+ * The panel used to say one thing at a time ("Reading the transcript…")
+ * with no way to tell a slow step from a stuck one. Four labelled steps
+ * with their own numbers answer both questions at a glance, and leave the
+ * finished ones on screen as the record of what the run cost.
+ */
+const Step: React.FC<{ theme: AppTheme; state: StepState; label: string; detail: string | null; pct?: number | null }> = ({
+	theme,
+	state,
+	label,
+	detail,
+	pct,
+}) => (
+	<div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', opacity: state === 'pending' ? 0.45 : 1, lineHeight: 1.5 }}>
+		<span style={{ width: 14, flexShrink: 0 }}>{state === 'done' ? '✅' : state === 'failed' ? '❌' : state === 'active' ? '⏳' : '·'}</span>
+		<span style={{ width: 78, flexShrink: 0, color: theme.secondaryText }}>{label}</span>
+		<span style={{ flex: 1, minWidth: 0 }}>
+			<span style={{ color: theme.secondaryText, wordBreak: 'break-word' }}>{detail ?? '—'}</span>
+			{state === 'active' && typeof pct === 'number' && (
+				<span style={{ display: 'block', height: 4, borderRadius: 2, backgroundColor: theme.backgroundSecondary, overflow: 'hidden', marginTop: 4 }}>
+					<span
+						style={{ display: 'block', width: `${Math.max(2, Math.min(100, pct))}%`, height: '100%', backgroundColor: theme.text, transition: 'width 0.3s' }}
+					/>
+				</span>
+			)}
+		</span>
+	</div>
+)
 
 interface Props {
 	theme: AppTheme
@@ -47,6 +83,7 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 		userSelect: 'none',
 	})
 
+	const { hardware, prefill, decode } = state
 	const downloadPct = state.download && state.download.total > 0 ? Math.min(100, (state.download.loaded / state.download.total) * 100) : 0
 
 	// Decode speed is the honest headline number: prefill is one-off per
@@ -54,10 +91,92 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 	const decodeRate = measured.outputTokens && measured.decodeMs ? measured.outputTokens / (measured.decodeMs / 1000) : null
 	const prefillRate = measured.promptTokens && measured.prefillMs ? measured.promptTokens / (measured.prefillMs / 1000) : null
 
+	// Kept on screen for a failed run too — which step was live when it
+	// broke is most of the diagnosis. A finished run has the ⚡ recap below
+	// instead.
+	const running = state.phase !== 'idle' && state.phase !== 'done'
+
+	// One row per thing that takes time. `state` here is the step's own,
+	// not the panel's: pending until the run reaches it, active while it is
+	// the one running, done once its measurement has landed.
+	const steps: { label: string; state: StepState; detail: string | null; pct?: number | null }[] = [
+		{
+			label: 'Device',
+			state: hardware ? 'done' : running ? 'active' : 'pending',
+			detail: hardware
+				? [
+						hardware.device === 'webgpu' ? 'GPU (WebGPU)' : `CPU (${hardware.device})`,
+						hardware.adapter,
+						hardware.maxBufferSize ? `max buffer ${formatBytes(hardware.maxBufferSize)}` : null,
+						hardware.cores ? `${hardware.cores} cores` : null,
+					]
+						.filter(Boolean)
+						.join(' · ')
+				: 'Asking the browser for a GPU adapter…',
+		},
+		{
+			label: 'Model',
+			state: measured.loadMs !== null ? 'done' : state.phase === 'loading' ? 'active' : 'pending',
+			detail:
+				measured.loadMs !== null
+					? [
+							measured.cached
+								? 'from cache'
+								: measured.downloadBytes
+									? `downloaded ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}`
+									: null,
+							`ready in ${fmtMs(measured.loadMs)}`,
+							measured.dtype,
+						]
+							.filter(Boolean)
+							.join(' · ')
+					: state.download && state.download.total > 0
+						? `${formatBytes(state.download.loaded)} / ${formatBytes(state.download.total)}${state.download.file ? ` · ${state.download.file}` : ''}`
+						: 'Building the ONNX sessions…',
+			pct: downloadPct,
+		},
+		{
+			label: 'Reading',
+			state: measured.prefillMs !== null ? 'done' : state.phase === 'prefilling' ? 'active' : 'pending',
+			detail:
+				measured.prefillMs !== null
+					? `${(measured.promptTokens ?? 0).toLocaleString()} prompt tokens in ${fmtMs(measured.prefillMs)}${prefillRate ? ` · ${fmtRate(prefillRate)}` : ''}`
+					: prefill
+						? `${prefill.processed.toLocaleString()} / ${prefill.total.toLocaleString()} tokens${prefill.tokensPerSecond ? ` · ${fmtRate(prefill.tokensPerSecond)}` : ''}${prefill.etaMs ? ` · ~${fmtMs(prefill.etaMs)} left` : ''}`
+						: measured.promptChars !== null
+							? `${Math.round(measured.promptChars / 1000)}k characters of transcript`
+							: null,
+			pct: prefill && prefill.total > 0 ? (prefill.processed / prefill.total) * 100 : 0,
+		},
+		{
+			label: 'Writing',
+			state: measured.outputTokens !== null ? 'done' : state.phase === 'generating' ? 'active' : 'pending',
+			detail:
+				measured.outputTokens !== null
+					? `${measured.outputTokens.toLocaleString()} tokens in ${fmtMs(measured.decodeMs ?? 0)}${decodeRate ? ` · ${fmtRate(decodeRate)}` : ''}`
+					: decode
+						? `${decode.tokens.toLocaleString()} tokens${decode.tokensPerSecond ? ` · ${fmtRate(decode.tokensPerSecond)}` : ''}`
+						: null,
+			// Against the cap, which is a ceiling and not a target — most
+			// runs stop well short of it, so the bar is a hint, not a promise.
+			pct: decode && decode.max > 0 ? (decode.tokens / decode.max) * 100 : 0,
+		},
+	]
+
+	// On a failure the step that was running is the one that failed; saying
+	// so beats leaving an hourglass next to it forever.
+	if (state.phase === 'error') {
+		const live = steps.find((step) => step.state === 'active')
+		if (live) live.state = 'failed'
+	}
+
 	const statParts: string[] = []
-	if (measured.device) statParts.push(measured.device === 'webgpu' ? `GPU · ${measured.dtype}` : `${measured.device} · ${measured.dtype}`)
+	// Names the adapter, not just "GPU": two machines with the same browser
+	// and wildly different tok/s is the comparison this panel exists for.
+	if (measured.device) statParts.push([measured.device === 'webgpu' ? 'GPU' : measured.device, hardware?.adapter, measured.dtype].filter(Boolean).join(' · '))
 	if (measured.cached) statParts.push('model cached')
-	else if (measured.downloadBytes) statParts.push(`downloaded ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}`)
+	else if (measured.downloadBytes)
+		statParts.push(`downloaded ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}`)
 	if (measured.loadMs !== null) statParts.push(`loaded in ${fmtMs(measured.loadMs)}`)
 	if (measured.promptTokens !== null) statParts.push(`${measured.promptTokens.toLocaleString()} prompt tokens`)
 	if (measured.prefillMs !== null) statParts.push(`prefill ${fmtMs(measured.prefillMs)}${prefillRate ? ` (${Math.round(prefillRate)} tok/s)` : ''}`)
@@ -77,7 +196,17 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 			}}>
 			<div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
 				<span style={{ fontWeight: 600 }}>🧠 Summarize on this device</span>
-				<span style={{ fontSize: '11px', color: theme.secondaryText, letterSpacing: '0.08em', border: `1px solid ${theme.border}`, borderRadius: 4, padding: '1px 5px' }}>EXPERIMENTAL</span>
+				<span
+					style={{
+						fontSize: '11px',
+						color: theme.secondaryText,
+						letterSpacing: '0.08em',
+						border: `1px solid ${theme.border}`,
+						borderRadius: 4,
+						padding: '1px 5px',
+					}}>
+					EXPERIMENTAL
+				</span>
 				<span style={{ color: theme.secondaryText }}>· same prompt as Claude, mode “{summaryLength}”</span>
 			</div>
 
@@ -94,7 +223,10 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 							</span>
 						))}
 						<span style={{ width: 8 }} />
-						<span style={chip(thinking, busy)} onClick={() => !busy && setThinking(!thinking)} title="Let the model reason before writing. Much slower; sometimes better structure.">
+						<span
+							style={chip(thinking, busy)}
+							onClick={() => !busy && setThinking(!thinking)}
+							title="Let the model reason before writing. Much slower; sometimes better structure.">
 							{thinking ? 'Thinking on' : 'Thinking off'}
 						</span>
 					</div>
@@ -128,23 +260,18 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 						)}
 					</div>
 
-					{state.download && state.download.total > 0 && state.download.loaded < state.download.total && (
-						<>
-							<div style={{ marginTop: 8, color: theme.secondaryText }}>
-								⬇️ {formatBytes(state.download.loaded)} / {formatBytes(state.download.total)}
-							</div>
-							<div style={{ height: 6, borderRadius: 3, backgroundColor: theme.backgroundSecondary, overflow: 'hidden', marginTop: 6 }}>
-								<div style={{ width: `${downloadPct}%`, height: '100%', backgroundColor: theme.text, transition: 'width 0.3s' }} />
-							</div>
-						</>
-					)}
-
-					{/* Prefill is the long silent phase on a big transcript. Say so,
-					    or a two-minute wait with no output looks like a hang. */}
-					{state.phase === 'prefilling' && measured.promptChars !== null && (
-						<p style={{ margin: '8px 0 0', color: theme.secondaryText, lineHeight: 1.45 }}>
-							Reading {Math.round(measured.promptChars / 1000)}k characters of transcript. Nothing appears until this finishes.
-						</p>
+					{/* Every step the run goes through, with the one it is on
+					    counting. Prefill in particular is a long silent phase on a
+					    big transcript — without a number it reads as a hang. */}
+					{running && (
+						<div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, backgroundColor: theme.backgroundSecondary }}>
+							{steps.map((step) => (
+								<Step key={step.label} theme={theme} state={step.state} label={step.label} detail={step.detail} pct={step.pct} />
+							))}
+							{state.phase === 'prefilling' && (
+								<div style={{ marginTop: 4, color: theme.secondaryText, opacity: 0.8 }}>Nothing appears until the whole transcript has been read.</div>
+							)}
+						</div>
 					)}
 
 					{statParts.length > 0 && (
@@ -157,11 +284,24 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 
 					{state.log.length > 0 && (
 						<div style={{ marginTop: 8, fontSize: '11px', color: theme.secondaryText, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-							<div style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => setShowLog((v) => !v)} title="Worker log">
+							<div
+								style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+								onClick={() => setShowLog((v) => !v)}
+								title="Worker log">
 								{showLog ? '▾' : '▸'} {state.log[state.log.length - 1]}
 							</div>
 							{showLog && (
-								<pre style={{ margin: '4px 0 0', maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: '6px 8px', borderRadius: 6, backgroundColor: theme.backgroundSecondary }}>
+								<pre
+									style={{
+										margin: '4px 0 0',
+										maxHeight: 160,
+										overflow: 'auto',
+										whiteSpace: 'pre-wrap',
+										wordBreak: 'break-word',
+										padding: '6px 8px',
+										borderRadius: 6,
+										backgroundColor: theme.backgroundSecondary,
+									}}>
 									{state.log.join('\n')}
 								</pre>
 							)}
