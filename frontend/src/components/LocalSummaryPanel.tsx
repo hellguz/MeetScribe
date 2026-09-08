@@ -120,10 +120,10 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 			detail:
 				measured.loadMs !== null
 					? [
-							measured.cached
-								? 'from cache'
-								: measured.downloadBytes
-									? `downloaded ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}`
+							measured.downloadBytes
+								? `${measured.cached ? 'read' : 'downloaded'} ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}${measured.cached ? ' from cache' : ''}`
+								: measured.cached
+									? 'from cache'
 									: null,
 							`ready in ${fmtMs(measured.loadMs)}`,
 							measured.dtype,
@@ -174,9 +174,9 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 	// Names the adapter, not just "GPU": two machines with the same browser
 	// and wildly different tok/s is the comparison this panel exists for.
 	if (measured.device) statParts.push([measured.device === 'webgpu' ? 'GPU' : measured.device, hardware?.adapter, measured.dtype].filter(Boolean).join(' · '))
-	if (measured.cached) statParts.push('model cached')
-	else if (measured.downloadBytes)
-		statParts.push(`downloaded ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}`)
+	if (measured.downloadBytes)
+		statParts.push(`${measured.cached ? 'read' : 'downloaded'} ${formatBytes(measured.downloadBytes)}${measured.downloadMs ? ` in ${fmtMs(measured.downloadMs)}` : ''}${measured.cached ? ' from cache' : ''}`)
+	else if (measured.cached) statParts.push('model cached')
 	if (measured.loadMs !== null) statParts.push(`loaded in ${fmtMs(measured.loadMs)}`)
 	if (measured.promptTokens !== null) statParts.push(`${measured.promptTokens.toLocaleString()} prompt tokens`)
 	if (measured.prefillMs !== null) statParts.push(`prefill ${fmtMs(measured.prefillMs)}${prefillRate ? ` (${Math.round(prefillRate)} tok/s)` : ''}`)

@@ -34,8 +34,8 @@
  * share a thread, and these do not: the summariser and the transcriber are
  * different workers.
  */
-import { AutoModelForCausalLM, AutoTokenizer, TextStreamer, env } from '@huggingface/transformers'
-import type { PreTrainedModel, PreTrainedTokenizer, Tensor } from '@huggingface/transformers'
+import { AutoModelForCausalLM, AutoTokenizer, Tensor, TextStreamer, env } from '@huggingface/transformers'
+import type { PreTrainedModel, PreTrainedTokenizer } from '@huggingface/transformers'
 
 /** Self-hosting: same idea as VITE_PARAKEET_MODEL_BASE, for the LLM files. */
 const MODEL_BASE = (import.meta.env.VITE_SUMMARY_MODEL_BASE as string | undefined) || ''
@@ -162,6 +162,89 @@ async function probeDevice(): Promise<AdapterInfo | null> {
 }
 
 /**
+ * How many bytes of this model are already in our Cache API bucket.
+ *
+ * transformers.js reports progress identically whether the bytes come off
+ * the network or out of the cache, which made a 5-second cache read look
+ * like a 519 MB/s download. Asking the cache directly is the only way to
+ * tell the two apart, and it is worth telling apart: the first run's cost
+ * and every later run's cost are different questions.
+ */
+async function cachedBytesFor(modelId: string): Promise<number> {
+	try {
+		const cache = await caches.open(env.cacheKey)
+		let bytes = 0
+		for (const request of await cache.keys()) {
+			if (!request.url.includes(modelId)) continue
+			const hit = await cache.match(request)
+			bytes += Number(hit?.headers.get('content-length') ?? 0)
+		}
+		return bytes
+	} catch {
+		// No Cache API (private window, or a browser that walls it off in
+		// workers): fall back to calling everything a download.
+		return 0
+	}
+}
+
+/**
+ * Two corrections to how transformers.js 4.2.0 prepares each forward pass
+ * for this model, applied to the instance rather than by forking the
+ * library. Both live in `Qwen2VLForConditionalGeneration.prepare_inputs_
+ * for_generation`, which Qwen3.5 inherits wholesale.
+ *
+ * 1. It marks "no images this step" by setting `pixel_values` to **null**,
+ *    and the forward path's `pick()` keeps null (it only drops undefined).
+ *    A non-empty modality bag plus a multi-token input then routes into the
+ *    vision encoder — which text-only loading never downloaded — and the
+ *    run dies on `Cannot read properties of undefined (reading
+ *    'inputNames')`. One-shot generation never hits it, because by the time
+ *    a cache exists the input is a single token; chunked prefill hits it on
+ *    the second slice, every time. Deleting the key is what null meant.
+ *
+ * 2. Its text-only rope delta is `max + 1 + length` where the reference
+ *    implementation (and the generic decoder path in this same library, via
+ *    `create_position_ids`) both say the next token sits at `past_length`.
+ *    Left alone, every generated token is placed 2 × prompt-length past
+ *    where it belongs — the model still writes, but it attends to the
+ *    transcript from the wrong distance. Prefill positions are computed by
+ *    a different branch and are correct; only the one-token decode step is
+ *    rewritten here, and only for the shape this worker ever sends: a
+ *    single unpadded sequence.
+ */
+function patchQwen3_5(model: PreTrainedModel) {
+	type Inputs = {
+		pixel_values?: unknown
+		input_ids?: { dims: number[] }
+		past_key_values?: { get_seq_length(): number }
+		position_ids?: unknown
+	}
+	const m = model as unknown as { prepare_inputs_for_generation: (...args: unknown[]) => Inputs }
+	const original = m.prepare_inputs_for_generation.bind(model)
+	let saidWhatItWas = false
+	m.prepare_inputs_for_generation = (...args: unknown[]) => {
+		const inputs = original(...args)
+		if (inputs?.pixel_values === null) delete inputs.pixel_values
+		if (inputs?.past_key_values && inputs.input_ids?.dims?.[0] === 1 && inputs.input_ids.dims[1] === 1) {
+			const at = BigInt(inputs.past_key_values.get_seq_length())
+			if (!saidWhatItWas) {
+				// Logged once per run: if a summary ever comes out
+				// scrambled, this line says exactly what was overridden and
+				// by how much, which is the first thing to check.
+				const was = (inputs.position_ids as { data?: ArrayLike<bigint> } | undefined)?.data?.[0]
+				post({ type: 'log', line: `decode position pinned to past_length (${at})${was === undefined ? '' : `, library said ${was}`}` })
+				saidWhatItWas = true
+			}
+			// [3, batch, seq]: the three rope sections carry the same
+			// position for text, which is what the model was given for the
+			// prompt as well.
+			inputs.position_ids = new Tensor('int64', [at, at, at], [3, 1, 1])
+		}
+		return inputs
+	}
+}
+
+/**
  * Loading a multi-gigabyte model is slow enough that a second run against
  * the same model must not repeat it. Keyed by model id, so choosing a
  * different size loads afresh and frees the old one first.
@@ -243,6 +326,12 @@ async function load(modelId: string) {
 	})
 	post({ type: 'log', line: `model: ${modelId} · ${DTYPE} · prefill chunk ${PREFILL_CHUNK} · ${cores ?? '?'} cores, ${threads ?? '?'} wasm threads` })
 
+	const cachedBefore = await cachedBytesFor(modelId)
+	post({
+		type: 'log',
+		line: cachedBefore > 0 ? `cache: ${gb(cachedBefore)} of this model already stored` : 'cache: empty for this model — first run downloads it',
+	})
+
 	const progress_callback = (info: { status: string; loaded?: number; total?: number; file?: string }) => {
 		if (info.status === 'progress_total' && typeof info.loaded === 'number' && typeof info.total === 'number') {
 			if (firstByteAt === null) firstByteAt = performance.now()
@@ -271,6 +360,7 @@ async function load(modelId: string) {
 		device: 'webgpu',
 		progress_callback,
 	})
+	patchQwen3_5(model)
 
 	post({
 		type: 'log',
@@ -286,8 +376,10 @@ async function load(modelId: string) {
 		loadMs: performance.now() - startedAt,
 		downloadBytes,
 		downloadMs: Math.round(downloadMs),
-		// No progress events at all means every file came from the cache.
-		cached: firstByteAt === null,
+		// Either nothing was fetched at all, or everything fetched was
+		// already in the cache — a run that pulled less than a tokenizer's
+		// worth of new bytes did not download this model.
+		cached: firstByteAt === null || (cachedBefore > 0 && downloadBytes - cachedBefore < 50_000_000),
 		adapter,
 		threads,
 		cores,
