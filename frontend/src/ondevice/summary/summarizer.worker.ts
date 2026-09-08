@@ -5,6 +5,8 @@
  *     │
  *     ├─ apply_chat_template ──▶ input_ids           measured: promptTokens
  *     │
+ *     ├─ chunked prefill ──▶ KV cache                (PREFILL_CHUNK at a time)
+ *     │
  *     └─ model.generate ──▶ TextStreamer ──▶ 'token' messages to the page
  *            │
  *            first token ends the prefill            measured: prefillMs
@@ -12,6 +14,18 @@
  *
  * Everything runs here rather than on the main thread because prefilling
  * 30k tokens blocks whatever thread it is on for tens of seconds.
+ *
+ * Prefill is fed to the model in slices rather than all at once, because
+ * every tensor inside a forward pass is as wide as what you hand it. The
+ * expensive one is the decoder's own output: it emits logits for *every*
+ * position it is given, so an 18k-token transcript asks for an
+ * 18014 × 151936 fp16 tensor — 5.5 GB in one allocation, which ONNX Runtime
+ * refuses outright ("Tensor shape is too large") after having spent a while
+ * trying, which is what makes the machine crawl. (transformers.js has a
+ * `num_logits_to_keep` for exactly this, but the multimodal forward path
+ * Qwen3.5 goes through drops it before the session sees it, so we cannot
+ * ask for one row.) Slicing caps that at PREFILL_CHUNK positions and, as a
+ * bonus, gives the panel something to count.
  *
  * This worker deliberately loads its own copy of ONNX Runtime — the build
  * transformers.js pins, reached through its own dependency tree. It never
@@ -21,7 +35,7 @@
  * different workers.
  */
 import { AutoModelForCausalLM, AutoTokenizer, TextStreamer, env } from '@huggingface/transformers'
-import type { PreTrainedModel, PreTrainedTokenizer } from '@huggingface/transformers'
+import type { PreTrainedModel, PreTrainedTokenizer, Tensor } from '@huggingface/transformers'
 
 /** Self-hosting: same idea as VITE_PARAKEET_MODEL_BASE, for the LLM files. */
 const MODEL_BASE = (import.meta.env.VITE_SUMMARY_MODEL_BASE as string | undefined) || ''
@@ -55,6 +69,19 @@ if (ORT_WASM_BASE) {
 
 /** Only quantization we offer: 4-bit weights, fp16 activations, WebGPU. */
 const DTYPE = 'q4f16'
+
+/**
+ * How many prompt tokens go through the model in one forward pass.
+ *
+ * Sets the ceiling on transient memory during prefill: every intermediate
+ * is this many tokens wide instead of the whole transcript, the discarded
+ * logits (this × 151936 × fp16 — 156 MB at 512) included. Smaller is safer
+ * on a small GPU and costs throughput, because each slice re-reads the KV
+ * cache built so far; 512 keeps the matmuls big enough to saturate a GPU
+ * while holding the peak to something a laptop can allocate. Lower it first
+ * if a machine still dies during prefill.
+ */
+const PREFILL_CHUNK = 512
 
 export interface SummarizeRequest {
 	type: 'summarize'
@@ -174,6 +201,42 @@ function stripThinking(text: string): string {
 	return (end === -1 ? text : text.slice(end + '</think>'.length)).trim()
 }
 
+/**
+ * Feed the prompt to the model `PREFILL_CHUNK` tokens at a time, returning
+ * the KV cache for everything consumed.
+ *
+ * Each step is a `generate` capped at one token: transformers.js prefills
+ * the slice, hands back `past_key_values`, and the sampled token is thrown
+ * away (it is never fed back, so the cache holds prompt tokens only). The
+ * next step passes the prompt truncated one chunk further along together
+ * with that cache, which is the "externally provided past_key_values with
+ * full input_ids" case Qwen2-VL's `prepare_inputs_for_generation` handles:
+ * it slices off what the cache already covers and offsets the rope
+ * positions accordingly.
+ *
+ * Returns null when the prompt is short enough to prefill in one pass.
+ */
+async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attention_mask: Tensor, promptTokens: number): Promise<unknown | null> {
+	let past: unknown = null
+	for (let consumed = PREFILL_CHUNK; consumed < promptTokens; consumed += PREFILL_CHUNK) {
+		post({ type: 'status', text: `Reading the transcript… ${consumed.toLocaleString()} / ${promptTokens.toLocaleString()} tokens` })
+		const out = (await model.generate({
+			input_ids: input_ids.slice(null, [0, consumed]),
+			attention_mask: attention_mask.slice(null, [0, consumed]),
+			...(past ? { past_key_values: past } : {}),
+			max_new_tokens: 1,
+			do_sample: false,
+			// Keeps the cache alive past the call — the default is to free
+			// it, which is exactly what we are here to accumulate.
+			return_dict_in_generate: true,
+		} as unknown as Parameters<typeof model.generate>[0])) as unknown as { past_key_values: unknown }
+		// Same object every time: transformers.js updates the cache in
+		// place and disposes the GPU tensors it replaces.
+		past = out.past_key_values
+	}
+	return past
+}
+
 async function summarize(req: SummarizeRequest) {
 	const { tokenizer, model } = await load(req.model)
 
@@ -185,14 +248,18 @@ async function summarize(req: SummarizeRequest) {
 		// to the Jinja template, whose `enable_thinking is false` branch
 		// prefills an empty <think> block and so skips reasoning.
 		enable_thinking: req.thinking,
-	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: { dims: number[] } }
+	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: Tensor; attention_mask: Tensor }
 
 	const promptTokens = inputs.input_ids.dims.at(-1) ?? 0
 
+	// Prefill starts here, chunks included: the number worth reporting is
+	// how long the transcript took to read, not just its last slice.
 	const generateStartedAt = performance.now()
 	let prefillMs: number | null = null
 	let text = ''
 	let streamedTokens = 0
+
+	const past = await prefillInChunks(model, inputs.input_ids, inputs.attention_mask, promptTokens)
 
 	const streamer = new TextStreamer(tokenizer, {
 		skip_prompt: true,
@@ -214,6 +281,9 @@ async function summarize(req: SummarizeRequest) {
 
 	const output = await model.generate({
 		...inputs,
+		// Whatever the chunk loop already read; the remaining tail of the
+		// prompt is prefilled by this call.
+		...(past ? { past_key_values: past } : {}),
 		max_new_tokens: req.maxNewTokens,
 		// The summary templates are strict about structure, and sampling at
 		// the model card's defaults (temp 0.6, top_p 0.95) reworded headings
@@ -223,6 +293,15 @@ async function summarize(req: SummarizeRequest) {
 	} as unknown as Parameters<typeof model.generate>[0])
 
 	const totalMs = performance.now() - generateStartedAt
+
+	// Passing a cache in tells `generate` someone else owns it, so it stops
+	// freeing it for us. A run's worth of KV is hundreds of megabytes of
+	// VRAM; drop it before the next one asks for its own.
+	try {
+		await (past as { dispose?: () => Promise<void> } | null)?.dispose?.()
+	} catch {
+		/* best effort: the point is to free VRAM, not to be exact */
+	}
 
 	// `generate` returns the whole sequence, prompt included, so the
 	// generated length is the difference. Anything that reached the cap was
