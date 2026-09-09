@@ -37,6 +37,22 @@ export interface SummaryModel {
 	bytes: number
 	/** Why someone would pick this one. */
 	note: string
+	/**
+	 * How many `.onnx_data` files each ONNX file is split across, when the
+	 * repo's own `transformers.js_config` gets it wrong.
+	 *
+	 * transformers.js does not read the split from the graph; it trusts
+	 * `use_external_data_format` in config.json and fetches
+	 * `NAME.onnx_data`, `NAME.onnx_data_1`, … up to that count. A repo that
+	 * declares one number for every dtype over-counts the small ones:
+	 * `webgpu/Qwen3-4B-ONNX` says 2, which is right for fp16 and wrong for
+	 * q4f16, whose weights are one file — so loading died on a 404 for
+	 * `model_q4f16.onnx_data_1` after downloading all 3 GB.
+	 *
+	 * Keyed by ONNX file name, matching the option transformers.js takes.
+	 * Set it only where the repo is wrong; leaving it out trusts the repo.
+	 */
+	externalDataChunks?: Record<string, number>
 }
 
 export const SUMMARY_MODELS: SummaryModel[] = [
@@ -46,6 +62,8 @@ export const SUMMARY_MODELS: SummaryModel[] = [
 		// Whole-repo size as listed on Hugging Face (q4f16 only).
 		bytes: 3_050_000_000,
 		note: 'Fastest 4B on WebGPU: plain attention on the optimised kernel path. Reads a transcript many times faster than Qwen3.5.',
+		// The repo declares 2 data files for every dtype; q4f16 has one.
+		externalDataChunks: { 'model_q4f16.onnx': 1 },
 	},
 	{
 		id: 'onnx-community/Qwen3.5-4B-ONNX-OPT',

@@ -37,6 +37,7 @@
  */
 import { AutoModelForCausalLM, AutoTokenizer, Tensor, TextStreamer, env } from '@huggingface/transformers'
 import type { PreTrainedModel, PreTrainedTokenizer } from '@huggingface/transformers'
+import { modelById } from './models'
 
 /** Self-hosting: same idea as VITE_PARAKEET_MODEL_BASE, for the LLM files. */
 const MODEL_BASE = (import.meta.env.VITE_SUMMARY_MODEL_BASE as string | undefined) || ''
@@ -371,10 +372,15 @@ async function load(modelId: string) {
 	// text-only mode, which drops the vision encoder from the file
 	// manifest — ~200 MB of download we would never use. Do not "fix" this
 	// to AutoModelForImageTextToText.
+	// `use_external_data_format` overrides the repo's own config.json, which
+	// is where a wrong weight-file count comes from. See the field's note.
+	const externalDataChunks = modelById(modelId)?.externalDataChunks
+	if (externalDataChunks) post({ type: 'log', line: `weight files: ${JSON.stringify(externalDataChunks)} (overriding this repo's config)` })
 	const model = await AutoModelForCausalLM.from_pretrained(modelId, {
 		dtype: DTYPE,
 		device: 'webgpu',
 		progress_callback,
+		...(externalDataChunks ? { use_external_data_format: externalDataChunks } : {}),
 	})
 	// Only Qwen3.5 inherits Qwen2-VL's input preparation, which is what the
 	// patch corrects. Qwen3 goes through the library's generic decoder
