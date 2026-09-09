@@ -47,10 +47,11 @@ export const SUMMARY_MODELS: SummaryModel[] = [
 	{
 		id: 'onnx-community/gemma-4-E4B-it-ONNX',
 		label: 'Gemma 4 E4B',
-		// Estimate: the repo could not be measured from this environment.
-		// The panel replaces it with the real figure once bytes arrive.
-		bytes: 4_000_000_000,
-		note: 'Quality pick. Google\'s on-device size, tuned for summaries; rated at or above Qwen3.5-4B for writing.',
+		// Measured from a real download on 2026-09-09. 8B parameters on
+		// disk: the "effective 4B" excludes per-layer embeddings, which are
+		// cheap to run but still have to live in GPU memory.
+		bytes: 4_910_000_000,
+		note: 'Quality pick, but 8B weights: needs a discrete GPU. On an integrated GPU it pages weights every token (0.6 tok/s measured on Intel Xe-LPG).',
 	},
 	{
 		id: 'onnx-community/Qwen3.5-4B-ONNX-OPT',
