@@ -1,11 +1,11 @@
 /**
- * Runs Qwen3.5 over a meeting transcript, in this tab, on the GPU.
+ * Runs Qwen3.5 or Gemma 4 over a meeting transcript, in this tab, on the GPU.
  *
  *   prompt (from the server, byte-for-byte the one Claude gets)
  *     │
  *     ├─ apply_chat_template ──▶ input_ids           measured: promptTokens
  *     │
- *     ├─ chunked prefill ──▶ KV cache                (PREFILL_CHUNK at a time)
+ *     ├─ chunked prefill ──▶ KV cache                (one chunk at a time)
  *     │
  *     └─ model.generate ──▶ TextStreamer ──▶ 'token' messages to the page
  *            │
@@ -19,13 +19,14 @@
  * every tensor inside a forward pass is as wide as what you hand it. The
  * expensive one is the decoder's own output: it emits logits for *every*
  * position it is given, so an 18k-token transcript asks for an
- * 18014 × 151936 fp16 tensor — 5.5 GB in one allocation, which ONNX Runtime
+ * 18014 × 248320 fp16 tensor — 9 GB in one allocation, which ONNX Runtime
  * refuses outright ("Tensor shape is too large") after having spent a while
  * trying, which is what makes the machine crawl. (transformers.js has a
  * `num_logits_to_keep` for exactly this, but the multimodal forward path
  * Qwen3.5 goes through drops it before the session sees it, so we cannot
- * ask for one row.) Slicing caps that at PREFILL_CHUNK positions and, as a
- * bonus, gives the panel something to count.
+ * ask for one row.) Slicing caps that at one chunk of positions and, as a
+ * bonus, gives the panel something to count. The chunk is sized from the
+ * GPU's own buffer limit, see `prefillChunkFor`.
  *
  * This worker deliberately loads its own copy of ONNX Runtime — the build
  * transformers.js pins, reached through its own dependency tree. It never
@@ -75,13 +76,24 @@ const DTYPE = 'q4f16'
  *
  * Sets the ceiling on transient memory during prefill: every intermediate
  * is this many tokens wide instead of the whole transcript, the discarded
- * logits (this × 151936 × fp16 — 156 MB at 512) included. Smaller is safer
- * on a small GPU and costs throughput, because each slice re-reads the KV
- * cache built so far; 512 keeps the matmuls big enough to saturate a GPU
- * while holding the peak to something a laptop can allocate. Lower it first
- * if a machine still dies during prefill.
+ * logits (chunk × vocab × fp16: Gemma 4's 262k vocab makes that 270 MB at
+ * 512, 540 MB at 1024, 1.1 GB at 2048) included. Smaller is safer on a
+ * small GPU and costs throughput, because each slice re-reads the KV cache
+ * built so far and the launch overhead per slice is fixed.
+ *
+ * So the size follows the biggest buffer the adapter will hand out. The
+ * thresholds leave the logits tensor at roughly a quarter of that limit,
+ * which keeps room for the KV cache and the activations beside it:
+ * integrated GPUs on current i7/i9 laptops report ~2 GB and get 1024,
+ * discrete cards report 4 GB or more and get 2048, anything smaller (older
+ * iGPUs, some phones) keeps the 512 that was the fixed value before.
  */
-const PREFILL_CHUNK = 512
+function prefillChunkFor(adapter: AdapterInfo): number {
+	const limit = adapter.maxBufferSize ?? 0
+	if (limit >= 4 * 1024 ** 3) return 2048
+	if (limit >= 2 * 1024 ** 3) return 1024
+	return 512
+}
 
 export interface SummarizeRequest {
 	type: 'summarize'
@@ -262,6 +274,8 @@ let loaded: {
 	adapter: AdapterInfo | null
 	threads: number | null
 	cores: number | null
+	/** Chosen once per load from the adapter's buffer limit. */
+	prefillChunk: number
 } | null = null
 
 /**
@@ -324,7 +338,8 @@ async function load(modelId: string) {
 		type: 'log',
 		line: `device: WebGPU · ${[adapter.vendor, adapter.architecture, adapter.device].filter(Boolean).join(' ') || 'unnamed adapter'} · max buffer ${gb(adapter.maxBufferSize)}`,
 	})
-	post({ type: 'log', line: `model: ${modelId} · ${DTYPE} · prefill chunk ${PREFILL_CHUNK} · ${cores ?? '?'} cores, ${threads ?? '?'} wasm threads` })
+	const prefillChunk = prefillChunkFor(adapter)
+	post({ type: 'log', line: `model: ${modelId} · ${DTYPE} · prefill chunk ${prefillChunk} · ${cores ?? '?'} cores, ${threads ?? '?'} wasm threads` })
 
 	const cachedBefore = await cachedBytesFor(modelId)
 	post({
@@ -350,17 +365,23 @@ async function load(modelId: string) {
 	const tokenizer = await AutoTokenizer.from_pretrained(modelId, { progress_callback })
 
 	post({ type: 'status', text: 'Loading model…' })
-	// `AutoModelForCausalLM` against a repo whose config declares
-	// `Qwen3_5ForConditionalGeneration` is what puts transformers.js into
-	// text-only mode, which drops the vision encoder from the file
-	// manifest — worth ~200 MB of download we would never use. Do not
-	// "fix" this to AutoModelForImageTextToText.
+	// `AutoModelForCausalLM` against a repo whose config declares a
+	// `…ForConditionalGeneration` architecture is what puts transformers.js
+	// into text-only mode, which drops the vision (and, for Gemma, audio)
+	// encoder from the file manifest — hundreds of MB of download we would
+	// never use. Do not "fix" this to AutoModelForImageTextToText.
 	const model = await AutoModelForCausalLM.from_pretrained(modelId, {
 		dtype: DTYPE,
 		device: 'webgpu',
 		progress_callback,
 	})
-	patchQwen3_5(model)
+	// Only Qwen3.5 inherits Qwen2-VL's input preparation, which is what the
+	// patch corrects. Gemma 4 goes through the library's generic decoder
+	// path, which slices cached tokens off itself and places positions at
+	// `past_length` already; patching it would break what works.
+	const modelType = String((model.config as { model_type?: string }).model_type ?? '')
+	if (modelType.startsWith('qwen3_5')) patchQwen3_5(model)
+	else post({ type: 'log', line: `model type ${modelType || '?'}: generic decoder path, no input patch` })
 
 	post({
 		type: 'log',
@@ -383,24 +404,42 @@ async function load(modelId: string) {
 		adapter,
 		threads,
 		cores,
+		prefillChunk,
 	}
 	announce(loaded)
 	return loaded
 }
 
 /**
- * With thinking on, the model emits `<think>…</think>` before the summary.
- * The reasoning is worth watching as it streams but must not reach the
- * stored markdown, where it would be compared against Claude's prose.
+ * With thinking on, the model reasons before the summary: Qwen3.5 inside
+ * `<think>…</think>`, Gemma 4 inside `<|channel>thought…<channel|>`. The
+ * reasoning is worth watching as it streams but must not reach the stored
+ * markdown, where it would be compared against Claude's prose.
+ *
+ * Gemma's markers are special tokens, so the streamer runs with
+ * `skip_special_tokens` off to keep them visible; the end-of-turn tokens
+ * that would otherwise be dropped are removed here instead.
  */
+const THINK_END_MARKERS = ['</think>', '<channel|>']
+const TURN_END_TOKENS = ['<end_of_turn>', '<eos>', '<|im_end|>', '<|endoftext|>']
 function stripThinking(text: string): string {
-	const end = text.lastIndexOf('</think>')
-	return (end === -1 ? text : text.slice(end + '</think>'.length)).trim()
+	let out = text
+	for (const marker of THINK_END_MARKERS) {
+		const end = out.lastIndexOf(marker)
+		if (end !== -1) out = out.slice(end + marker.length)
+	}
+	// A run that hit the token cap mid-thought has no closing marker; the
+	// opening one then starts the text and everything after it is reasoning.
+	for (const opener of ['<think>', '<|channel>thought']) {
+		if (out.trimStart().startsWith(opener)) return ''
+	}
+	for (const token of TURN_END_TOKENS) out = out.split(token).join('')
+	return out.trim()
 }
 
 /**
- * Feed the prompt to the model `PREFILL_CHUNK` tokens at a time, returning
- * the KV cache for everything consumed.
+ * Feed the prompt to the model `chunk` tokens at a time, returning the KV
+ * cache for everything consumed.
  *
  * Each step is a `generate` capped at one token: transformers.js prefills
  * the slice, hands back `past_key_values`, and the sampled token is thrown
@@ -409,17 +448,17 @@ function stripThinking(text: string): string {
  * with that cache, which is the "externally provided past_key_values with
  * full input_ids" case Qwen2-VL's `prepare_inputs_for_generation` handles:
  * it slices off what the cache already covers and offsets the rope
- * positions accordingly.
+ * positions accordingly. The generic decoder path Gemma 4 uses does the
+ * same slice (`decoder_prepare_inputs_for_generation`, case 2).
  *
  * Returns null when the prompt is short enough to prefill in one pass.
  */
-async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attention_mask: Tensor, promptTokens: number): Promise<unknown | null> {
+async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attention_mask: Tensor, promptTokens: number, chunk: number): Promise<unknown | null> {
 	let past: unknown = null
 	const startedAt = performance.now()
-	if (promptTokens > PREFILL_CHUNK)
-		post({ type: 'log', line: `prefill: ${promptTokens.toLocaleString()} tokens in ${Math.ceil(promptTokens / PREFILL_CHUNK)} slices of ${PREFILL_CHUNK}` })
-	for (let consumed = PREFILL_CHUNK; consumed < promptTokens; consumed += PREFILL_CHUNK) {
-		post({ type: 'prefill', processed: consumed - PREFILL_CHUNK, total: promptTokens, ms: performance.now() - startedAt })
+	if (promptTokens > chunk) post({ type: 'log', line: `prefill: ${promptTokens.toLocaleString()} tokens in ${Math.ceil(promptTokens / chunk)} slices of ${chunk}` })
+	for (let consumed = chunk; consumed < promptTokens; consumed += chunk) {
+		post({ type: 'prefill', processed: consumed - chunk, total: promptTokens, ms: performance.now() - startedAt })
 		const out = (await model.generate({
 			input_ids: input_ids.slice(null, [0, consumed]),
 			attention_mask: attention_mask.slice(null, [0, consumed]),
@@ -439,15 +478,16 @@ async function prefillInChunks(model: PreTrainedModel, input_ids: Tensor, attent
 }
 
 async function summarize(req: SummarizeRequest) {
-	const { tokenizer, model } = await load(req.model)
+	const { tokenizer, model, prefillChunk } = await load(req.model)
 
 	post({ type: 'status', text: 'Reading the transcript…' })
 	const inputs = tokenizer.apply_chat_template([{ role: 'user', content: req.prompt }], {
 		add_generation_prompt: true,
 		return_dict: true,
 		// Not in the typed options: extra keys are passed straight through
-		// to the Jinja template, whose `enable_thinking is false` branch
-		// prefills an empty <think> block and so skips reasoning.
+		// to the Jinja template. Both families read this key: Qwen's
+		// `enable_thinking is false` branch prefills an empty <think> block,
+		// Gemma's an empty thought channel, and so skip reasoning.
 		enable_thinking: req.thinking,
 	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: Tensor; attention_mask: Tensor }
 
@@ -461,11 +501,13 @@ async function summarize(req: SummarizeRequest) {
 	let text = ''
 	let streamedTokens = 0
 
-	const past = await prefillInChunks(model, inputs.input_ids, inputs.attention_mask, promptTokens)
+	const past = await prefillInChunks(model, inputs.input_ids, inputs.attention_mask, promptTokens, prefillChunk)
 
 	const streamer = new TextStreamer(tokenizer, {
 		skip_prompt: true,
-		skip_special_tokens: true,
+		// Kept so Gemma's thought-channel markers reach `stripThinking`;
+		// the end-of-turn tokens this lets through are removed there too.
+		skip_special_tokens: false,
 		callback_function: (chunk: string) => {
 			// The first chunk is the moment prefill finished — the number
 			// that decides whether a two-hour meeting is viable at all.
