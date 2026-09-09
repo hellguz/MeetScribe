@@ -1,5 +1,5 @@
 /**
- * Runs Qwen3.5 or Gemma 4 over a meeting transcript, in this tab, on the GPU.
+ * Runs Qwen3 or Qwen3.5 over a meeting transcript, in this tab, on the GPU.
  *
  *   prompt (from the server, byte-for-byte the one Claude gets)
  *     │
@@ -76,8 +76,8 @@ const DTYPE = 'q4f16'
  *
  * Sets the ceiling on transient memory during prefill: every intermediate
  * is this many tokens wide instead of the whole transcript, the discarded
- * logits (chunk × vocab × fp16: Gemma 4's 262k vocab makes that 270 MB at
- * 512, 540 MB at 1024, 1.1 GB at 2048) included. Smaller is safer on a
+ * logits (chunk × vocab × fp16: Qwen3.5's 248k vocab makes that 255 MB at
+ * 512, 510 MB at 1024, 1 GB at 2048) included. Smaller is safer on a
  * small GPU and costs throughput, because each slice re-reads the KV cache
  * built so far and the launch overhead per slice is fixed.
  *
@@ -365,18 +365,19 @@ async function load(modelId: string) {
 	const tokenizer = await AutoTokenizer.from_pretrained(modelId, { progress_callback })
 
 	post({ type: 'status', text: 'Loading model…' })
-	// `AutoModelForCausalLM` against a repo whose config declares a
-	// `…ForConditionalGeneration` architecture is what puts transformers.js
-	// into text-only mode, which drops the vision (and, for Gemma, audio)
-	// encoder from the file manifest — hundreds of MB of download we would
-	// never use. Do not "fix" this to AutoModelForImageTextToText.
+	// Qwen3 is a plain causal LM and this is simply its class. For Qwen3.5,
+	// `AutoModelForCausalLM` against a config that declares
+	// `Qwen3_5ForConditionalGeneration` is what puts transformers.js into
+	// text-only mode, which drops the vision encoder from the file
+	// manifest — ~200 MB of download we would never use. Do not "fix" this
+	// to AutoModelForImageTextToText.
 	const model = await AutoModelForCausalLM.from_pretrained(modelId, {
 		dtype: DTYPE,
 		device: 'webgpu',
 		progress_callback,
 	})
 	// Only Qwen3.5 inherits Qwen2-VL's input preparation, which is what the
-	// patch corrects. Gemma 4 goes through the library's generic decoder
+	// patch corrects. Qwen3 goes through the library's generic decoder
 	// path, which slices cached tokens off itself and places positions at
 	// `past_length` already; patching it would break what works.
 	const modelType = String((model.config as { model_type?: string }).model_type ?? '')
@@ -411,16 +412,15 @@ async function load(modelId: string) {
 }
 
 /**
- * With thinking on, the model reasons before the summary: Qwen3.5 inside
- * `<think>…</think>`, Gemma 4 inside `<|channel>thought…<channel|>`. The
- * reasoning is worth watching as it streams but must not reach the stored
- * markdown, where it would be compared against Claude's prose.
+ * With thinking on, the model reasons inside `<think>…</think>` before the
+ * summary. The reasoning is worth watching as it streams but must not reach
+ * the stored markdown, where it would be compared against Claude's prose.
  *
- * Gemma's markers are special tokens, so the streamer runs with
- * `skip_special_tokens` off to keep them visible; the end-of-turn tokens
- * that would otherwise be dropped are removed here instead.
+ * The streamer runs with `skip_special_tokens` off so a model whose
+ * markers are special tokens still shows them; the end-of-turn tokens that
+ * would otherwise be dropped are removed here instead.
  */
-const THINK_END_MARKERS = ['</think>', '<channel|>']
+const THINK_END_MARKERS = ['</think>']
 const TURN_END_TOKENS = ['<end_of_turn>', '<eos>', '<|im_end|>', '<|endoftext|>']
 function stripThinking(text: string): string {
 	let out = text
@@ -430,7 +430,7 @@ function stripThinking(text: string): string {
 	}
 	// A run that hit the token cap mid-thought has no closing marker; the
 	// opening one then starts the text and everything after it is reasoning.
-	for (const opener of ['<think>', '<|channel>thought']) {
+	for (const opener of ['<think>']) {
 		if (out.trimStart().startsWith(opener)) return ''
 	}
 	for (const token of TURN_END_TOKENS) out = out.split(token).join('')
@@ -448,7 +448,7 @@ function stripThinking(text: string): string {
  * with that cache, which is the "externally provided past_key_values with
  * full input_ids" case Qwen2-VL's `prepare_inputs_for_generation` handles:
  * it slices off what the cache already covers and offsets the rope
- * positions accordingly. The generic decoder path Gemma 4 uses does the
+ * positions accordingly. The generic decoder path Qwen3 uses does the
  * same slice (`decoder_prepare_inputs_for_generation`, case 2).
  *
  * Returns null when the prompt is short enough to prefill in one pass.
@@ -485,9 +485,9 @@ async function summarize(req: SummarizeRequest) {
 		add_generation_prompt: true,
 		return_dict: true,
 		// Not in the typed options: extra keys are passed straight through
-		// to the Jinja template. Both families read this key: Qwen's
-		// `enable_thinking is false` branch prefills an empty <think> block,
-		// Gemma's an empty thought channel, and so skip reasoning.
+		// to the Jinja template. Both generations read this key: the
+		// `enable_thinking is false` branch prefills an empty <think> block
+		// and so skips reasoning.
 		enable_thinking: req.thinking,
 	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: Tensor; attention_mask: Tensor }
 
@@ -505,8 +505,8 @@ async function summarize(req: SummarizeRequest) {
 
 	const streamer = new TextStreamer(tokenizer, {
 		skip_prompt: true,
-		// Kept so Gemma's thought-channel markers reach `stripThinking`;
-		// the end-of-turn tokens this lets through are removed there too.
+		// Kept so any thinking markers reach `stripThinking`; the
+		// end-of-turn tokens this lets through are removed there too.
 		skip_special_tokens: false,
 		callback_function: (chunk: string) => {
 			// The first chunk is the moment prefill finished — the number

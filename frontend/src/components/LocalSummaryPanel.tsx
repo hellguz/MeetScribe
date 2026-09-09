@@ -63,7 +63,7 @@ interface Props {
  * and watch the numbers. Everything it shows was measured in this browser.
  *
  * The card stays visible after a run so the settings for the next one are
- * one click away — comparing 2B against 4B against thinking-on is the
+ * one click away — comparing Qwen3 against Qwen3.5 against thinking-on is the
  * reason the feature exists, and each of those is a separate generate.
  */
 const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, summaryLength, onGenerate, onCancel, runs }) => {
