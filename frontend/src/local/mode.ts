@@ -31,48 +31,52 @@ const write = (value: boolean) => {
 
 export const isLocalMode = (): boolean => read()
 
-export type EnableFailure =
-	| { ok: false; reason: 'no-indexeddb'; message: string }
-	| { ok: false; reason: 'not-persisted'; message: string }
+export type StorageWarning = {
+	/** 'not-persisted' — enabling still proceeds; the user is told, not blocked. */
+	reason: 'no-indexeddb' | 'not-persisted'
+	message: string
+}
 
-export type EnableResult = { ok: true } | EnableFailure
+export type EnableResult = { ok: true; warning: StorageWarning | null }
 
 /**
- * Ask the browser to stop treating this origin's storage as disposable, and
- * refuse to turn local mode on if it says no.
+ * Ask the browser to stop treating this origin's storage as disposable.
  *
- * This looks pedantic and is not. Without persistence, a local meeting lives
- * in a bucket the browser may evict whenever the disk gets tight — silently,
- * with no event and no recovery. Storing the only copy of someone's meeting
- * there while telling them it is safe would be worse than not offering the
- * feature. Chrome grants it based on engagement, Firefox prompts, Safari
- * grants it on user gesture; a refusal is rare and recoverable (install the
- * app, or visit it a few more times), so the message says so.
+ * A refusal is reported, never enforced. Chrome grants persistence on its own
+ * engagement heuristics, Firefox prompts, Safari has its own rules — so "no"
+ * usually means "not yet", and blocking on it would put the whole feature
+ * behind a permission the user cannot see or grant directly. Eviction only
+ * happens under real storage pressure, and the export button exists for
+ * exactly this. So: say plainly that it is not guaranteed, and continue.
  */
 export async function requestPersistentStorage(): Promise<EnableResult> {
 	if (typeof indexedDB === 'undefined') {
 		return {
-			ok: false,
-			reason: 'no-indexeddb',
-			message: 'This browser has no database to store meetings in. Private windows usually block it.',
+			ok: true,
+			warning: {
+				reason: 'no-indexeddb',
+				message: 'This browser has no database to store meetings in — private windows usually block it. Local meetings may not survive a reload.',
+			},
 		}
 	}
 	if (!navigator.storage?.persist) {
-		// No API to ask with (older Safari). Storage is still durable in
-		// practice there; refusing would block the feature on a guess.
-		return { ok: true }
+		// No API to ask with (older Safari). Storage is durable enough there in
+		// practice, and there is nothing to warn about that the user could act on.
+		return { ok: true, warning: null }
 	}
 	try {
 		const already = (await navigator.storage.persisted?.()) ?? false
-		if (already || (await navigator.storage.persist())) return { ok: true }
+		if (already || (await navigator.storage.persist())) return { ok: true, warning: null }
 	} catch {
-		/* fall through to the refusal */
+		/* fall through to the warning */
 	}
 	return {
-		ok: false,
-		reason: 'not-persisted',
-		message:
-			'Your browser will not guarantee that meetings stored here survive. It may delete them without warning when disk space runs low, so Local mode stays off. Visiting MeetScribe a few more times, or installing it, usually earns the permission.',
+		ok: true,
+		warning: {
+			reason: 'not-persisted',
+			message:
+				'Your browser will not promise to keep these meetings — it may delete them if disk space runs low. Visiting MeetScribe a few more times, or installing it, usually earns the permission. Export anything important.',
+		},
 	}
 }
 
@@ -99,10 +103,13 @@ export function useLocalMode() {
 		return () => window.removeEventListener('storage', onStorage)
 	}, [])
 
-	/** Turning on is async and can be refused; turning off never is. */
+	/**
+	 * Turning on always succeeds. It may come back with a warning about how
+	 * durable this browser's storage is, which the panel shows without getting
+	 * in the way.
+	 */
 	const enable = useCallback(async (): Promise<EnableResult> => {
 		const result = await requestPersistentStorage()
-		if (!result.ok) return result
 		write(true)
 		setEnabledState(true)
 		return result

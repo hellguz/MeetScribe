@@ -30,7 +30,9 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	const [caps, setCaps] = useState<DeviceCapabilities | null>(null)
 	const [speechBytes, setSpeechBytes] = useState<number | null>(null)
 	const [showLanguages, setShowLanguages] = useState(false)
-	const [refusal, setRefusal] = useState<string | null>(null)
+	// Not a blocker: local mode turns on either way, and this explains what the
+	// browser would not promise.
+	const [storageWarning, setStorageWarning] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -71,11 +73,13 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 
 	const handleEnable = async () => {
 		setBusy(true)
-		setRefusal(null)
+		setStorageWarning(null)
 		const result = await enable()
 		setBusy(false)
-		if (result.ok) setOpen(false)
-		else setRefusal(result.message)
+		// Enabling always succeeds. A warning keeps the panel open so it is
+		// actually read; without one there is nothing left to say.
+		if (result.warning) setStorageWarning(result.warning.message)
+		else setOpen(false)
 	}
 
 	// Same metrics as the tags/favourite icon buttons it sits beside.
@@ -230,7 +234,7 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 						)}
 					</ul>
 
-					{refusal && (
+					{storageWarning && (
 						<p
 							style={{
 								margin: '0 0 10px',
@@ -240,8 +244,15 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 								color: '#b45309',
 								backgroundColor: '#f59e0b1f',
 								border: '1px solid #f59e0b55',
+								display: 'flex',
+								gap: '7px',
 							}}>
-							{refusal}
+							<span style={{ display: 'flex', flexShrink: 0, marginTop: '1px' }}>
+								<AlertIcon size={12} />
+							</span>
+							<span>
+								<strong>Local mode is on.</strong> {storageWarning}
+							</span>
 						</p>
 					)}
 

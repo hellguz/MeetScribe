@@ -14,8 +14,12 @@ import type { ParakeetPlan } from './capabilities'
 
 export const HF_REPO = 'ysdede/parakeet-tdt-0.6b-v3-onnx'
 const CACHE_NAME = 'meetscribe-parakeet-v1'
-/** Branches to try, in order; the parakeet.js demo pins the second for fp16. */
-const REVISIONS = ['main', 'feat/fp16-canonical-v3']
+/**
+ * Branches to try, in order. `feat/fp16-canonical-v3` used to be pinned here
+ * for fp16 — it has since been deleted upstream and now 404s, so it is only a
+ * slower path to the same failure.
+ */
+const REVISIONS = ['main']
 
 export interface ResolvedFiles {
 	base: string
@@ -100,7 +104,12 @@ export async function resolveModelFiles(plan: ParakeetPlan, customBase?: string)
 	const build = async (base: string): Promise<ResolvedFiles> => ({
 		base,
 		encoder: base + encoderName,
-		encoderData: (await probe(`${base + encoderName}.data`)) === true ? `${base + encoderName}.data` : null,
+		// Both upstream encoders keep their weights inline — only the fp32
+		// `encoder-model.onnx` has a `.data` sidecar, and we never ask for that
+		// one. Probing for a file we know is absent bought nothing and put a
+		// red 404 in everyone's console on every single run, which reads like a
+		// broken build. A custom base can serve anything, so it is still asked.
+		encoderData: customBase && (await probe(`${base + encoderName}.data`)) === true ? `${base + encoderName}.data` : null,
 		decoder: base + decoderName,
 		tokenizer: base + 'vocab.txt',
 		filenames: { encoder: encoderName, decoder: decoderName },
