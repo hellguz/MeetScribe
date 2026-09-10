@@ -27,6 +27,23 @@ export const CACHE_NAME = 'meetscribe-parakeet-v1'
 export const MODEL_BASE = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
 
 /**
+ * Does the self-hosted encoder keep its weights in a `.onnx.data` sidecar?
+ *
+ * Declared, not discovered. It used to be discovered, with a HEAD for
+ * `<encoder>.onnx.data` whenever a custom base was configured — and the
+ * answer is "no" for every repo this project actually ships against: both
+ * upstream encoders we ask for keep their weights inline, and so does the
+ * int8 mirror. So the probe was a request whose answer was always no, and it
+ * left a red 404 in the console of anyone with a custom base, which is
+ * everyone following the sample env.
+ *
+ * A split-weight encoder is a real thing to want to self-host, so the support
+ * stays — it just has to say so. Set VITE_PARAKEET_ENCODER_DATA=1 alongside
+ * VITE_PARAKEET_MODEL_BASE.
+ */
+const ENCODER_HAS_SIDECAR = /^(1|true|yes)$/i.test((import.meta.env.VITE_PARAKEET_ENCODER_DATA as string | undefined) ?? '')
+
+/**
  * Branches to try, in order. `feat/fp16-canonical-v3` used to be pinned here
  * for fp16 — it has since been deleted upstream and now 404s, so it is only a
  * slower path to the same failure.
@@ -153,19 +170,21 @@ export async function resolveModelFiles(plan: ParakeetPlan, customBase?: string)
 	const decoderName = 'decoder_joint-model.int8.onnx'
 	const bases = customBase ? [customBase.endsWith('/') ? customBase : `${customBase}/`] : REVISIONS.map(hfBase)
 
-	const build = async (base: string): Promise<ResolvedFiles> => ({
+	const build = (base: string): ResolvedFiles => ({
 		base,
 		encoder: base + encoderName,
-		// Both upstream encoders keep their weights inline — only the fp32
-		// `encoder-model.onnx` has a `.data` sidecar, and we never ask for that
-		// one. Probing for a file we know is absent bought nothing and put a
-		// red 404 in everyone's console on every single run, which reads like a
-		// broken build. A custom base can serve anything, so it is still asked.
-		encoderData: customBase && (await probe(`${base + encoderName}.data`)) === true ? `${base + encoderName}.data` : null,
+		// Only where the deployment says so; see `ENCODER_HAS_SIDECAR`.
+		encoderData: customBase && ENCODER_HAS_SIDECAR ? `${base + encoderName}.data` : null,
 		decoder: base + decoderName,
 		tokenizer: base + 'vocab.txt',
 		filenames: { encoder: encoderName, decoder: decoderName },
 	})
+
+	// Probing exists to choose between candidate revisions. With one base
+	// there is nothing to choose, so there is nothing to ask: a base that does
+	// not serve the file fails at load, which is where it would have failed
+	// anyway, and asking first only doubles the requests.
+	if (bases.length === 1) return build(bases[0])
 
 	let unprobed: string | null = null
 	for (const base of bases) {
