@@ -314,22 +314,39 @@ export function useOnDevice(): OnDeviceController {
 		[patch, terminateWorkers],
 	)
 
-	// Load as soon as the feature is on and we know the plan, so the download
-	// happens before the meeting rather than during it.
+	/**
+	 * Nothing is fetched until a meeting starts.
+	 *
+	 * This used to load the moment Local mode was switched on, so that the
+	 * download was over before the meeting began. It also meant that simply
+	 * *having* the switch on pulled ~700 MB of Parakeet plus the diarization
+	 * models every time the record page was opened — seventeen requests
+	 * before the user had touched anything — and put "Reading model 3%" in
+	 * the top bar of a page where nothing had been asked for.
+	 *
+	 * So the models are armed by `beginMeeting` instead. The first chunk
+	 * waits on the load, which costs the first thirty seconds of a meeting
+	 * and is the trade the user asked for. Staying armed afterwards keeps a
+	 * second recording instant.
+	 */
+	const [armed, setArmed] = useState(false)
+
 	useEffect(() => {
 		if (!state.enabled) {
 			if (state.phase !== 'idle' || state.plan !== null) {
 				terminateWorkers()
 				patch({ phase: 'idle', error: null, download: null, plan: null, statusText: null, log: [], autoFallbackPlan: null, autoFallbackReason: null })
 			}
+			setArmed(false)
 			return
 		}
+		if (!armed) return
 		if (!plan) return
-		if (meetingIdRef.current) return // never swap models mid-meeting
+		if (meetingIdRef.current && state.plan === plan) return // never swap models mid-meeting
 		// Load once per plan. A failed load stays failed until the user flips
 		// the switch (or picks another plan) — no silent retry loop.
 		if (state.plan !== plan || state.phase === 'idle') loadWorkers(plan)
-	}, [state.enabled, plan, state.plan, state.phase, loadWorkers, terminateWorkers, patch])
+	}, [state.enabled, armed, plan, state.plan, state.phase, loadWorkers, terminateWorkers, patch])
 
 	// Local mode lives in localStorage and can be flipped from the toggle or
 	// another tab; this keeps the pipeline in step with it.
@@ -461,6 +478,9 @@ export function useOnDevice(): OnDeviceController {
 
 	const beginMeeting = useCallback(
 		(meetingId: string, sink?: MeetingSink) => {
+			// The moment the models are actually needed. Everything up to here
+			// has cost the user nothing.
+			setArmed(true)
 			meetingIdRef.current = meetingId
 			sinkRef.current = sink ?? serverSink(meetingId)
 			chunksRef.current = new Map()
@@ -633,7 +653,18 @@ export function useOnDevice(): OnDeviceController {
 		}
 	}, [state.phase, patch])
 
-	const isUsable = state.enabled && state.phase !== 'error' && state.phase !== 'fallback' && state.phase !== 'idle'
+	/**
+	 * Would a meeting started now be handled here?
+	 *
+	 * "Local mode is on and nothing has failed" — deliberately not "the model
+	 * is already loaded". `useRecording` reads this to decide where a meeting
+	 * goes, and the models are no longer fetched until a meeting starts, so
+	 * requiring them to be resident first would send every first recording of
+	 * a session to the server while the switch said "On device". A failed or
+	 * abandoned load still says no, which is what hands the next meeting to
+	 * the server on purpose.
+	 */
+	const isUsable = state.enabled && state.phase !== 'error' && state.phase !== 'fallback'
 	const localStage = state.phase === 'diarizing' ? 'diarizing' : state.phase === 'finalizing' ? 'summarizing' : null
 
 	return { state: { ...state, plan }, setPlanChoice, isUsable, beginMeeting, addChunk, finish, localStage }

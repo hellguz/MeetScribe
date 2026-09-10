@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useSyncExternalStore } from 'react'
 import { AppTheme } from '../styles/theme'
-import { getLocalActivity, subscribeLocalActivity, type LocalActivity } from '../local/activity'
+import { getLocalActivity, subscribeLocalActivity } from '../local/activity'
 
 /**
  * "Writing summary · 41%", in a pill the size of the theme toggle.
@@ -52,9 +52,22 @@ interface Props {
 }
 
 const LocalActivityBadge: React.FC<Props> = ({ theme }) => {
-	const [activity, setActivity] = useState<LocalActivity | null>(getLocalActivity)
-
-	useEffect(() => subscribeLocalActivity(setActivity), [])
+	/**
+	 * `useSyncExternalStore`, not `useState` + `useEffect`, because the naive
+	 * pair loses exactly one update and it is the one that matters.
+	 *
+	 * On a route change React renders the new page (this badge reads the slot
+	 * — still holding the old page's "Loading model") *before* it runs the old
+	 * page's cleanup, which is what clears the slot. That clear is broadcast
+	 * to subscribers, and this badge has not subscribed yet, so it misses it.
+	 * The next writer then finds the slot already null and coalesces its own
+	 * update away, so nothing ever tells the badge again: it sat there naming
+	 * a model load belonging to a page the reader had left.
+	 *
+	 * This hook re-reads the snapshot after subscribing, which is the whole
+	 * reason it exists.
+	 */
+	const activity = useSyncExternalStore(subscribeLocalActivity, getLocalActivity, getLocalActivity)
 
 	if (!activity) return null
 

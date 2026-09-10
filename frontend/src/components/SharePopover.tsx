@@ -2,30 +2,28 @@ import React, { useEffect, useRef, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import type { LocalMeeting } from '../local/store'
 import { ShareIcon } from './Icons'
-import {
-	DEFAULT_DURATION_SECONDS,
-	SHARE_DURATIONS,
-	formatExpiry,
-	publishMeeting,
-	shareUrl,
-	unpublishMeeting,
-	type PublishStatus,
-} from '../local/publish'
+import { DEFAULT_DURATION_SECONDS, SHARE_DURATIONS, formatExpiry, publishMeeting, shareUrl, type PublishStatus } from '../local/publish'
 
 /**
  * Sharing a meeting: one duration, one link.
  *
  * Deliberately not two features. "Share for a while" and "keep it in the
  * cloud" are the same operation with different clocks, so `Never` is a chip
- * in the row rather than a second button somewhere else — which is also how a
+ * in the row rather than a second concept elsewhere — which is also how a
  * meeting recorded in cloud mode is described, since that is exactly what it
  * is.
  *
- * It is also the only place that states where the meeting is kept. A badge
- * used to say it alongside, and briefly a second local/cloud switch as well;
- * both are gone, because one of the two would eventually be wrong and the
- * question they answered is the one this popover exists to change.
+ * The reverse operation is not here. Un-sharing lives behind the padlock, and
+ * it lives there *only*: "Stop sharing" was a third button in this footer
+ * doing what clicking the padlock does, which meant two places to keep in
+ * step and two chances to word the same warning differently.
+ *
+ * The link is a button, not a text box. A monospace URL across the middle of
+ * a popover is the widest thing in it, it invites reading a `uuid` nobody
+ * needs to read, and the only thing anyone does with it is copy it.
  */
+
+const AMBER = '#f59e0b'
 
 interface Props {
 	theme: AppTheme
@@ -33,19 +31,18 @@ interface Props {
 	status: PublishStatus | null
 	/** A local meeting is not on the server until it is published; a cloud one already is. */
 	isLocal: boolean
-	/** Offered only when there is somewhere to put the meeting afterwards. */
-	canMakePrivate?: boolean
-	onMakePrivate?: () => void
 	onChange: (status: PublishStatus | null) => void
 	onClose: () => void
 }
 
-const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMakePrivate, onMakePrivate, onChange, onClose }) => {
+const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, onChange, onClose }) => {
 	// A cloud meeting is already shared, with no expiry — that is precisely
 	// what "cloud" means here — so it opens on `Never` rather than pretending
 	// nothing has been shared yet.
-	const alreadyShared = !isLocal || !!status?.expires_at
-	const [seconds, setSeconds] = useState<number | null>(isLocal ? DEFAULT_DURATION_SECONDS : null)
+	const alreadyShared = !isLocal || !!status?.published || !!status?.expires_at
+	const [seconds, setSeconds] = useState<number | null>(
+		isLocal ? (status?.expires_at ? DEFAULT_DURATION_SECONDS : status?.published ? null : DEFAULT_DURATION_SECONDS) : null,
+	)
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [copied, setCopied] = useState(false)
@@ -64,18 +61,6 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 		}
 	}, [onClose])
 
-	const run = async (fn: () => Promise<void>) => {
-		setBusy(true)
-		setError(null)
-		try {
-			await fn()
-		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e))
-		} finally {
-			setBusy(false)
-		}
-	}
-
 	const link = shareUrl(meeting.id)
 
 	const copy = async () => {
@@ -84,7 +69,7 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 			setCopied(true)
 			setTimeout(() => setCopied(false), 2500)
 		} catch {
-			setError('Could not copy the link. Select it and copy by hand.')
+			setError(`Could not reach the clipboard. The link is ${link}`)
 		}
 	}
 
@@ -109,6 +94,24 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 		</button>
 	)
 
+	const secondary = (label: string, onClick: () => void) => (
+		<button
+			type="button"
+			onClick={onClick}
+			style={{
+				padding: '7px 11px',
+				borderRadius: '6px',
+				border: `1px solid ${theme.border}`,
+				backgroundColor: theme.backgroundSecondary,
+				color: theme.text,
+				font: 'inherit',
+				fontSize: '12px',
+				cursor: 'pointer',
+			}}>
+			{label}
+		</button>
+	)
+
 	return (
 		<div
 			ref={wrapRef}
@@ -120,7 +123,7 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 				// stacking, so the two menus read as one family.
 				position: 'absolute',
 				top: '100%',
-				right: 0,
+				left: 0,
 				marginTop: '4px',
 				zIndex: 1000,
 				width: 'min(320px, calc(100vw - 32px))',
@@ -135,129 +138,55 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 			}}>
 			<div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '6px' }}>
 				<ShareIcon size={13} />
-				<strong style={{ fontSize: '13px' }}>{alreadyShared ? 'Shared' : 'Only in this browser'}</strong>
+				<strong style={{ fontSize: '13px' }}>{alreadyShared ? 'Shared' : 'Share this meeting'}</strong>
 			</div>
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				{alreadyShared
-					? 'Anyone with the link can read it, and anything you change here is pushed to that copy. Set an expiry to have it deleted automatically.'
-					: 'Nobody else can reach this meeting yet. Sharing puts a copy on the server; whoever opens the link can save it as their own meeting, at their own link, which yours is then unaffected by.'}
+					? 'Anyone with the link can read it, and anything you change here is pushed to that copy.'
+					: 'Sharing puts a copy on the server; whoever opens the link can save it as their own meeting, at their own link, which yours is then unaffected by.'}
 			</p>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
 				{SHARE_DURATIONS.map((d) => chip(d.label, seconds === d.seconds, () => setSeconds(d.seconds)))}
 			</div>
 
-			{seconds === null && (
-				<p style={{ margin: '0 0 10px', color: theme.secondaryText, lineHeight: 1.45 }}>
-					Stays on the server until you remove it. This is what a normal cloud meeting is.
-				</p>
-			)}
+			<p style={{ margin: '0 0 10px', color: theme.secondaryText, lineHeight: 1.45 }}>
+				{seconds === null
+					? 'Stays on the server until you take it back — which is what a normal cloud meeting is.'
+					: `Deleted automatically when the time is up${status?.expires_at ? `, currently ${formatExpiry(status.expires_at)}` : ''}.`}{' '}
+				Whoever saves it keeps their own copy.
+			</p>
 
-			{(alreadyShared || status?.published) && (
-				<>
-					<div
-						style={{
-							display: 'flex',
-							alignItems: 'center',
-							gap: '8px',
-							padding: '7px 9px',
-							borderRadius: '8px',
-							border: `1px solid ${theme.border}`,
-							backgroundColor: theme.backgroundSecondary,
-							marginBottom: '8px',
-						}}>
-						<span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '12px' }}>
-							{link}
-						</span>
-						<button
-							type="button"
-							onClick={copy}
-							style={{
-								padding: '4px 10px',
-								borderRadius: '6px',
-								border: `1px solid ${theme.border}`,
-								backgroundColor: theme.background,
-								color: theme.text,
-								font: 'inherit',
-								fontSize: '12px',
-								cursor: 'pointer',
-								flexShrink: 0,
-							}}>
-							{copied ? 'Copied ✓' : 'Copy'}
-						</button>
-					</div>
-					<p style={{ margin: '0 0 10px', color: theme.secondaryText, lineHeight: 1.45 }}>
-						{status?.expires_at ? `Expires ${formatExpiry(status.expires_at)}` : 'No expiry — stays until you remove it'} · your edits keep it up
-						to date · whoever saves it owns their copy
-					</p>
-				</>
-			)}
-
-			{error && <p style={{ margin: '0 0 10px', color: '#b45309', lineHeight: 1.45 }}>{error}</p>}
+			{error && <p style={{ margin: '0 0 10px', color: '#b45309', lineHeight: 1.45, wordBreak: 'break-word' }}>{error}</p>}
 
 			<div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-				{canMakePrivate && onMakePrivate && (
-					<button
-						type="button"
-						disabled={busy}
-						onClick={() => {
-							onClose()
-							onMakePrivate()
-						}}
-						style={{
-							padding: '7px 11px',
-							borderRadius: '6px',
-							border: `1px solid ${theme.border}`,
-							backgroundColor: theme.backgroundSecondary,
-							color: theme.text,
-							font: 'inherit',
-							fontSize: '12px',
-							cursor: busy ? 'wait' : 'pointer',
-						}}>
-						Make private
-					</button>
-				)}
-				{isLocal && status?.published && (
-					<button
-						type="button"
-						disabled={busy}
-						onClick={() =>
-							run(async () => {
-								if (!window.confirm('Anyone with the link loses access. People who already opened it keep their copy.')) return
-								await unpublishMeeting(meeting.id)
-								onChange(null)
-							})
-						}
-						style={{
-							padding: '7px 11px',
-							borderRadius: '6px',
-							border: `1px solid ${theme.border}`,
-							backgroundColor: theme.backgroundSecondary,
-							color: theme.text,
-							font: 'inherit',
-							fontSize: '12px',
-							cursor: busy ? 'wait' : 'pointer',
-						}}>
-						Stop sharing
-					</button>
-				)}
+				{alreadyShared && secondary(copied ? 'Copied ✓' : 'Copy link', copy)}
 				<button
 					type="button"
 					disabled={busy}
-					onClick={() =>
-						run(async () => {
-							const next = await publishMeeting(meeting, seconds)
-							onChange(next)
-						})
-					}
+					onClick={async () => {
+						setBusy(true)
+						setError(null)
+						try {
+							onChange(await publishMeeting(meeting, seconds))
+							onClose()
+						} catch (e) {
+							setError(e instanceof Error ? e.message : String(e))
+						} finally {
+							setBusy(false)
+						}
+					}}
 					style={{
 						padding: '7px 11px',
 						borderRadius: '6px',
 						border: '1px solid transparent',
-						backgroundColor: theme.button.primary,
-						color: theme.button.primaryText,
+						// Amber for an update, the colour this app gives a share
+						// that is being held open on a clock.
+						backgroundColor: alreadyShared ? AMBER : theme.button.primary,
+						color: '#ffffff',
 						font: 'inherit',
 						fontSize: '12px',
+						fontWeight: 500,
 						cursor: busy ? 'wait' : 'pointer',
 						opacity: busy ? 0.7 : 1,
 					}}>

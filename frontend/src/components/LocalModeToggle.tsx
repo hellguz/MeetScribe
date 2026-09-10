@@ -49,23 +49,43 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 		measureCachedModels().then(setCached)
 	}, [])
 
-	// Capabilities are needed whenever local mode is on, not only while the
-	// panel is open: the caution marker on the switch is drawn from them, and
-	// a machine with no WebGPU should say so before anyone opens anything.
+	/**
+	 * What this machine can do. Needed whenever local mode is on, not only
+	 * while the panel is open, because the caution marker on the switch is
+	 * drawn from it and a machine with no WebGPU should say so before anyone
+	 * opens anything. Costs no network: it asks the browser for a GPU adapter
+	 * and reads the user agent.
+	 */
 	useEffect(() => {
 		if (!open && !enabled) return
 		let live = true
-		detectCapabilities().then((c) => {
-			if (!live) return
-			setCaps(c)
-			// Ask the host rather than hardcoding: a self-hosted model base can
-			// serve files nothing like the upstream sizes.
-			measurePlanBytes(resolvePlan('auto', c)).then((b) => live && b !== null && setSpeechBytes(b))
-		})
+		detectCapabilities().then((c) => live && setCaps(c))
 		return () => {
 			live = false
 		}
 	}, [open, enabled])
+
+	/**
+	 * How big the download is. Only while the panel is on screen, because
+	 * this one *does* touch the network — a HEAD and a ranged GET per file,
+	 * against whichever host is configured.
+	 *
+	 * It used to run alongside the capability check, which put nine requests
+	 * (one of them a 404) on the record page every time it was opened, purely
+	 * to have a number ready in a panel nobody had asked for. The record page
+	 * now fetches nothing at all until a meeting starts, and that has to mean
+	 * nothing.
+	 */
+	useEffect(() => {
+		if (!open || !caps) return
+		let live = true
+		// Ask the host rather than hardcoding: a self-hosted model base can
+		// serve files nothing like the upstream sizes.
+		measurePlanBytes(resolvePlan('auto', caps)).then((b) => live && b !== null && setSpeechBytes(b))
+		return () => {
+			live = false
+		}
+	}, [open, caps])
 
 	// Only while the panel is on screen: it is a disk read per cached file.
 	useEffect(() => {

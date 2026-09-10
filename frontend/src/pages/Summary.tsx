@@ -30,9 +30,10 @@ import { storageOf, getHistory, saveMeeting as saveMeetingMeta } from '../utils/
 import { localSummaryView } from '../utils/localSummaryView'
 import { downloadMeetingMarkdown } from '../local/export'
 import SharePopover from '../components/SharePopover'
+import KeepLocalPopover from '../components/KeepLocalPopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
 import TombstoneNotice from '../components/TombstoneNotice'
-import { hasOwnerToken, type PublishStatus } from '../local/publish'
+import { hasOwnerToken, unpublishMeeting, type PublishStatus } from '../local/publish'
 import { putLocalMeeting, type LocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
@@ -373,7 +374,14 @@ export default function Summary() {
 	}, [needsLocalSummary, localSummary, currentMeetingLength])
 
 	// ── Sharing ──────────────────────────────────────────────────────────
-	const [shareOpen, setShareOpen] = useState(false)
+	/**
+	 * Which of the storage toggle's two panels is open.
+	 *
+	 * The padlock gets its own. It used to open the sharing panel, so someone
+	 * who had just asked to make a meeting private was shown a row of share
+	 * durations and no mention of what taking it back would do.
+	 */
+	const [storagePanel, setStoragePanel] = useState<'share' | 'lock' | null>(null)
 	const [share, setShare] = useState<PublishStatus | null>(null)
 	const [savedCopy, setSavedCopy] = useState(false)
 	const [convertError, setConvertError] = useState<string | null>(null)
@@ -500,14 +508,25 @@ export default function Summary() {
 	 * than a browser dialog with bullet characters in it. Two confirmations for
 	 * one deliberate action is one too many.
 	 */
-	const handleMakePrivate = useCallback(async () => {
+	/**
+	 * Take the meeting back, from wherever it currently is.
+	 *
+	 * Two different operations behind one padlock, because to the reader they
+	 * are one thing — "nobody but me": a local meeting that has been shared
+	 * only needs its server copy deleted, while a cloud meeting has no local
+	 * original yet and one has to be written and verified before the server's
+	 * is touched. Throws, so the panel can show why it failed and stay open.
+	 */
+	const handleKeepLocal = useCallback(async () => {
+		if (!mid) return
 		setConvertError(null)
-		try {
-			await meeting.makePrivate()
-		} catch (e) {
-			setConvertError(e instanceof Error ? e.message : String(e))
+		if (isLocal) {
+			await unpublishMeeting(mid)
+			setShare(null)
+			return
 		}
-	}, [meeting])
+		await meeting.makePrivate()
+	}, [mid, isLocal, meeting])
 
 	/**
 	 * One control for both modes, because they are the same thing.
@@ -619,18 +638,28 @@ export default function Summary() {
 											accent: share?.expires_at ? '#f59e0b' : undefined,
 										},
 									]}
-									onSelect={() => setShareOpen((v) => !v)}
+									onSelect={(side) => {
+										const wanted = side === 'private' ? 'lock' : 'share'
+										setStoragePanel((open) => (open === wanted ? null : wanted))
+									}}
 								/>
-								{shareOpen && (
+								{storagePanel === 'share' && (
 									<SharePopover
 										theme={currentThemeColors}
 										meeting={meeting.localMeeting ?? asRecord()}
 										status={share}
 										isLocal={isLocal}
-										canMakePrivate={!isLocal && hasSummary}
-										onMakePrivate={handleMakePrivate}
 										onChange={setShare}
-										onClose={() => setShareOpen(false)}
+										onClose={() => setStoragePanel(null)}
+									/>
+								)}
+								{storagePanel === 'lock' && (
+									<KeepLocalPopover
+										theme={currentThemeColors}
+										isLocal={isLocal}
+										isShared={isShared}
+										onKeepLocal={handleKeepLocal}
+										onClose={() => setStoragePanel(null)}
 									/>
 								)}
 							</div>
