@@ -52,6 +52,13 @@ const CHANGELOG: ChangelogEntry[] = [
 		],
 	},
 	{
+		when: 'September 2026',
+		lines: [
+			'⚡ Experimental: transcribe and label speakers right in your browser — only the finished text reaches the server, and Claude still writes the summary.',
+			'One model download of about 0.7 GB, cached for next time. Live recordings, 25 European languages.',
+		],
+	},
+	{
 		when: 'August 2026',
 		highlights: [
 			{
