@@ -372,7 +372,17 @@ def rebuild_full_transcript(
     return transcript_text, len(chunks)
 
 
-def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
+def finalize_meeting_processing(
+    db: Session, mtg: Meeting, *, rediarize: bool = False
+) -> None:
+    """Build the transcript, summarize it, and title the meeting.
+
+    `rediarize` forces the audio back through the diarization pipeline. It is
+    for the explicit "find speakers" action only. Everything else — a fresh
+    recording, and every regenerate — leaves that decision to
+    `mtg.diarization_attempted`, so changing a summary setting re-summarizes
+    without re-decoding an hour of audio.
+    """
     LOGGER.info("Meeting %s: Finalizing. Building transcript and summarizing.", mtg.id)
     plain_transcript, num_chunks = rebuild_full_transcript(db, mtg.id)
 
@@ -383,18 +393,32 @@ def finalize_meeting_processing(db: Session, mtg: Meeting) -> None:
     final_transcript = plain_transcript
     duration_seconds = num_chunks * 30
 
-    if mtg.client_processing:
-        # The browser transcribed and diarized. It handed us the labelled
-        # transcript and the real duration via /finalize; if it never did
-        # (tab closed mid-way), the plain chunk texts are the best we have.
-        if mtg.transcript_text and mtg.transcript_text.strip():
-            final_transcript = mtg.transcript_text
+    # `rebuild_full_transcript` reassembles the *unlabelled* chunk texts, so a
+    # transcript we have already produced — labelled by the browser, or by an
+    # earlier diarization run — is strictly better. Reusing it is what makes a
+    # regenerate cheap; without this, the only way to get the speaker names
+    # back into the summary would be to diarize the audio all over again.
+    stored_transcript = bool(mtg.transcript_text and mtg.transcript_text.strip())
+    reuse_stored = (
+        stored_transcript
+        and not rediarize
+        and (mtg.client_processing or mtg.diarization_attempted)
+    )
+    if reuse_stored:
+        final_transcript = mtg.transcript_text
         if mtg.duration_seconds:
             duration_seconds = mtg.duration_seconds
         if mtg.processing_total is None:
             mtg.processing_total = 1
 
-    if plain_transcript and diarization.is_enabled() and not mtg.client_processing:
+    should_diarize = (
+        plain_transcript
+        and diarization.is_enabled()
+        and not mtg.client_processing
+        # Never twice by accident: only a first pass, or an explicit re-run.
+        and (rediarize or not mtg.diarization_attempted)
+    )
+    if should_diarize:
         # A fresh recording was transcribed live, so this run is diarize +
         # summarize. Reprocessing sets 3 before calling us.
         if mtg.processing_total is None:
@@ -712,7 +736,7 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
             # From here on the server owns the transcript, even if the browser
             # produced the original one; finalize would otherwise keep it.
             mtg.client_processing = False
-            finalize_meeting_processing(db, mtg)
+            finalize_meeting_processing(db, mtg, rediarize=True)
             LOGGER.info("✅ Meeting %s re-diarized.", meeting_id_str)
 
     except Exception:
