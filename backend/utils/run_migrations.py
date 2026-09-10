@@ -32,6 +32,7 @@ MIGRATIONS = [
     "add_diarization_columns.py",
     "add_meeting_id_indexes.py",
     "add_client_processing_columns.py",
+    "add_local_summary_table.py",
 ]
 
 

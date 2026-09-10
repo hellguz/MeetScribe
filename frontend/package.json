@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.0.18",
+    "@huggingface/transformers": "4.2.0",
     "marked": "^17.0.5",
     "onnxruntime-web": "1.29.0",
     "parakeet.js": "1.4.4",

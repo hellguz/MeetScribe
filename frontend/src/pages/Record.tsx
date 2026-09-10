@@ -16,6 +16,7 @@ import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { useOnDevice } from '../ondevice/useOnDevice'
 import OnDevicePanel from '../components/OnDevicePanel'
+import LocalSummaryOptIn from '../components/LocalSummaryOptIn'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -269,6 +270,9 @@ export default function Record() {
 						</div>
 					)}
 					{audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={false} />}
+					{/* Unconditional, unlike the transcription card: on-device
+					    summarization applies to uploads and to old meetings too. */}
+					<LocalSummaryOptIn theme={currentThemeColors} />
 				</>
 			)}
 
