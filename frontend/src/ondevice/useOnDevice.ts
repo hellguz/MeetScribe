@@ -15,11 +15,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities, type ParakeetPlan, type PlanChoice } from './capabilities'
 import { fetchModelManifest, serverSink, type MeetingSink, type ModelManifest } from './api'
+import { MODEL_BASE } from './hub'
 import { labelTranscript, pruneMinorSpeakers, renumberByFirstAppearance, type SpeakerTurn, type TranscriptChunk, type TranscriptSegment } from './diarization/label'
 import type { ParakeetWorkerRequest, ParakeetWorkerResponse } from './parakeet.worker'
 import type { DiarizationWorkerRequest, DiarizationWorkerResponse } from './diarization.worker'
 import type { TranscribeWord } from './types'
 import { isLocalMode } from '../local/mode'
+import { setLocalActivity } from '../local/activity'
 
 const SAMPLE_RATE = 16_000
 const STORAGE_PLAN = 'meetscribe_ondevice_plan'
@@ -286,8 +288,7 @@ export function useOnDevice(): OnDeviceController {
 				}
 			})
 			parakeetReady.current.catch(() => {})
-			const modelBase = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
-			parakeet.postMessage({ type: 'load', plan: chosen, modelBase } satisfies ParakeetWorkerRequest)
+			parakeet.postMessage({ type: 'load', plan: chosen, modelBase: MODEL_BASE } satisfies ParakeetWorkerRequest)
 
 			const diarizer = new Worker(new URL('./diarization.worker.ts', import.meta.url), { type: 'module' })
 			diarizerRef.current = diarizer
@@ -341,6 +342,45 @@ export function useOnDevice(): OnDeviceController {
 			window.removeEventListener('meetscribe:localmode', sync)
 		}
 	}, [patch])
+
+	// ---- the top bar's one-line "what is happening" -----------------------
+	//
+	// Derived rather than pushed from each message handler: the phase and the
+	// counters already say everything the indicator shows, and a single place
+	// to map them means the record page and the summary page cannot disagree
+	// about what the device is doing.
+	const { enabled, phase, download, transcription, diarization } = state
+	useEffect(() => {
+		if (!enabled) return setLocalActivity(null)
+		if (phase === 'loading') {
+			if (download && !download.done && download.total > 0) {
+				return setLocalActivity({
+					label: download.cached ? 'Reading model' : 'Fetching speech model',
+					progress: download.loaded / download.total,
+				})
+			}
+			return setLocalActivity({ label: 'Loading model', progress: null })
+		}
+		if (phase === 'diarizing') {
+			return setLocalActivity({
+				label: 'Finding speakers',
+				progress: diarization.total > 0 ? diarization.done / diarization.total : null,
+			})
+		}
+		if (phase === 'finalizing') return setLocalActivity({ label: 'Finishing up', progress: null })
+		if (phase === 'ready' && transcription.queued > 0) {
+			const total = transcription.done + transcription.queued
+			return setLocalActivity({
+				label: 'Transcribing',
+				progress: total > 0 ? transcription.done / total : null,
+				detail: `${transcription.done} of ${total} chunks transcribed on this device`,
+			})
+		}
+		return setLocalActivity(null)
+	}, [enabled, phase, download, transcription, diarization])
+
+	// Leaving the page must not leave a stale pill behind.
+	useEffect(() => () => setLocalActivity(null), [])
 
 	useEffect(() => () => terminateWorkers(), [terminateWorkers])
 

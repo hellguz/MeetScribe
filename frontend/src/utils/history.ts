@@ -18,6 +18,22 @@ export interface MeetingMeta {
 	 * `storageOf` rather than a migration.
 	 */
 	storage?: MeetingStorage
+	/**
+	 * ISO expiry of the shared copy, for a local meeting that has been
+	 * published. Mirrors `LocalMeeting.shared_until`, because the history list
+	 * renders from this index alone and would otherwise stamp "On this device"
+	 * on a meeting anyone with the link can read.
+	 *
+	 * `undefined` on rows written before sharing existed, and on cloud rows,
+	 * where the server's `expires_at` is the authority.
+	 */
+	shared_until?: string | null
+	/**
+	 * Mirrors `LocalMeeting.published`: there is a copy on the server, whether
+	 * or not it has an expiry. See that field for why `shared_until` alone
+	 * cannot answer this.
+	 */
+	published?: boolean
 }
 
 /** Treat a missing `storage` as 'cloud': that is what every old entry is. */

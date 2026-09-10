@@ -10,7 +10,7 @@ import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, DownloadIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, LockIcon, DownloadIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -21,6 +21,7 @@ import { useMeetingSummary } from '../hooks/useMeetingSummary'
 import OnDeviceStats from '../components/OnDeviceStats'
 import { MarkdownView } from '../components/MarkdownView'
 import StorageBadge from '../components/StorageBadge'
+import LocalActivityBadge from '../components/LocalActivityBadge'
 import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
 import { isLocalMode } from '../local/mode'
@@ -78,8 +79,12 @@ export default function Summary() {
 	} = meeting
 
 	// For a local meeting this *is* the summary; there is no other one.
-
-	const localSummary = useLocalSummary(mid)
+	//
+	// `onSaved` is what puts it on screen. The run writes to IndexedDB, and
+	// the hook that reads IndexedDB had no reason to read it again — so a
+	// finished run left the page saying "No summary is available for this
+	// meeting" until it was reloaded.
+	const localSummary = useLocalSummary(mid, { onSaved: meeting.applyLocalMeeting })
 
 	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
@@ -309,8 +314,23 @@ export default function Summary() {
 	// console every time someone opened a meeting they had never shared.
 	useEffect(() => {
 		if (!mid) return
-		setShare(meeting.expiresAt ? { id: mid, published: true, expires_at: meeting.expiresAt, origin: 'published' } : null)
-	}, [mid, meeting.expiresAt])
+		const online = !!meeting.expiresAt || meeting.publishedLocally
+		setShare(online ? { id: mid, published: true, expires_at: meeting.expiresAt, origin: 'published' } : null)
+	}, [mid, meeting.expiresAt, meeting.publishedLocally])
+
+	/**
+	 * Is there a copy of this meeting anyone else could reach?
+	 *
+	 * Not the same question as "where does it live". A local meeting with a
+	 * live share link is shared — the server is holding a copy so the link
+	 * works — and a cloud meeting is shared with no expiry, which is all
+	 * "in the cloud" has ever meant. So this, and not the storage backend, is
+	 * what the one control in the toolbar shows and changes.
+	 *
+	 * `published` rather than only `expires_at`, because the share that means
+	 * "keep it in the cloud" is precisely the one with no expiry.
+	 */
+	const isShared = !isLocal || !!share?.published || !!share?.expires_at
 
 	// A cloud meeting with an expiry is somebody else's shared copy: it is
 	// going away, and after that there is nothing to come back to.
@@ -355,17 +375,15 @@ export default function Summary() {
 		downloadMeetingMarkdown(meeting.localMeeting ?? asRecord())
 	}, [meeting.localMeeting, asRecord])
 
+	/**
+	 * Pull the meeting into this browser.
+	 *
+	 * No `window.confirm` here any more: the switch that calls this opens a
+	 * panel listing exactly what the move costs, in the app’s own type rather
+	 * than a browser dialog with bullet characters in it. Two confirmations for
+	 * one deliberate action is one too many.
+	 */
 	const handleMakePrivate = useCallback(async () => {
-		if (
-			!window.confirm(
-				'Make this meeting private?\n\n' +
-					'It will be copied into this browser and removed from the server.\n\n' +
-					'• Anyone you shared the link with loses access.\n' +
-					'• The original audio is deleted, so speakers can never be re-identified.\n' +
-					'• It will exist only in this browser. Clearing site data deletes it.',
-			)
-		)
-			return
 		setConvertError(null)
 		try {
 			await meeting.makePrivate()
@@ -382,15 +400,20 @@ export default function Summary() {
 	 * and "make private" button: the popover shows the current state and offers
 	 * the moves out of it, whichever state you are in.
 	 */
-	const shareTitle = isLocal
-		? share?.expires_at
-			? 'Shared — manage the link'
-			: 'Share this meeting with a link'
-		: 'Shared — anyone with the link can read it'
+	const shareTitle = !isShared
+		? 'Only in this browser — share it with a link'
+		: share?.expires_at
+			? 'Shared — manage the link or let it expire'
+			: 'Shared with no expiry — anyone with the link can read it'
 
 	// Streaming output has nowhere to live until the run is saved, so it gets
-	// its own card while it arrives.
-	const showStreaming = localSummary.state.streaming.length > 0 && localSummary.state.phase !== 'done'
+	// its own card while it arrives — and gives it up the moment the stored
+	// summary exists, not when the phase reaches 'done'. The two used to be
+	// the same moment only because saving never reached the page: now that it
+	// does, and now that a title is generated after it, the phase is still
+	// 'saving' or 'titling' while the real summary is already on screen, and
+	// the card was rendering the same text again underneath it.
+	const showStreaming = localSummary.state.streaming.length > 0 && !summaryMarkdown
 	const showLocalPanel = isLocal && !!transcript && !summaryMarkdown && !showStreaming
 
 	const copyButtonStyle: React.CSSProperties = {
@@ -437,15 +460,17 @@ export default function Summary() {
 						}}>
 						← Back
 					</button>
-					<StorageBadge
-						storage={storage}
-						theme={currentThemeColors}
-						loud={badgeLoud}
-						sharedUntil={isLocal ? (share?.expires_at ?? null) : null}
-						gone={!!meeting.tombstone}
-					/>
+					{/* Nothing about storage lives here any more. Sharing *is*
+					    storage — a cloud meeting is one shared with no expiry —
+					    so the share control below states it and changes it, and a
+					    second control saying the same thing was just somewhere
+					    else for the two to disagree. A removed meeting keeps its
+					    marker, because `TombstoneNotice` is the only other place
+					    that says so and it can be scrolled past. */}
+					{meeting.tombstone && <StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} gone />}
 				</div>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+					<LocalActivityBadge theme={currentThemeColors} />
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering
 					    "edit" while an on-device run is on screen would imply the
@@ -488,13 +513,20 @@ export default function Summary() {
 									<DownloadIcon />
 								</button>
 							</div>
+							{/* Sharing is its own control, not a third member of the
+							    edit/delete group: it acts on where the meeting is
+							    rather than on what it says. It is also the only
+							    place that says where the meeting is, so the glyph
+							    carries the state — a padlock while the meeting is
+							    only in this browser, the share mark once a copy is
+							    on the server. */}
 							<div
 								style={{
 									display: 'flex',
 									borderRadius: '6px',
 									// `overflow: hidden` would clip the share popover this
-									// group now anchors, so the ends are rounded per-button
-									// by the group's own radius instead.
+									// group anchors, so the ends are rounded per-button by
+									// the group's own radius instead.
 									border: `1px solid ${currentThemeColors.border}`,
 									backgroundColor: currentThemeColors.backgroundSecondary,
 									position: 'relative',
@@ -502,12 +534,39 @@ export default function Summary() {
 								<button
 									onClick={() => setShareOpen((v) => !v)}
 									title={shareTitle}
-									style={{ ...copyButtonStyle, color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText }}
+									aria-label={shareTitle}
+									style={{
+										...copyButtonStyle,
+										// Amber only for a share with a clock on it,
+										// the colour the app already uses for
+										// "temporary". A padlock is not a warning.
+										color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText,
+									}}
 									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-									<ShareIcon />
+									{isShared ? <ShareIcon /> : <LockIcon />}
 								</button>
-								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+								{shareOpen && (
+									<SharePopover
+										theme={currentThemeColors}
+										meeting={meeting.localMeeting ?? asRecord()}
+										status={share}
+										isLocal={isLocal}
+										canMakePrivate={!isLocal && hasSummary}
+										onMakePrivate={handleMakePrivate}
+										onChange={setShare}
+										onClose={() => setShareOpen(false)}
+									/>
+								)}
+							</div>
+							<div
+								style={{
+									display: 'flex',
+									borderRadius: '6px',
+									overflow: 'hidden',
+									border: `1px solid ${currentThemeColors.border}`,
+									backgroundColor: currentThemeColors.backgroundSecondary,
+								}}>
 								<button
 									onClick={() => enterEditMode()}
 									title="Edit summary"
@@ -525,18 +584,6 @@ export default function Summary() {
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 									<TrashIcon />
 								</button>
-								{shareOpen && (
-									<SharePopover
-										theme={currentThemeColors}
-										meeting={meeting.localMeeting ?? asRecord()}
-										status={share}
-										isLocal={isLocal}
-										canMakePrivate={!isLocal && hasSummary}
-										onMakePrivate={handleMakePrivate}
-										onChange={setShare}
-										onClose={() => setShareOpen(false)}
-									/>
-								)}
 							</div>
 							{mid && (
 								<>

@@ -47,6 +47,18 @@ export interface LocalMeeting {
 	 */
 	shared_until?: string | null
 	/**
+	 * There is a copy on the server right now.
+	 *
+	 * Not derivable from `shared_until`, which is null for two opposite
+	 * states: never shared, and shared with no expiry. Sharing with no expiry
+	 * is what "keep it in the cloud" means, so the two must be told apart —
+	 * without this a meeting shared forever showed a padlock.
+	 *
+	 * `undefined` on records written before sharing existed; a record with an
+	 * expiry is published whatever this says.
+	 */
+	published?: boolean
+	/**
 	 * The transcript exists but no summary was ever produced — the tab was
 	 * closed mid-run, or the user declined to fall back to the cloud. A real,
 	 * supported end state, not an error: the transcript is still worth having.

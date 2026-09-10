@@ -9,7 +9,8 @@
  * The worker keeps the loaded model in its own module scope, so a `summarize`
  * that follows a `preload` for the same id costs nothing.
  */
-import type { SummarizerRequest } from './summarizer.worker'
+import { setLocalActivity } from '../../local/activity'
+import type { SummarizerRequest, SummarizerResponse } from './summarizer.worker'
 
 let worker: Worker | null = null
 let preloadedModel: string | null = null
@@ -41,6 +42,24 @@ export function preloadSummaryModel(model: string): void {
 	if (preloadedModel === model) return
 	preloadedModel = model
 	const w = getSummaryWorker()
+	// The preload has no page watching it — it starts during a recording and
+	// finishes some minutes later — so it reports to the top-bar indicator
+	// itself. Three gigabytes arriving in silence is the one moment where the
+	// browser looks broken and is not.
+	const onMessage = (event: MessageEvent<SummarizerResponse>) => {
+		const msg = event.data
+		if (msg.type === 'download') {
+			setLocalActivity({
+				label: 'Fetching summary model',
+				progress: msg.total > 0 ? msg.loaded / msg.total : null,
+				detail: 'Downloading the summariser now, so it is ready when the meeting ends.',
+			})
+		} else if (msg.type === 'preloaded' || msg.type === 'error') {
+			setLocalActivity(null)
+			w.removeEventListener('message', onMessage)
+		}
+	}
+	w.addEventListener('message', onMessage)
 	w.postMessage({ type: 'preload', model } satisfies SummarizerRequest)
 }
 

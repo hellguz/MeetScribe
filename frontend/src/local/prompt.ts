@@ -145,5 +145,81 @@ export async function buildSummaryPrompt(input: BuildPromptInput): Promise<Built
 	return { prompt, targetLanguage, summaryLength: mode, promptChars: prompt.length }
 }
 
+/**
+ * Port of `tasks.generate_title_for_meeting`'s prompt.
+ *
+ * A cloud meeting gets a real title the moment it is summarized; a local one
+ * used to keep "Recording 10.9.2026, 14:59:33" forever, because the step that
+ * replaces it lived only on the server. Same instructions, same 2000-char
+ * transcript window, so the two sides name a meeting the same way.
+ */
+export function buildTitlePrompt(summary: string, transcript: string): string {
+	return `Create a concise meeting title efficiently. Follow instructions precisely.
+
+
+Analyze the following meeting summary and the full transcript. Your task is to generate a short, dense, and meaningful title for the meeting.
+**Instructions:**
+1.  **Language:** The title MUST be in the same language as the summary and transcript.
+2.  **Length:** The title must be between 6 and 15 words.
+3.  **Content:** The title should accurately reflect the main topics, decisions, or outcomes of the meeting. Avoid generic titles like "Meeting Summary" or "Project Update". It should be specific.
+4.  **Format:** Output ONLY the title text, with no extra formatting, quotes, or preamble.
+**Meeting Summary:**
+---
+${summary}
+---
+
+**Full Transcript (for context):**
+---
+${transcript.slice(0, 2000)}
+---
+
+Based on the content, generate the title now.
+`
+}
+
+/**
+ * Whether this title is still the placeholder the recorder wrote.
+ *
+ * Mirrors the server's `is_default_title` check, and for the same reason: a
+ * title the user typed themselves must never be overwritten by a model.
+ */
+export const isDefaultTitle = (title: string): boolean => title.startsWith('Recording ') || title.startsWith('Transcription of ')
+
+/**
+ * Turn one short generation into something that fits on a line.
+ *
+ * A 4B model asked for "only the title" will still sometimes wrap it in
+ * quotes, prefix it with `Title:`, or add a second line explaining itself.
+ * The server takes `.strip().strip('"')` and trusts Claude for the rest;
+ * here the same trust is not available.
+ */
+export function cleanTitle(raw: string): string {
+	// Only the first non-empty line can be the title.
+	let title = (raw.split(/\r?\n/).find((line) => line.trim()) ?? '').trim()
+	// Applied to a fixed point rather than in one pass, because the wrappers
+	// nest in whichever order the model felt like: `**Titel: Materialwahl**`
+	// hides the label inside the bold and `Title: **Unit Mix**` the other way
+	// round, so any fixed order leaves one of the two behind.
+	const strippers: [RegExp, string][] = [
+		[/^#{1,6}\s*/, ''],
+		[/^\*\*([\s\S]*)\*\*$/, '$1'],
+		[/^\*([^*][\s\S]*)\*$/, '$1'],
+		[/^["'“”«]+/, ''],
+		[/["'“”»]+$/, ''],
+		[/^(?:title|titel|titre|título)\s*[:–—-]\s*/i, ''],
+	]
+	// Six is well past any nesting a model actually produces, and the loop
+	// stops as soon as a pass changes nothing.
+	for (let pass = 0; pass < 6; pass++) {
+		const before = title
+		for (const [pattern, replacement] of strippers) title = title.replace(pattern, replacement).trim()
+		if (title === before) break
+	}
+	// A model that ignored "6 to 15 words" and wrote a paragraph gets cut
+	// rather than allowed to become the heading of the page.
+	if (title.length > 140) title = `${title.slice(0, 137).trimEnd()}…`
+	return title
+}
+
 /** Mirrors `tasks.transcript_too_brief`, so the UI can refuse before loading 3 GB. */
 export const transcriptTooBrief = (transcript: string): boolean => transcript.trim().split(/\s+/).filter(Boolean).length < 25

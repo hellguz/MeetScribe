@@ -17,6 +17,7 @@ import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLan
 import { useOnDevice } from '../ondevice/useOnDevice'
 import { deleteLocalMeeting } from '../local/store'
 import LocalModeToggle from '../components/LocalModeToggle'
+import LocalActivityBadge from '../components/LocalActivityBadge'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -253,6 +254,8 @@ export default function Record() {
 				</div>
 				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
 				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+					{/* Renders nothing at all while the device is idle. */}
+					<LocalActivityBadge theme={currentThemeColors} />
 					<LocalModeToggle theme={currentThemeColors} locked={isUiLocked} />
 					<ThemeToggle />
 				</div>

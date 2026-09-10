@@ -198,7 +198,14 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 												<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
 													{formatMeetingDateTimeShort(m.started_at)}
 												</span>
-												<StorageBadge storage={storageOf(m)} theme={currentThemeColors} loud={badgeLoud} gone={m.status === 'gone'} />
+												<StorageBadge
+													storage={storageOf(m)}
+													theme={currentThemeColors}
+													loud={badgeLoud}
+													sharedUntil={m.shared_until ?? null}
+													published={m.published}
+													gone={m.status === 'gone'}
+												/>
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>

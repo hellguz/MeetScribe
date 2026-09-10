@@ -14,7 +14,9 @@ const CHANGELOG: { when: string; lines: string[] }[] = [
 		lines: [
 			'🔒 Local mode: record, transcribe, label speakers and write the summary entirely in your own browser. Nothing — no audio, no transcript, no summary — reaches our server or any AI provider.',
 			'Opt in from the 🔒 switch at the top of the page. One download of about 4 GB the first time, cached afterwards; a desktop with WebGPU, and one of 25 European languages.',
-			'Local meetings live in this browser only, and every meeting now says whether it is kept on this device or in the cloud.',
+			'Local meetings live in this browser only. A 🔒 beside a meeting means nobody else can reach it; sharing it puts a copy on the server, for an hour, a week, or forever.',
+			'The panel behind the switch now shows which models are already downloaded, and will delete them again if you want the disk space back.',
+			'⚡ A small dial in the top bar says what your device is doing — fetching a model, transcribing, writing the summary — and disappears when it is done.',
 			'Summaries there are written by a 4B model rather than Claude, and speech recognition covers fewer languages — the switch spells out the trade before you download anything.',
 		],
 	},

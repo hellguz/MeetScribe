@@ -3,7 +3,9 @@
  *
  *   local transcript ──▶ buildSummaryPrompt ──▶ summarizer.worker ──▶ markdown
  *                                                        │
- *                                                        └─▶ IndexedDB
+ *                                                        ├─▶ buildTitlePrompt ──▶ title
+ *                                                        │
+ *                                                        └─▶ IndexedDB ──▶ onSaved
  *
  * This used to produce a run *beside* the Claude summary, for comparison. It
  * now produces the summary itself: a local meeting has no other one, and the
@@ -13,14 +15,15 @@
  * needs a transcript the server was never given. See `local/prompt.ts`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildSummaryPrompt } from '../../local/prompt'
-import { getLocalMeeting, patchLocalMeeting } from '../../local/store'
+import { buildSummaryPrompt, buildTitlePrompt, cleanTitle, isDefaultTitle } from '../../local/prompt'
+import { getLocalMeeting, patchLocalMeeting, type LocalMeeting } from '../../local/store'
 import { saveMeeting } from '../../utils/history'
+import { setLocalActivity } from '../../local/activity'
 import { getLocalSummaryModel } from './pref'
 import { getSummaryWorker, terminateSummaryWorker } from './worker'
 import type { SummaryLength as LocalSummaryLength } from '../../contexts/SummaryLengthContext'
 
-export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | 'generating' | 'saving' | 'done' | 'error'
+export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | 'generating' | 'saving' | 'titling' | 'done' | 'error'
 
 /**
  * Claude gets max_tokens 8096 for the same job. Local decode runs at tens of
@@ -29,6 +32,9 @@ export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | '
  * (~2.6k tokens) with headroom.
  */
 const MAX_NEW_TOKENS = 3072
+
+/** A title is 6–15 words. Anything past this is a model ignoring the brief. */
+const TITLE_MAX_TOKENS = 64
 
 export interface LocalSummaryState {
 	phase: LocalSummaryPhase
@@ -93,21 +99,105 @@ const initialState = (): LocalSummaryState => ({
 	measured: emptyMeasured(),
 })
 
-export function useLocalSummary(meetingId: string | undefined) {
+interface Options {
+	/**
+	 * Called with the stored record every time it changes — once for the
+	 * summary, again for the title.
+	 *
+	 * Without it the run finished, wrote the summary to IndexedDB, and left
+	 * the page showing "No summary is available for this meeting", because
+	 * the hook that reads the record had no reason to read it again. The
+	 * summary appeared on the next reload, which is how it was found.
+	 */
+	onSaved?: (meeting: LocalMeeting) => void
+}
+
+export function useLocalSummary(meetingId: string | undefined, { onSaved }: Options = {}) {
 	const [state, setState] = useState<LocalSummaryState>(initialState)
 	const workerRef = useRef<Worker | null>(null)
+	const listenerRef = useRef<((event: MessageEvent) => void) | null>(null)
 	// Set for the duration of a run so the message handler knows what to
 	// store; a worker message carries measurements, not the settings.
 	const runContextRef = useRef<{ model: string; summaryLength: string; targetLanguage: string; maxNewTokens: number } | null>(null)
 	const measuredRef = useRef(emptyMeasured())
+	// True between posting 'title' and hearing back, so a failure there is
+	// read as "the meeting kept its date for a name" rather than as the
+	// summary having failed — the summary is already saved by then.
+	const titlingRef = useRef(false)
+	// Read through a ref so the worker listener, which is attached once, never
+	// closes over a stale callback.
+	const onSavedRef = useRef(onSaved)
+	onSavedRef.current = onSaved
 
 	/** WebGPU is not optional here: 4-bit weights on WASM would take hours. */
 	const webgpuAvailable = useMemo(() => typeof navigator !== 'undefined' && 'gpu' in navigator, [])
 
-	// Deliberately not terminated on unmount: the worker is shared and holds a
-	// ~3 GB model that the next page would otherwise have to load again.
-	useEffect(() => () => {
-		workerRef.current = null
+	// The worker is deliberately *not* terminated: it is shared and holds a
+	// ~3 GB model the next page would otherwise have to load again. The
+	// listener does go, or a second mount would write every result twice.
+	useEffect(
+		() => () => {
+			if (workerRef.current && listenerRef.current) workerRef.current.removeEventListener('message', listenerRef.current)
+			listenerRef.current = null
+			workerRef.current = null
+		},
+		[],
+	)
+
+	// ---- the top bar's one-line "what is happening" ------------------------
+	const { phase, download, prefill, decode } = state
+	useEffect(() => {
+		switch (phase) {
+			case 'prompt':
+				return setLocalActivity({ label: 'Preparing', progress: null })
+			case 'loading':
+				return setLocalActivity(
+					download && download.total > 0
+						? { label: 'Fetching summary model', progress: download.loaded / download.total }
+						: { label: 'Loading model', progress: null },
+				)
+			case 'prefilling':
+				return setLocalActivity({
+					label: 'Reading transcript',
+					progress: prefill && prefill.total > 0 ? prefill.processed / prefill.total : null,
+				})
+			case 'generating':
+				return setLocalActivity({
+					label: 'Writing summary',
+					progress: null,
+					// A token count against the cap is not progress: most runs
+					// stop well short of it, so a bar filling to 40% and then
+					// vanishing would be a lie. The rate is the honest number.
+					detail: decode?.tokensPerSecond ? `${decode.tokens} words so far, ${decode.tokensPerSecond.toFixed(1)}/s` : undefined,
+				})
+			case 'titling':
+				return setLocalActivity({ label: 'Naming meeting', progress: null })
+			case 'saving':
+				return setLocalActivity({ label: 'Saving', progress: null })
+			default:
+				return setLocalActivity(null)
+		}
+	}, [phase, download, prefill, decode])
+
+	useEffect(() => () => setLocalActivity(null), [])
+
+	/** Store a patch, tell the history list, and hand the record to the page. */
+	const persist = useCallback(async (id: string, patch: Partial<LocalMeeting>) => {
+		const updated = await patchLocalMeeting(id, patch)
+		if (!updated) return null
+		saveMeeting({
+			id: updated.id,
+			title: updated.title,
+			started_at: updated.started_at,
+			status: 'complete',
+			storage: 'local',
+			// Carried through, or a finished summary would quietly relabel a
+			// shared meeting as private in the history list.
+			shared_until: updated.shared_until ?? null,
+			published: updated.published ?? !!updated.shared_until,
+		})
+		onSavedRef.current?.(updated)
+		return updated
 	}, [])
 
 	const generate = useCallback(
@@ -118,6 +208,7 @@ export function useLocalSummary(meetingId: string | undefined) {
 			const model = getLocalSummaryModel()
 
 			measuredRef.current = emptyMeasured()
+			titlingRef.current = false
 			setState({ ...initialState(), phase: 'prompt', statusText: 'Reading the transcript…' })
 
 			let prompt: Awaited<ReturnType<typeof buildSummaryPrompt>>
@@ -153,7 +244,7 @@ export function useLocalSummary(meetingId: string | undefined) {
 				// Shared with the preloader, so a model fetched while the meeting
 				// was still recording is already resident here.
 				workerRef.current = getSummaryWorker()
-				workerRef.current.addEventListener('message', async (event: MessageEvent) => {
+				const listener = async (event: MessageEvent) => {
 					const msg = event.data as import('./summarizer.worker').SummarizerResponse
 					switch (msg.type) {
 						case 'log':
@@ -208,6 +299,9 @@ export function useLocalSummary(meetingId: string | undefined) {
 								downloadMs: msg.downloadMs,
 								cached: msg.cached,
 							})
+							// A title run reuses the same model and re-announces
+							// it; that must not drag the phase back to prefill.
+							if (titlingRef.current) break
 							setState((s) => ({
 								...s,
 								phase: 'prefilling',
@@ -249,19 +343,25 @@ export function useLocalSummary(meetingId: string | undefined) {
 							try {
 								// The run *is* the summary now: it goes onto the
 								// meeting, not into a table beside it.
-								const updated = await patchLocalMeeting(meetingId, {
+								const updated = await persist(meetingId, {
 									summary_markdown: msg.text,
 									summary_length: ctx.summaryLength as LocalSummaryLength,
 									unfinished: false,
 								})
-								if (updated) {
-									saveMeeting({
-										id: updated.id,
-										title: updated.title,
-										started_at: updated.started_at,
-										status: 'complete',
-										storage: 'local',
+								// Naming the meeting is the server's last step
+								// too (`generate_title_for_meeting`), and it was
+								// simply missing here — every local meeting kept
+								// "Recording 10.9.2026, 14:59:33" for a title.
+								if (updated && msg.text.trim() && isDefaultTitle(updated.title) && workerRef.current) {
+									titlingRef.current = true
+									setState((s) => ({ ...s, phase: 'titling', statusText: 'Naming the meeting…' }))
+									workerRef.current.postMessage({
+										type: 'title',
+										prompt: buildTitlePrompt(msg.text, updated.transcript),
+										model: ctx.model,
+										maxNewTokens: TITLE_MAX_TOKENS,
 									})
+									return
 								}
 								setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							} catch (e) {
@@ -271,16 +371,39 @@ export function useLocalSummary(meetingId: string | undefined) {
 							}
 							break
 						}
+						case 'titled': {
+							titlingRef.current = false
+							const title = cleanTitle(msg.text)
+							try {
+								// An empty or unusable answer leaves the date in
+								// place, which is a fine name for a meeting.
+								if (title) await persist(meetingId, { title })
+							} catch (e) {
+								console.warn('Could not store the generated title:', e)
+							}
+							setState((s) => ({ ...s, phase: 'done', statusText: null }))
+							break
+						}
 						case 'error':
+							// A failed title is not a failed summary: that one is
+							// already in IndexedDB and on screen.
+							if (titlingRef.current) {
+								titlingRef.current = false
+								console.warn('On-device title generation failed:', msg.message)
+								setState((s) => ({ ...s, phase: 'done', statusText: null, log: [...s.log.slice(-60), `[title] ${msg.message}`] }))
+								break
+							}
 							setState((s) => ({ ...s, phase: 'error', error: msg.message }))
 							break
 					}
-				})
+				}
+				listenerRef.current = listener
+				workerRef.current.addEventListener('message', listener)
 			}
 
 			workerRef.current.postMessage({ type: 'summarize', prompt: prompt.prompt, model, thinking: false, maxNewTokens })
 		},
-		[meetingId],
+		[meetingId, persist],
 	)
 
 	/**
@@ -290,6 +413,8 @@ export function useLocalSummary(meetingId: string | undefined) {
 	const cancel = useCallback(() => {
 		terminateSummaryWorker()
 		workerRef.current = null
+		listenerRef.current = null
+		titlingRef.current = false
 		// The log and the hardware survive: what this machine is does not
 		// change because a run was stopped, and the log is the only record
 		// of why it was.

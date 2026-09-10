@@ -13,12 +13,18 @@ import {
 } from '../local/publish'
 
 /**
- * Sharing a local meeting: one duration, one link.
+ * Sharing a meeting: one duration, one link.
  *
- * Deliberately not two features. "Share for a while" and "move to the cloud"
- * are the same operation with different clocks, so `Never` is a chip in the
- * row rather than a second button somewhere else — which is also how a meeting
- * recorded in cloud mode is described, since that is exactly what it is.
+ * Deliberately not two features. "Share for a while" and "keep it in the
+ * cloud" are the same operation with different clocks, so `Never` is a chip
+ * in the row rather than a second button somewhere else — which is also how a
+ * meeting recorded in cloud mode is described, since that is exactly what it
+ * is.
+ *
+ * It is also the only place that states where the meeting is kept. A badge
+ * used to say it alongside, and briefly a second local/cloud switch as well;
+ * both are gone, because one of the two would eventually be wrong and the
+ * question they answered is the one this popover exists to change.
  */
 
 interface Props {
@@ -129,12 +135,12 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 			}}>
 			<div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '6px' }}>
 				<ShareIcon size={13} />
-				<strong style={{ fontSize: '13px' }}>{alreadyShared ? 'Shared' : 'Share this meeting'}</strong>
+				<strong style={{ fontSize: '13px' }}>{alreadyShared ? 'Shared' : 'Only in this browser'}</strong>
 			</div>
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				{alreadyShared
 					? 'Anyone with the link can read it. Set an expiry to have the copy deleted automatically.'
-					: "Anyone with the link can read it. They get their own copy — edits don't travel in either direction."}
+					: "Nobody else can reach this meeting yet. Sharing puts a copy on the server, and whoever opens the link keeps their own — edits don't travel in either direction."}
 			</p>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>

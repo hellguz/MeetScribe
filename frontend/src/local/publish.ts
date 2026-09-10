@@ -9,6 +9,19 @@
  */
 import { apiUrl } from '../utils/api'
 import { patchLocalMeeting, type LocalMeeting } from './store'
+import { getHistory, saveMeeting, storageOf } from '../utils/history'
+
+/**
+ * Keep the history index in step with the record.
+ *
+ * The list is rendered from the index and never opens IndexedDB, so a share
+ * it does not know about is a share it labels "On this device".
+ */
+function noteShare(meetingId: string, published: boolean, sharedUntil: string | null): void {
+	const meta = getHistory().find((m) => m.id === meetingId)
+	if (!meta || storageOf(meta) !== 'local') return
+	saveMeeting({ ...meta, published, shared_until: sharedUntil })
+}
 
 const TOKEN_PREFIX = 'meetscribe_owner_'
 
@@ -102,7 +115,8 @@ export async function publishMeeting(meeting: LocalMeeting, expiresInSeconds: nu
 	const status: PublishStatus = await res.json()
 	// The record is the only place that knows this meeting is shared, so the
 	// page never has to ask the server on load.
-	await patchLocalMeeting(meeting.id, { shared_until: status.expires_at ?? null })
+	await patchLocalMeeting(meeting.id, { published: true, shared_until: status.expires_at ?? null })
+	noteShare(meeting.id, true, status.expires_at ?? null)
 	return status
 }
 
@@ -116,7 +130,8 @@ export async function unpublishMeeting(meetingId: string): Promise<void> {
 		const body = await res.json().catch(() => ({}))
 		throw new Error(typeof body.detail === 'string' ? body.detail : `Could not stop sharing (HTTP ${res.status}).`)
 	}
-	await patchLocalMeeting(meetingId, { shared_until: null })
+	await patchLocalMeeting(meetingId, { published: false, shared_until: null })
+	noteShare(meetingId, false, null)
 }
 
 export const shareUrl = (meetingId: string): string => `${window.location.origin}/summary/${meetingId}`

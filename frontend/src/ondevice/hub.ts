@@ -13,7 +13,19 @@
 import type { ParakeetPlan } from './capabilities'
 
 export const HF_REPO = 'ysdede/parakeet-tdt-0.6b-v3-onnx'
-const CACHE_NAME = 'meetscribe-parakeet-v1'
+/** Exported so the panel can weigh and empty it; see `ondevice/cache.ts`. */
+export const CACHE_NAME = 'meetscribe-parakeet-v1'
+
+/**
+ * The self-hosted base, if one is configured.
+ *
+ * Exported rather than read at each call site, because it used to be read at
+ * only one of them: the worker loaded from here, and the panel measured the
+ * upstream repo instead — so the size it quoted was for files nobody was
+ * going to download.
+ */
+export const MODEL_BASE = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
+
 /**
  * Branches to try, in order. `feat/fp16-canonical-v3` used to be pinned here
  * for fp16 — it has since been deleted upstream and now 404s, so it is only a
@@ -59,18 +71,52 @@ async function probe(url: string): Promise<boolean | null> {
 	return null
 }
 
-/** Content-Length of `url`, or null if the host will not say. */
+/**
+ * Content-Length of `url`, or null if the host will not say.
+ *
+ * Two ways of asking, because one is not enough. A plain HEAD is cheapest,
+ * but it is also the request most likely to be refused outright: a CDN that
+ * only signs GETs, an extension or a proxy that drops the method, a
+ * redirect chain that loses CORS on the way. So a HEAD that comes back
+ * without a usable length is followed by a one-byte ranged GET, whose
+ * `Content-Range` carries the full size in its `/total` suffix.
+ */
 async function contentLength(url: string): Promise<number | null> {
 	try {
 		const res = await fetch(url, { method: 'HEAD' })
 		const length = Number(res.headers.get('content-length'))
-		return res.ok && length > 0 ? length : null
+		if (res.ok && length > 0) return length
+	} catch {
+		/* fall through to the ranged GET */
+	}
+	try {
+		const res = await fetch(url, { headers: { Range: 'bytes=0-0' } })
+		res.body?.cancel().catch(() => {})
+		const total = Number(res.headers.get('content-range')?.split('/')[1])
+		if (total > 0) return total
+		const length = Number(res.headers.get('content-length'))
+		return res.ok && length > 1 ? length : null
 	} catch {
 		return null
 	}
 }
 
 const measured = new Map<string, Promise<number | null>>()
+
+/**
+ * What each plan weighs upstream, for when the host will not be measured.
+ *
+ * The panel must always be able to name a figure. "How much will this cost
+ * me" is the one question standing between the user and a multi-gigabyte
+ * download, and an ellipsis where the number should be does not answer it —
+ * it reads as a broken panel, and the several people who saw one said so.
+ * So a failed measurement falls back to these and says "about", rather than
+ * saying nothing at all. Measured against `HF_REPO` on 2026-09-10.
+ */
+export const ESTIMATED_PLAN_BYTES: Record<ParakeetPlan, number> = {
+	'gpu-fp16': 1_257_000_000,
+	'cpu-int8': 670_500_000,
+}
 
 /**
  * How many bytes a plan downloads, asked of whichever host is configured.
@@ -80,17 +126,23 @@ const measured = new Map<string, Promise<number | null>>()
  * Content-Length, and cached per plan+base, since the panel shows a chip per
  * plan and nothing here changes while the page lives.
  */
-export async function measurePlanBytes(plan: ParakeetPlan, customBase?: string): Promise<number | null> {
+export async function measurePlanBytes(plan: ParakeetPlan, customBase: string | undefined = MODEL_BASE): Promise<number | null> {
 	const key = `${plan}@${customBase ?? HF_REPO}`
-	const pending =
-		measured.get(key) ??
-		(async () => {
-			const files = await resolveModelFiles(plan, customBase)
-			const urls = [files.encoder, files.decoder, files.tokenizer, ...(files.encoderData ? [files.encoderData] : [])]
-			const sizes = await Promise.all(urls.map(contentLength))
-			// One unknown file makes the total a lie, so report nothing.
-			return sizes.some((size) => size === null) ? null : sizes.reduce((total, size) => total! + size!, 0)
-		})().catch(() => null)
+	const cached = measured.get(key)
+	if (cached) return cached
+	const pending = (async () => {
+		const files = await resolveModelFiles(plan, customBase)
+		const urls = [files.encoder, files.decoder, files.tokenizer, ...(files.encoderData ? [files.encoderData] : [])]
+		const sizes = await Promise.all(urls.map(contentLength))
+		// One unknown file makes the total a lie, so report nothing.
+		return sizes.some((size) => size === null) ? null : sizes.reduce((total, size) => total! + size!, 0)
+	})().catch(() => null)
+	// Only a real answer is remembered. A null is usually a network that was
+	// busy pulling three gigabytes of weights at the time, and caching it
+	// meant the panel never showed a size again for the life of the page.
+	pending.then((bytes) => {
+		if (bytes === null) measured.delete(key)
+	})
 	measured.set(key, pending)
 	return pending
 }

@@ -144,6 +144,20 @@ export const UnlockIcon: React.FC<IconProps> = ({ size = 14 }) => (
 	</svg>
 )
 
+/**
+ * "This device", where the lock means "private" instead.
+ *
+ * The two are not the same axis: a meeting can be private *and* in the
+ * cloud, so a lock beside a cloud read as a contradiction rather than as a
+ * choice. A laptop beside a cloud is one question with two answers.
+ */
+export const LaptopIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<rect x="3" y="4" width="18" height="12" rx="2" />
+		<line x1="1" y1="20" x2="23" y2="20" />
+	</svg>
+)
+
 export const CloudIcon: React.FC<IconProps> = ({ size = 14 }) => (
 	<svg {...iconProps(size)}>
 		<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />

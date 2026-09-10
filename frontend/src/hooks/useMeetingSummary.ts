@@ -49,6 +49,12 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [recoveredCopy, setRecoveredCopy] = useState(false)
 	/** Expiry of the shared copy, straight off the status the page already polls. */
 	const [expiresAt, setExpiresAt] = useState<string | null>(null)
+	/**
+	 * A local meeting with a copy on the server. Tracked separately from
+	 * `expiresAt` because a share with no expiry has none, and that is the
+	 * share that means "keep it in the cloud".
+	 */
+	const [publishedLocally, setPublishedLocally] = useState(false)
 
 	/** Populate every piece of page state from a stored local meeting. */
 	const applyLocalMeeting = useCallback((m: LocalMeeting) => {
@@ -67,6 +73,9 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		setCanRediarize(false)
 		setDiarizationAttempted(true)
 		setExpiresAt(m.shared_until ?? null)
+		// A record written before `published` existed is published if it has an
+		// expiry — the only kind of share that existed then.
+		setPublishedLocally(m.published ?? !!m.shared_until)
 		setProcessingStage(null)
 		setProcessingTotal(null)
 		setIsLoading(false)
@@ -332,6 +341,14 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		async (content: string) => {
 			if (!mid) return
 			setSummaryMarkdown(content) // Optimistic update
+			// A local meeting has no server row, and PUTting its summary to
+			// /api/meetings/{id}/summary would upload the very text the user
+			// chose to keep off the server.
+			if (localMeeting) {
+				const updated = await patchLocalMeeting(mid, { summary_markdown: content })
+				if (updated) applyLocalMeeting(updated)
+				return
+			}
 			try {
 				const res = await fetch(apiUrl(`/api/meetings/${mid}/summary`), {
 					method: 'PUT',
@@ -344,12 +361,29 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				fetchMeetingData(false) // Revert on error
 			}
 		},
-		[mid, fetchMeetingData],
+		[mid, fetchMeetingData, localMeeting, applyLocalMeeting],
 	)
 
 	const handleTitleUpdate = useCallback(
 		async (newTitle: string) => {
 			if (!mid || !newTitle || newTitle === meetingTitle) return
+			// Same reasoning as `handleSummaryUpdate`: local stays local.
+			if (localMeeting) {
+				const updated = await patchLocalMeeting(mid, { title: newTitle })
+				if (updated) {
+					applyLocalMeeting(updated)
+					saveMeeting({
+						id: mid,
+						title: updated.title,
+						started_at: updated.started_at,
+						status: 'complete',
+						storage: 'local',
+						shared_until: updated.shared_until ?? null,
+						published: updated.published ?? !!updated.shared_until,
+					})
+				}
+				return
+			}
 			try {
 				const res = await fetch(apiUrl(`/api/meetings/${mid}/title`), {
 					method: 'PUT',
@@ -370,7 +404,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				alert('Failed to update title')
 			}
 		},
-		[mid, meetingTitle, meetingStartedAt],
+		[mid, meetingTitle, meetingStartedAt, localMeeting, applyLocalMeeting],
 	)
 
 	useEffect(() => {
@@ -457,6 +491,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 
 	return {
 		expiresAt,
+		publishedLocally,
 		tombstone,
 		recoveredCopy,
 		makePrivate,

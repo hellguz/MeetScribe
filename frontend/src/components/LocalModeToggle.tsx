@@ -1,19 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import { useLocalMode } from '../local/mode'
 import { NOTABLE_MISSING, PARAKEET_LANGUAGES, SUPPORTED_COUNT } from '../local/languages'
-import { measurePlanBytes } from '../ondevice/hub'
+import { ESTIMATED_PLAN_BYTES, measurePlanBytes } from '../ondevice/hub'
+import { clearModelCaches, measureCachedModels, type CachedModels } from '../ondevice/cache'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities } from '../ondevice/capabilities'
 import { SUMMARY_MODELS } from '../ondevice/summary/models'
 import { formatBytes } from '../utils/formatBytes'
-import { LockIcon, UnlockIcon, AlertIcon } from './Icons'
+import { LockIcon, AlertIcon, CheckIcon } from './Icons'
+import StorageToggle from './StorageToggle'
 
 /**
- * The Local mode switch, in the record page's top bar.
+ * Where new meetings go, in the record page's top bar.
  *
- * A button, never a checkbox: clicking opens the panel, it does not flip the
- * state. Turning this on commits the user to a multi-gigabyte download, and
- * that must never happen from a stray click on the way to the theme toggle.
+ * The switch is a segmented pair rather than one button that outlines itself
+ * when local mode is on: a lone outlined button reads as a stray focus ring
+ * to anyone who did not watch it change.
+ *
+ * Only the cloud side flips on click. Choosing "On device" opens the panel
+ * first, because it commits the user to a multi-gigabyte download and that
+ * must never happen from a stray click on the way to the theme toggle.
+ * Choosing "Cloud" costs nothing, so it just happens.
  */
 
 const DIARIZATION_BYTES = 30_000_000 // campplus + pyannote segmentation, from /api/models
@@ -29,27 +36,41 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	const [open, setOpen] = useState(false)
 	const [caps, setCaps] = useState<DeviceCapabilities | null>(null)
 	const [speechBytes, setSpeechBytes] = useState<number | null>(null)
+	const [cached, setCached] = useState<CachedModels | null>(null)
 	const [showLanguages, setShowLanguages] = useState(false)
 	// Not a blocker: local mode turns on either way, and this explains what the
 	// browser would not promise.
 	const [storageWarning, setStorageWarning] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
+	const [clearing, setClearing] = useState(false)
 	const wrapRef = useRef<HTMLDivElement>(null)
 
+	const refreshCached = useCallback(() => {
+		measureCachedModels().then(setCached)
+	}, [])
+
+	// Capabilities are needed whenever local mode is on, not only while the
+	// panel is open: the caution marker on the switch is drawn from them, and
+	// a machine with no WebGPU should say so before anyone opens anything.
 	useEffect(() => {
-		if (!open) return
+		if (!open && !enabled) return
 		let live = true
 		detectCapabilities().then((c) => {
 			if (!live) return
 			setCaps(c)
 			// Ask the host rather than hardcoding: a self-hosted model base can
 			// serve files nothing like the upstream sizes.
-			measurePlanBytes(resolvePlan('auto', c)).then((b) => live && setSpeechBytes(b))
+			measurePlanBytes(resolvePlan('auto', c)).then((b) => live && b !== null && setSpeechBytes(b))
 		})
 		return () => {
 			live = false
 		}
-	}, [open])
+	}, [open, enabled])
+
+	// Only while the panel is on screen: it is a disk read per cached file.
+	useEffect(() => {
+		if (open) refreshCached()
+	}, [open, refreshCached])
 
 	// Click-outside and Escape, the two ways every popover should close.
 	useEffect(() => {
@@ -67,7 +88,14 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	}, [open])
 
 	const summaryBytes = SUMMARY_MODELS[0]?.bytes ?? 0
-	const totalBytes = (speechBytes ?? 0) + DIARIZATION_BYTES + summaryBytes
+	// A measured figure when the host will give one, the upstream size when it
+	// will not. Never nothing: "how much will this cost me" is the whole
+	// question, and an ellipsis in its place reads as a broken panel.
+	const measuredSpeech = speechBytes ?? (caps ? ESTIMATED_PLAN_BYTES[resolvePlan('auto', caps)] : null)
+	const speechExact = speechBytes !== null
+	const totalBytes = (measuredSpeech ?? 0) + DIARIZATION_BYTES + summaryBytes
+	const onDisk = cached?.total ?? 0
+	const remaining = Math.max(0, totalBytes - onDisk)
 	const noWebgpu = caps !== null && !caps.webgpu
 	const mobile = caps?.isMobile ?? false
 
@@ -82,30 +110,60 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 		else setOpen(false)
 	}
 
-	// Same metrics as the tags/favourite icon buttons it sits beside.
-	const pill: React.CSSProperties = {
-		display: 'inline-flex',
-		alignItems: 'center',
-		gap: '6px',
-		padding: '7px 9px',
-		borderRadius: '6px',
-		fontSize: '12px',
-		fontFamily: 'inherit',
-		lineHeight: 1,
-		cursor: locked ? 'not-allowed' : 'pointer',
-		border: `1px solid ${enabled ? theme.text : theme.border}`,
-		backgroundColor: enabled ? `${theme.text}12` : theme.backgroundSecondary,
-		color: enabled ? theme.text : theme.secondaryText,
-		opacity: locked ? 0.5 : 1,
-		transition: 'background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease',
+	const handleClear = async () => {
+		setClearing(true)
+		await clearModelCaches()
+		refreshCached()
+		setClearing(false)
 	}
 
-	const row = (label: string, value: string): React.ReactElement => (
-		<div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: theme.secondaryText }}>
-			<span>{label}</span>
-			<span style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-		</div>
+	/** The app's inline text button, as used by "Full list →". */
+	const linkButton = (label: string, onClick: () => void, waiting = false): React.ReactElement => (
+		<button
+			type="button"
+			disabled={waiting}
+			onClick={onClick}
+			style={{
+				border: 'none',
+				background: 'none',
+				padding: 0,
+				color: theme.text,
+				cursor: waiting ? 'wait' : 'pointer',
+				font: 'inherit',
+				textDecoration: 'underline',
+			}}>
+			{label}
+		</button>
 	)
+
+	/**
+	 * One model, its size, and how much of it is already here.
+	 *
+	 * Two columns, because three would need a table and this is a footnote:
+	 * the size and its state share the right-hand cell, and a tick is the
+	 * whole message once the file is complete.
+	 */
+	const modelRow = (label: string, total: number | null, stored: number | null, approx = false): React.ReactElement => {
+		// Never exactly equal: a re-quantized mirror is a few bytes off the
+		// figure we quote, and the summary bucket holds a tokenizer too.
+		const complete = total !== null && stored !== null && stored >= total * 0.97
+		const partial = !complete && stored !== null && stored > 1_000_000
+		return (
+			<div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: theme.secondaryText }}>
+				<span>{label}</span>
+				<span style={{ fontVariantNumeric: 'tabular-nums', display: 'inline-flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+					{total === null ? '…' : `${approx ? '~' : ''}${formatBytes(total)}`}
+					{complete ? (
+						<span title="Already on this disk" style={{ display: 'flex', color: theme.text }}>
+							<CheckIcon size={12} />
+						</span>
+					) : partial ? (
+						<span style={{ color: theme.text }}>· {formatBytes(stored as number)} here</span>
+					) : null}
+				</span>
+			</div>
+		)
+	}
 
 	const warn = (children: React.ReactNode, tone: 'warn' | 'stop' = 'warn'): React.ReactElement => (
 		<li style={{ display: 'flex', gap: '7px', color: tone === 'stop' ? '#d97706' : theme.secondaryText, lineHeight: 1.45 }}>
@@ -118,19 +176,23 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 
 	return (
 		<div ref={wrapRef} style={{ position: 'relative' }}>
-			<button
-				type="button"
+			<StorageToggle
+				theme={theme}
+				value={enabled ? 'local' : 'cloud'}
 				disabled={locked}
-				aria-expanded={open}
-				onClick={() => !locked && setOpen((v) => !v)}
-				title={enabled ? 'Local mode is on — meetings stay in this browser' : 'Local mode is off — meetings are stored on the server'}
-				style={pill}
-				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
-				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = enabled ? `${theme.text}12` : theme.backgroundSecondary)}>
-				{enabled ? <LockIcon size={13} /> : <UnlockIcon size={13} />}
-				{enabled ? 'Local' : 'Cloud'}
-				{enabled && (noWebgpu || mobile) && <AlertIcon size={12} />}
-			</button>
+				localWarning={noWebgpu || mobile}
+				titles={{
+					local: enabled ? 'New meetings stay in this browser — open for details' : 'Keep new meetings in this browser',
+					cloud: enabled ? 'Send new meetings to the server again' : 'New meetings are stored on the server',
+				}}
+				onSelect={(side) => {
+					if (locked) return
+					// Turning off is free and instant. Everything else opens the
+					// panel, which is where the download and its caveats live.
+					if (side === 'cloud' && enabled) disable()
+					else setOpen((v) => !v)
+				}}
+			/>
 
 			{open && (
 				<div
@@ -175,27 +237,36 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 						provider.
 					</p>
 
-					{!enabled && (
-						<div
-							style={{
-								padding: '9px 11px',
-								borderRadius: '6px',
-								backgroundColor: theme.backgroundSecondary,
-								marginBottom: '10px',
-								display: 'flex',
-								flexDirection: 'column',
-								gap: '3px',
-							}}>
-							<div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginBottom: '3px' }}>
-								<span>What you'll download once</span>
-								<span style={{ fontVariantNumeric: 'tabular-nums' }}>{speechBytes ? `~${formatBytes(totalBytes)}` : '…'}</span>
-							</div>
-							{row('Speech recognition', speechBytes ? formatBytes(speechBytes) : '…')}
-							{row('Speaker labelling', `~${formatBytes(DIARIZATION_BYTES)}`)}
-							{row('Summary model', formatBytes(summaryBytes))}
-							<div style={{ color: theme.secondaryText, marginTop: '4px' }}>Kept in this browser's cache. Nothing to download next time.</div>
+					{/* The models, and how much of them is already here. Shown
+					    whether local mode is on or off: beforehand it is the
+					    price, afterwards it is the only place that says what is
+					    on the disk and offers to give the space back. */}
+					<div
+						style={{
+							padding: '9px 11px',
+							borderRadius: '6px',
+							backgroundColor: theme.backgroundSecondary,
+							marginBottom: '10px',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '3px',
+						}}>
+						<div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontWeight: 600, marginBottom: '3px' }}>
+							<span>{remaining > 5_000_000 ? "What you'll download" : 'Models'}</span>
+							<span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+								{remaining > 5_000_000 ? `~${formatBytes(remaining)} left` : 'all here'}
+							</span>
 						</div>
-					)}
+						{modelRow('Speech recognition', measuredSpeech, cached?.speech ?? null, !speechExact)}
+						{modelRow('Summary model', summaryBytes, cached?.summary ?? null)}
+						{modelRow('Speaker labelling', DIARIZATION_BYTES, null, true)}
+						<div style={{ color: theme.secondaryText, marginTop: '4px' }}>
+							Kept in this browser's cache.{' '}
+							{onDisk > 5_000_000
+								? linkButton(clearing ? 'Removing…' : `Remove ${formatBytes(onDisk)}`, handleClear, clearing)
+								: 'Nothing to download next time.'}
+						</div>
+					</div>
 
 					{mobile && (
 						<p style={{ margin: '0 0 10px', lineHeight: 1.5, color: '#d97706' }}>
@@ -209,25 +280,11 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 						{noWebgpu && warn(<>No WebGPU in this browser, so the summary model cannot run at all. Use Chrome, Edge, or Safari 26+.</>, 'stop')}
 						{warn(<>If something goes wrong mid-way, we'll ask whether to finish the job in the cloud. Nothing is ever sent without asking.</>)}
 						{warn(<>Meetings live only in this browser. Clearing site data deletes them, and they will not appear on your other devices.</>)}
-						{warn(<>Summaries are written by a 4B model, not Claude — shorter, flatter, and weaker outside English.</>)}
+						{warn(<>Summaries and meeting titles are written by a 4B model, not Claude — shorter, flatter, and weaker outside English.</>)}
 						{warn(
 							<>
 								Speech recognition covers {SUPPORTED_COUNT} European languages. {NOTABLE_MISSING.join(', ')} and others won't
-								transcribe at all here.{' '}
-								<button
-									type="button"
-									onClick={() => setShowLanguages((v) => !v)}
-									style={{
-										border: 'none',
-										background: 'none',
-										padding: 0,
-										color: theme.text,
-										cursor: 'pointer',
-										font: 'inherit',
-										textDecoration: 'underline',
-									}}>
-									{showLanguages ? 'Hide list' : 'Full list →'}
-								</button>
+								transcribe at all here. {linkButton(showLanguages ? 'Hide list' : 'Full list →', () => setShowLanguages((v) => !v))}
 								{showLanguages && (
 									<span style={{ display: 'block', marginTop: '5px', color: theme.secondaryText }}>{PARAKEET_LANGUAGES.join(' · ')}</span>
 								)}
