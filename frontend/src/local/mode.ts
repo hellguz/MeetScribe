@@ -35,8 +35,8 @@ const write = (value: boolean) => {
 export const isLocalMode = (): boolean => read()
 
 export type StorageWarning = {
-	/** 'not-persisted' — enabling still proceeds; the user is told, not blocked. */
-	reason: 'no-indexeddb' | 'not-persisted'
+	/** Enabling still proceeds; the user is told, not blocked. */
+	reason: 'no-indexeddb'
 	message: string
 }
 
@@ -45,12 +45,22 @@ export type EnableResult = { ok: true; warning: StorageWarning | null }
 /**
  * Ask the browser to stop treating this origin's storage as disposable.
  *
- * A refusal is reported, never enforced. Chrome grants persistence on its own
- * engagement heuristics, Firefox prompts, Safari has its own rules — so "no"
- * usually means "not yet", and blocking on it would put the whole feature
- * behind a permission the user cannot see or grant directly. Eviction only
- * happens under real storage pressure, and the export button exists for
- * exactly this. So: say plainly that it is not guaranteed, and continue.
+ * Still asked for on every enable, because being granted it is what makes
+ * these meetings durable. A refusal is no longer *reported*, though, and that
+ * is deliberate: Chrome grants persistence on its own engagement heuristics,
+ * so "no" from a browser that has seen this origin twice means "not yet", and
+ * the warning fired for very nearly everybody the first time they turned
+ * Local mode on. A caution that is wrong most of the time teaches people to
+ * dismiss the ones that are not.
+ *
+ * The residual risk is real but small and unactionable in the moment
+ * — eviction needs genuine disk pressure — and the panel says plainly, where
+ * it belongs, that clearing site data deletes local meetings. The download
+ * button is the answer for anything precious.
+ *
+ * A browser with no IndexedDB at all is a different matter and still warns:
+ * there, the meeting will not survive the next reload, which is worth
+ * knowing before recording one.
  */
 export async function requestPersistentStorage(): Promise<EnableResult> {
 	if (typeof indexedDB === 'undefined') {
@@ -69,18 +79,11 @@ export async function requestPersistentStorage(): Promise<EnableResult> {
 	}
 	try {
 		const already = (await navigator.storage.persisted?.()) ?? false
-		if (already || (await navigator.storage.persist())) return { ok: true, warning: null }
+		if (!already) await navigator.storage.persist()
 	} catch {
-		/* fall through to the warning */
+		/* asked and refused, or not askable; either way, carry on */
 	}
-	return {
-		ok: true,
-		warning: {
-			reason: 'not-persisted',
-			message:
-				'Your browser will not promise to keep these meetings — it may delete them if disk space runs low. Visiting MeetScribe a few more times, or installing it, usually earns the permission. Export anything important.',
-		},
-	}
+	return { ok: true, warning: null }
 }
 
 /** How much room the browser will give this origin, if it will say. */

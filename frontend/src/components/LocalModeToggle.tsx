@@ -38,15 +38,58 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	const [speechBytes, setSpeechBytes] = useState<number | null>(null)
 	const [cached, setCached] = useState<CachedModels | null>(null)
 	const [showLanguages, setShowLanguages] = useState(false)
+	// The small print, folded away. See the note where it is rendered.
+	const [showDetail, setShowDetail] = useState(false)
 	// Not a blocker: local mode turns on either way, and this explains what the
 	// browser would not promise.
 	const [storageWarning, setStorageWarning] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const [clearing, setClearing] = useState(false)
 	const wrapRef = useRef<HTMLDivElement>(null)
+	/**
+	 * Hover opens the panel; a click pins it open.
+	 *
+	 * Both delays exist to keep it out of the way. Opening waits, so crossing
+	 * the switch on the way to the theme toggle does not throw a panel up;
+	 * closing waits, so the 4px gap between the button and the panel does not
+	 * count as leaving. A click sets `pinned`, and a pinned panel ignores the
+	 * pointer entirely — someone who asked for it should not lose it by
+	 * moving the mouse.
+	 */
+	const pinnedRef = useRef(false)
+	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
 	const refreshCached = useCallback(() => {
 		measureCachedModels().then(setCached)
+	}, [])
+
+	const clearTimers = useCallback(() => {
+		if (openTimer.current) clearTimeout(openTimer.current)
+		if (closeTimer.current) clearTimeout(closeTimer.current)
+		openTimer.current = null
+		closeTimer.current = null
+	}, [])
+
+	useEffect(() => clearTimers, [clearTimers])
+
+	const hoverOpen = useCallback(() => {
+		if (locked || open) return
+		if (closeTimer.current) clearTimeout(closeTimer.current)
+		openTimer.current = setTimeout(() => {
+			pinnedRef.current = false
+			setOpen(true)
+		}, 320)
+	}, [locked, open])
+
+	const pointerEnter = useCallback(() => {
+		if (closeTimer.current) clearTimeout(closeTimer.current)
+	}, [])
+
+	const pointerLeave = useCallback(() => {
+		if (openTimer.current) clearTimeout(openTimer.current)
+		if (pinnedRef.current) return
+		closeTimer.current = setTimeout(() => setOpen(false), 220)
 	}, [])
 
 	/**
@@ -113,9 +156,26 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	// question, and an ellipsis in its place reads as a broken panel.
 	const measuredSpeech = speechBytes ?? (caps ? ESTIMATED_PLAN_BYTES[resolvePlan('auto', caps)] : null)
 	const speechExact = speechBytes !== null
-	const totalBytes = (measuredSpeech ?? 0) + DIARIZATION_BYTES + summaryBytes
+	/**
+	 * The two models that are actually kept, and what they weigh.
+	 *
+	 * Speaker labelling is not among them: it comes from our own backend and
+	 * rides the browser's ordinary HTTP cache, so it is a per-run cost rather
+	 * than something stored here that could be removed. Counting it made the
+	 * figures visibly disagree — three rows adding to 3.77 GB above a button
+	 * offering to remove 4.43 GB.
+	 *
+	 * The other half of that disagreement: a row showed the *quoted* size
+	 * while the button measured the disk. They are not the same number. A
+	 * model repo carries a tokenizer and a config beside its weights, and the
+	 * quoted figure is the weights. So a component that is fully here now
+	 * reports what it actually occupies, and the total is the sum of the rows.
+	 */
+	const cacheableTotal = (measuredSpeech ?? 0) + summaryBytes
 	const onDisk = cached?.total ?? 0
-	const remaining = Math.max(0, totalBytes - onDisk)
+	const remaining = Math.max(0, cacheableTotal - onDisk)
+	const speechSize = cached?.speech ? cached.speech : measuredSpeech
+	const summarySize = cached?.summary ? cached.summary : summaryBytes
 	const noWebgpu = caps !== null && !caps.webgpu
 	const mobile = caps?.isMobile ?? false
 
@@ -163,17 +223,19 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	 * the size and its state share the right-hand cell, and a tick is the
 	 * whole message once the file is complete.
 	 */
-	const modelRow = (label: string, total: number | null, stored: number | null, approx = false): React.ReactElement => {
+	const modelRow = (label: string, size: number | null, stored: number | null, opts: { approx?: boolean; note?: string } = {}): React.ReactElement => {
 		// Never exactly equal: a re-quantized mirror is a few bytes off the
-		// figure we quote, and the summary bucket holds a tokenizer too.
-		const complete = total !== null && stored !== null && stored >= total * 0.97
+		// figure we quote, and a repo carries more than its weights.
+		const complete = size !== null && stored !== null && stored >= size * 0.97
 		const partial = !complete && stored !== null && stored > 1_000_000
 		return (
 			<div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: theme.secondaryText }}>
 				<span>{label}</span>
 				<span style={{ fontVariantNumeric: 'tabular-nums', display: 'inline-flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-					{total === null ? '…' : `${approx ? '~' : ''}${formatBytes(total)}`}
-					{complete ? (
+					{size === null ? '…' : `${opts.approx ? '~' : ''}${formatBytes(size)}`}
+					{opts.note ? (
+						<span>· {opts.note}</span>
+					) : complete ? (
 						<span title="Already on this disk" style={{ display: 'flex', color: theme.text }}>
 							<CheckIcon size={12} />
 						</span>
@@ -195,7 +257,10 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 	)
 
 	return (
-		<div ref={wrapRef} style={{ position: 'relative' }}>
+		// The handlers sit on the wrapper, which contains the panel as well as
+		// the switch, so moving the pointer from one into the other is not a
+		// departure.
+		<div ref={wrapRef} style={{ position: 'relative' }} onMouseEnter={pointerEnter} onMouseLeave={pointerLeave}>
 			<SegmentedToggle
 				theme={theme}
 				ariaLabel="Where new meetings go"
@@ -207,6 +272,7 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 						label: 'On device',
 						icon: LaptopIcon,
 						warning: noWebgpu || mobile,
+						onHover: hoverOpen,
 						title: enabled ? 'New meetings stay in this browser — open for details' : 'Keep new meetings in this browser',
 					},
 					{
@@ -218,10 +284,18 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 				]}
 				onSelect={(side) => {
 					if (locked) return
+					clearTimers()
 					// Turning off is free and instant. Everything else opens the
 					// panel, which is where the download and its caveats live.
-					if (side === 'cloud' && enabled) disable()
-					else setOpen((v) => !v)
+					if (side === 'cloud' && enabled) {
+						pinnedRef.current = false
+						setOpen(false)
+						disable()
+						return
+					}
+					// Asked for deliberately, so the pointer no longer governs it.
+					pinnedRef.current = !open
+					setOpen((v) => !v)
 				}}
 			/>
 
@@ -230,14 +304,8 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 					role="dialog"
 					aria-label="Local mode"
 					onClick={(e) => e.stopPropagation()}
+					className="anchored-menu"
 					style={{
-						// Matches the tags dropdown so the menus read as a family.
-						position: 'absolute',
-						top: '100%',
-						right: 0,
-						marginTop: '4px',
-						zIndex: 1000,
-						width: 'min(330px, calc(100vw - 32px))',
 						padding: '12px',
 						borderRadius: '8px',
 						border: `1px solid ${theme.border}`,
@@ -264,8 +332,8 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 					</div>
 
 					<p style={{ margin: '0 0 10px', lineHeight: 1.5, color: theme.secondaryText }}>
-						Everything happens in this browser. Your audio, your transcript and your summary are never sent to our server or to any AI
-						provider.
+						Everything happens in this browser: your audio is transcribed and summarized here, and none of it is sent anywhere
+						unless you choose to share the meeting afterwards.
 					</p>
 
 					{/* The models, and how much of them is already here. Shown
@@ -283,46 +351,61 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 							gap: '3px',
 						}}>
 						<div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontWeight: 600, marginBottom: '3px' }}>
-							<span>{remaining > 5_000_000 ? "What you'll download" : 'Models'}</span>
+							<span>{remaining > 5_000_000 ? "What you'll download" : 'Stored here'}</span>
 							<span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-								{remaining > 5_000_000 ? `~${formatBytes(remaining)} left` : 'all here'}
+								{remaining > 5_000_000 ? `~${formatBytes(remaining)} left` : formatBytes(onDisk)}
 							</span>
 						</div>
-						{modelRow('Speech recognition', measuredSpeech, cached?.speech ?? null, !speechExact)}
-						{modelRow('Summary model', summaryBytes, cached?.summary ?? null)}
-						{modelRow('Speaker labelling', DIARIZATION_BYTES, null, true)}
+						{modelRow('Speech recognition', speechSize, cached?.speech ?? null, { approx: !speechExact && !cached?.speech })}
+						{modelRow('Summary model', summarySize, cached?.summary ?? null)}
+						{modelRow('Speaker labelling', DIARIZATION_BYTES, null, { approx: true, note: 'each run' })}
 						<div style={{ color: theme.secondaryText, marginTop: '4px' }}>
-							Kept in this browser's cache.{' '}
 							{onDisk > 5_000_000
 								? linkButton(clearing ? 'Removing…' : `Remove ${formatBytes(onDisk)}`, handleClear, clearing)
-								: 'Nothing to download next time.'}
+								: "Kept in this browser's cache, so it downloads once."}
 						</div>
 					</div>
 
+					{/* Only what would stop it working here, and only when it
+					    would. Everything else is one line below. */}
+					{noWebgpu && (
+						<p style={{ margin: '0 0 10px', lineHeight: 1.45, color: '#d97706' }}>
+							<strong>This browser has no WebGPU</strong>, so the summary model cannot run at all. Chrome, Edge, or Safari 26+.
+						</p>
+					)}
 					{mobile && (
-						<p style={{ margin: '0 0 10px', lineHeight: 1.5, color: '#d97706' }}>
-							<strong>This will almost certainly not work on this phone.</strong> Local mode needs several GB of storage, ~2 GB of free
-							memory and WebGPU. On iPhone and iPad the tab will most likely run out of memory and crash. Use a desktop, or leave this
-							off.
+						<p style={{ margin: '0 0 10px', lineHeight: 1.45, color: '#d97706' }}>
+							<strong>This will almost certainly not work on a phone.</strong> It needs several GB of storage, ~2 GB of free memory
+							and WebGPU; on iPhone and iPad the tab usually runs out of memory and crashes.
 						</p>
 					)}
 
-					<ul style={{ margin: '0 0 12px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '7px' }}>
-						{noWebgpu && warn(<>No WebGPU in this browser, so the summary model cannot run at all. Use Chrome, Edge, or Safari 26+.</>, 'stop')}
-						{warn(<>If something goes wrong mid-way, we'll ask whether to finish the job in the cloud. Nothing is ever sent without asking.</>)}
-						{warn(<>Meetings live only in this browser. Clearing site data deletes them, and they will not appear on your other devices.</>)}
-						{warn(<>Summaries and meeting titles are written by a 4B model, not Claude — shorter, flatter, and weaker outside English.</>)}
-						{warn(
-							<>
-								Speech recognition covers {SUPPORTED_COUNT} European languages. {NOTABLE_MISSING.join(', ')} and others won't
-								transcribe at all here. {linkButton(showLanguages ? 'Hide list' : 'Full list →', () => setShowLanguages((v) => !v))}
-								{showLanguages && (
-									<span style={{ display: 'block', marginTop: '5px', color: theme.secondaryText }}>{PARAKEET_LANGUAGES.join(' · ')}</span>
-								)}
-							</>,
-							'stop',
-						)}
-					</ul>
+					{/* One sentence, because four bullets of small print is a wall
+					    nobody reads — and the things in it are exactly what
+					    somebody deciding needs to know, so they cannot simply be
+					    dropped either. The full version is a click away. */}
+					<p style={{ margin: '0 0 12px', lineHeight: 1.5, color: theme.secondaryText }}>
+						In exchange: summaries come from a small model rather than Claude, speech recognition covers {SUPPORTED_COUNT} European
+						languages, and meetings live only in this browser.{' '}
+						{linkButton(showDetail ? 'Less' : 'What that means →', () => setShowDetail((v) => !v))}
+					</p>
+
+					{showDetail && (
+						<ul style={{ margin: '-4px 0 12px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '7px' }}>
+							{warn(<>Summaries and meeting titles are written by a 4B model: shorter, flatter, and weaker outside English.</>)}
+							{warn(
+								<>
+									{NOTABLE_MISSING.join(', ')} and others won’t transcribe at all here.{' '}
+									{linkButton(showLanguages ? 'Hide list' : 'Full list →', () => setShowLanguages((v) => !v))}
+									{showLanguages && (
+										<span style={{ display: 'block', marginTop: '5px', color: theme.secondaryText }}>{PARAKEET_LANGUAGES.join(' · ')}</span>
+									)}
+								</>,
+							)}
+							{warn(<>Clearing site data deletes them, and they will not appear on your other devices.</>)}
+							{warn(<>If something goes wrong mid-way, we’ll ask whether to finish the job in the cloud. Nothing is ever sent without asking.</>)}
+						</ul>
+					)}
 
 					{storageWarning && (
 						<p

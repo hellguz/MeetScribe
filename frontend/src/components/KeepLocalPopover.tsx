@@ -66,14 +66,8 @@ const KeepLocalPopover: React.FC<Props> = ({ theme, isLocal, isShared, onKeepLoc
 			role="dialog"
 			aria-label="Keep this meeting on this device"
 			onClick={(e) => e.stopPropagation()}
+			className="anchored-menu"
 			style={{
-				// Same metrics as the share panel and the tags dropdown.
-				position: 'absolute',
-				top: '100%',
-				left: 0,
-				marginTop: '4px',
-				zIndex: 1000,
-				width: 'min(320px, calc(100vw - 32px))',
 				padding: '12px',
 				borderRadius: '8px',
 				border: `1px solid ${theme.border}`,
@@ -90,7 +84,7 @@ const KeepLocalPopover: React.FC<Props> = ({ theme, isLocal, isShared, onKeepLoc
 
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				{nothingToDo
-					? 'This meeting is stored in this browser, in its own database. It has never been sent to our server or to any AI provider, and it is not on your other devices.'
+					? 'This meeting is stored in this browser, in its own database. There is no copy on our server, so nobody else can reach it — and it is not on your other devices either.'
 					: isLocal
 						? 'The original is already in this browser. Taking it back deletes the copy the link points at, and nothing else changes.'
 						: 'The meeting is copied into this browser first. Once that copy is verified, the server’s is deleted — it is never removed before there is somewhere for it to go.'}

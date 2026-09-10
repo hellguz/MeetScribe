@@ -31,6 +31,12 @@ export interface Segment {
 	/** A caution marker, shown only while this segment is the active one. */
 	warning?: boolean
 	/**
+	 * Called when the pointer arrives on this segment. Per-segment rather than
+	 * on the whole control, so hovering one side cannot open the other side's
+	 * menu.
+	 */
+	onHover?: () => void
+	/**
 	 * Colours the segment while it is the active one — glyph and ground both,
 	 * so the state reads from across the toolbar rather than from a 13px
 	 * icon. For the one state that has a clock on it: a share with an expiry,
@@ -77,6 +83,7 @@ const SegmentedToggle: React.FC<Props> = ({ theme, value, options, onSelect, dis
 					title={option.title ?? option.label}
 					aria-label={option.title ?? option.label}
 					onClick={() => !disabled && onSelect(option.value)}
+					onMouseEnter={() => !disabled && option.onHover?.()}
 					style={{
 						display: 'flex',
 						alignItems: 'center',

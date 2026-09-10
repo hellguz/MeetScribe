@@ -118,15 +118,8 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, onChan
 			role="dialog"
 			aria-label="Share this meeting"
 			onClick={(e) => e.stopPropagation()}
+			className="anchored-menu"
 			style={{
-				// Matches the tags dropdown: same offset, radius, shadow and
-				// stacking, so the two menus read as one family.
-				position: 'absolute',
-				top: '100%',
-				left: 0,
-				marginTop: '4px',
-				zIndex: 1000,
-				width: 'min(320px, calc(100vw - 32px))',
 				padding: '12px',
 				borderRadius: '8px',
 				border: `1px solid ${theme.border}`,

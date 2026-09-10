@@ -283,6 +283,38 @@ body {
 	}
 }
 
+/* ── Menus that hang off a button ──────────────────────────────────────── */
+
+/*
+ * A 320px panel anchored to a button needs 320px to the side of that button,
+ * and a phone has not got it: right-aligning to the anchor sent every one of
+ * these off the left edge of the screen, by as much as 260px. So below tablet
+ * width they stop being anchored and become a sheet pinned to the viewport,
+ * which cannot overflow whatever the button underneath is doing.
+ *
+ * Position and width live here rather than inline because a media query
+ * cannot be written in a style attribute, and inline styles would win.
+ */
+.anchored-menu {
+	position: absolute;
+	top: 100%;
+	right: 0;
+	margin-top: 4px;
+	width: min(320px, calc(100vw - 32px));
+	z-index: 1000;
+}
+
+@media (max-width: 700px) {
+	.anchored-menu {
+		position: fixed;
+		/* top right bottom left */
+		inset: auto 12px 12px 12px;
+		width: auto;
+		max-height: 75vh;
+		overflow-y: auto;
+	}
+}
+
 @media (max-width: 640px) {
 	.page-container {
 		padding-left: 10px !important;

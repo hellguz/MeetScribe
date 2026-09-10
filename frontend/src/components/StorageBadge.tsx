@@ -59,13 +59,18 @@ const StorageBadge: React.FC<Props> = ({ storage, theme, loud, size = 12, title,
 	if (!gone && !isLocal && !loud) return null
 
 	const Icon = gone ? AlertIcon : isPrivate ? LockIcon : ShareIcon
-	const colour = gone ? theme.button.danger : expiring ? '#f59e0b' : isPrivate ? theme.text : theme.secondaryText
+	// Private and shared are the same weight of statement, so they are the
+	// same weight of grey: down a list of meetings, a padlock in `text` and a
+	// share mark in `secondaryText` read as one being more important than the
+	// other. Only the two states that are actually going somewhere — a share
+	// counting down, and a meeting already removed — get a colour.
+	const colour = gone ? theme.button.danger : expiring ? '#f59e0b' : theme.secondaryText
 	const label = gone
 		? 'This meeting was removed from the server by whoever recorded it.'
 		: expiring
 			? `Shared — the copy on the server is deleted in ${shortRemaining(sharedUntil as string)}.`
 			: isPrivate
-				? 'Only in this browser. Never sent to the server.'
+				? 'Only in this browser. Nobody else can reach it.'
 				: 'Shared — anyone with the link can read it.'
 
 	return (

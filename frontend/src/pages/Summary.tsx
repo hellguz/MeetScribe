@@ -570,8 +570,19 @@ export default function Summary() {
 				color: currentThemeColors.text,
 				transition: 'max-width 0.2s ease',
 			}}>
-			{/* Top nav */}
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+			{/* Top nav. Six button groups at their widest, so it wraps: Back
+			    keeps the first line and the toolbar drops beneath it, rather
+			    than the row sliding off the side of a phone. */}
+			<div
+				style={{
+					display: 'flex',
+					flexWrap: 'wrap',
+					justifyContent: 'space-between',
+					alignItems: 'center',
+					columnGap: '10px',
+					rowGap: '8px',
+					marginBottom: '12px',
+				}}>
 				<div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
 					<button
 						onClick={() => navigate('/record')}
@@ -595,7 +606,7 @@ export default function Summary() {
 					    that says so and it can be scrolled past. */}
 					{meeting.tombstone && <StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} gone />}
 				</div>
-				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'flex-end' }}>
 					<LocalActivityBadge theme={currentThemeColors} />
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering

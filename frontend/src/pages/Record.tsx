@@ -11,7 +11,7 @@ import AudioSourceSelector from '../components/AudioSourceSelector'
 import FileUpload from '../components/FileUpload'
 import RecordingStatus from '../components/RecordingStatus'
 import HistoryList from '../components/HistoryList'
-import InfoPanel, { InfoButton } from '../components/InfoPanel'
+import InfoPanel, { InfoButton, hasUnseenChangelog } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { useOnDevice } from '../ondevice/useOnDevice'
@@ -115,6 +115,18 @@ export default function Record() {
 
 	useEffect(() => {
 		setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent))
+	}, [])
+
+	/**
+	 * Show the release notes once, to whoever has not seen these ones.
+	 *
+	 * Only here, and only on arrival: this is the page people land on, and
+	 * somebody opening a link somebody else sent them is not the audience for
+	 * "what's new". Closing the panel is what marks it read, so a reload
+	 * mid-glance does not lose it. See `hasUnseenChangelog`.
+	 */
+	useEffect(() => {
+		if (hasUnseenChangelog()) setInfoOpen(true)
 	}, [])
 
 	const drawWaveform = useCallback(() => {
@@ -248,12 +260,25 @@ export default function Record() {
 	return (
 		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<InfoPanel theme={currentThemeColors} open={infoOpen} setOpen={setInfoOpen} />
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+			{/* Wraps rather than overflows. On a phone the title and the info
+			    button fill the first line and the switches drop to a second,
+			    still right-aligned by the group's own `flex-end`. The `flex: 1`
+			    on both side groups is what centres the title while they fit. */}
+			<div
+				style={{
+					display: 'flex',
+					flexWrap: 'wrap',
+					justifyContent: 'space-between',
+					alignItems: 'center',
+					columnGap: '8px',
+					rowGap: '8px',
+					marginBottom: '8px',
+				}}>
 				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
 					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
 				</div>
 				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+				<div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
 					{/* Renders nothing at all while the device is idle. */}
 					<LocalActivityBadge theme={currentThemeColors} />
 					<LocalModeToggle theme={currentThemeColors} locked={isUiLocked} />
