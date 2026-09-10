@@ -854,7 +854,7 @@ mirror to R2, mirror the `onnx-community` files and set
 | Optional local audio retention? | **No.** On-device transcription is good enough that re-transcription is not worth hundreds of MB per meeting. Audio is discarded at finalize, always. |
 | Warn about Parakeet's 25 languages? | **Yes, on the toggle itself**, at the same level as the other warnings — it is a hard failure, not a quality drop. §5.2. |
 | What happens to the `LocalSummaryRun` eval data? | **Dropped with the table.** §13. |
-| What if `navigator.storage.persist()` is refused? | **Refuse to enable Local mode.** Storing someone's only copy of a meeting in a bucket the browser may evict without warning, while telling them it is safe, is worse than not offering the feature. The message names the usual remedies (visit again, install the app). |
+| What if `navigator.storage.persist()` is refused? | **Warn and continue.** Reversed after trying it the other way: browsers grant persistence on engagement heuristics nobody can see or act on directly, so a refusal usually means "not yet" and blocking puts the whole feature behind an invisible permission. Eviction only happens under real storage pressure, and `Export as Markdown` covers it. The panel says plainly that durability is not promised. |
 
 ### Still open
 
