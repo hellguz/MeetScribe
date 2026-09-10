@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { marked } from 'marked'
 import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
@@ -10,7 +10,8 @@ import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, DownloadIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, LockIcon, DownloadIcon } from '../components/Icons'
+import SegmentedToggle from '../components/SegmentedToggle'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -21,11 +22,19 @@ import { useMeetingSummary } from '../hooks/useMeetingSummary'
 import OnDeviceStats from '../components/OnDeviceStats'
 import { MarkdownView } from '../components/MarkdownView'
 import StorageBadge from '../components/StorageBadge'
+import LocalActivityBadge from '../components/LocalActivityBadge'
 import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
 import { isLocalMode } from '../local/mode'
-import { storageOf, getHistory } from '../utils/history'
+import { storageOf, getHistory, saveMeeting as saveMeetingMeta } from '../utils/history'
+import { localSummaryView } from '../utils/localSummaryView'
 import { downloadMeetingMarkdown } from '../local/export'
+import SharePopover from '../components/SharePopover'
+import KeepLocalPopover from '../components/KeepLocalPopover'
+import SaveCopyBanner from '../components/SaveCopyBanner'
+import TombstoneNotice from '../components/TombstoneNotice'
+import { hasOwnerToken, unpublishMeeting, type PublishStatus } from '../local/publish'
+import { putLocalMeeting, type LocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 
@@ -38,6 +47,7 @@ turndown.addRule('spans', { filter: 'span', replacement: (content) => content })
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
+	const location = useLocation()
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const isDark = theme !== 'light'
@@ -73,8 +83,12 @@ export default function Summary() {
 	} = meeting
 
 	// For a local meeting this *is* the summary; there is no other one.
-
-	const localSummary = useLocalSummary(mid)
+	//
+	// `onSaved` is what puts it on screen. The run writes to IndexedDB, and
+	// the hook that reads IndexedDB had no reason to read it again — so a
+	// finished run left the page saying "No summary is available for this
+	// meeting" until it was reloaded.
+	const localSummary = useLocalSummary(mid, { onSaved: meeting.applyLocalMeeting })
 
 	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
@@ -201,8 +215,37 @@ export default function Summary() {
 		[doSave],
 	)
 
+	/**
+	 * Summarize this meeting again with something changed.
+	 *
+	 * Length, language and context are one operation, not three: each is a
+	 * field on the record the prompt is built from, so writing the new value
+	 * and running the summariser again is all any of them is. `buildSummaryPrompt`
+	 * reads the language straight off the stored meeting, which is why
+	 * translating is nothing more than this.
+	 *
+	 * It exists because a local meeting has no server row: `/regenerate` and
+	 * `/translate` both need one, so the length selector silently 404'd on a
+	 * local meeting and the language selector was replaced by the words
+	 * "Translation is cloud-only" — which was only ever true of the *route*,
+	 * never of the model, and the model is sitting in this tab.
+	 */
+	const rerunLocally = useCallback(
+		async (patch: Partial<LocalMeeting>, nextLength?: SummaryLength) => {
+			if (!mid) return
+			await meeting.updateLocalMeeting(patch)
+			localSummary.generate(nextLength ?? currentMeetingLength)
+		},
+		[mid, meeting, localSummary, currentMeetingLength],
+	)
+
 	const handleContextUpdateConfirm = () => {
-		if (editedContext !== context) handleRegenerate({ newContext: editedContext })
+		if (editedContext === context) return
+		if (isLocal) {
+			void rerunLocally({ context: editedContext ?? null })
+			return
+		}
+		handleRegenerate({ newContext: editedContext })
 	}
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
@@ -236,6 +279,15 @@ export default function Summary() {
 		if (!mid) return
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
+		if (isLocal) {
+			// Not a translation of the summary but a fresh one written in the
+			// target language — which is also exactly what the server does.
+			await rerunLocally({
+				summary_language_mode: newState.mode,
+				summary_custom_language: newState.mode === 'custom' ? newState.lastCustomLanguage : null,
+			})
+			return
+		}
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
 		await handleTranslate(targetLanguage, newState.mode)
 	}
@@ -258,11 +310,32 @@ export default function Summary() {
 	const displayLoading = isLoading && !loadedFromCache
 	// `isRegenerating` only covers the request itself; the work continues while
 	// `isProcessing` polls, so the indicator has to key off both.
-	const busy = isProcessing || isRegenerating
-	// Regenerating with a summary already on screen used to show nothing at all,
-	// so changing the language looked like a no-op. Announce it over the stale text.
-	const showRegeneratingBanner = busy && !!summaryMarkdown
-	const showProcessingMessage = busy && !summaryMarkdown
+	/**
+	 * A local re-run is a regeneration; it just happens on the GPU in this tab
+	 * instead of on the server. Folded in here so the stale summary dims, the
+	 * selectors lock, and the banner appears exactly as they do for a cloud
+	 * meeting — rather than the only sign being the dial in the top bar.
+	 */
+	const regenerating = isRegenerating || (meeting.isLocal && localSummary.busy)
+	const busy = isProcessing || regenerating
+
+	// Which progress surfaces are on screen. Four flags with non-obvious
+	// interactions, so they live in one tested function; see the file.
+	const {
+		showPanel: showLocalPanel,
+		showStreaming,
+		dimStale: dimStaleSummary,
+		showRegeneratingBanner,
+		showProcessingMessage,
+	} = localSummaryView({
+		isLocal: meeting.isLocal,
+		hasTranscript: !!transcript,
+		hasSummary: !!summaryMarkdown,
+		phase: localSummary.state.phase,
+		streamingLength: localSummary.state.streaming.length,
+		localBusy: localSummary.busy,
+		serverBusy: isProcessing || isRegenerating,
+	})
 	// Whether this meeting already carries speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
 	// Offer the re-run only for meetings that predate the feature. Inferring
@@ -271,7 +344,11 @@ export default function Summary() {
 	// meetings were being offered a pointless re-run.
 	const offerSpeakerHint = canRediarize && !diarizationAttempted && !isDiarized
 	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
-	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
+	// On the device there are no server stages to count; the summariser's own
+	// status line is both more specific and more current.
+	const stageLabel = meeting.isLocal
+		? (localSummary.state.statusText ?? 'Summarizing on this device')
+		: stageText(processingStage, processingTotal, 'Processing summary')
 
 	// Where this meeting is stored, for the badge and for the actions that
 	// only make sense on one side (translate, find speakers, feedback).
@@ -288,24 +365,65 @@ export default function Summary() {
 	useEffect(() => {
 		if (!needsLocalSummary || autoStartedRef.current) return
 		if (localSummary.busy || localSummary.state.phase === 'error') return
+		// One model, one GPU: a second run started while the first is still
+		// going would have them both driving the same session. A run for
+		// another meeting is still a run.
+		if (localSummary.runningElsewhere) return
 		autoStartedRef.current = true
 		localSummary.generate(currentMeetingLength)
 	}, [needsLocalSummary, localSummary, currentMeetingLength])
 
+	// ── Sharing ──────────────────────────────────────────────────────────
 	/**
-	 * Save the meeting as a file. Offered for cloud meetings too — the fact
-	 * that the server has a copy is not a reason to make someone copy-paste
-	 * their own notes into a document.
+	 * Which of the storage toggle's two panels is open.
+	 *
+	 * The padlock gets its own. It used to open the sharing panel, so someone
+	 * who had just asked to make a meeting private was shown a row of share
+	 * durations and no mention of what taking it back would do.
 	 */
-	const handleDownload = useCallback(() => {
-		const record = meeting.localMeeting
-		if (record) {
-			downloadMeetingMarkdown(record)
-			return
-		}
-		// A cloud meeting has no stored record, so build one from what is on
-		// screen. Same file either way.
-		downloadMeetingMarkdown({
+	const [storagePanel, setStoragePanel] = useState<'share' | 'lock' | null>(null)
+	const [share, setShare] = useState<PublishStatus | null>(null)
+	const [savedCopy, setSavedCopy] = useState(false)
+	const [convertError, setConvertError] = useState<string | null>(null)
+
+	// Whether this meeting is shared comes from what the page already loaded —
+	// the local record for a local meeting, the status payload for a cloud one.
+	// It used to be discovered by probing /export, which meant a 404 in the
+	// console every time someone opened a meeting they had never shared.
+	useEffect(() => {
+		if (!mid) return
+		const online = !!meeting.expiresAt || meeting.publishedLocally
+		setShare(online ? { id: mid, published: true, expires_at: meeting.expiresAt, origin: 'published' } : null)
+	}, [mid, meeting.expiresAt, meeting.publishedLocally])
+
+	/**
+	 * Is there a copy of this meeting anyone else could reach?
+	 *
+	 * Not the same question as "where does it live". A local meeting with a
+	 * live share link is shared — the server is holding a copy so the link
+	 * works — and a cloud meeting is shared with no expiry, which is all
+	 * "in the cloud" has ever meant. So this, and not the storage backend, is
+	 * what the one control in the toolbar shows and changes.
+	 *
+	 * `published` rather than only `expires_at`, because the share that means
+	 * "keep it in the cloud" is precisely the one with no expiry.
+	 */
+	const isShared = !isLocal || !!share?.published || !!share?.expires_at
+
+	/**
+	 * Set for one render after `saveSharedCopy` moved the page onto the new
+	 * id, so the banner can explain why the URL changed. Router state and not
+	 * component state, because the component is a different instance by then.
+	 */
+	const justSavedFrom = (location.state as { savedFrom?: string } | null)?.savedFrom ?? null
+
+	// A cloud meeting with an expiry is somebody else's shared copy: it is
+	// going away, and after that there is nothing to come back to.
+	const viewingSharedCopy = !isLocal && !!meeting.expiresAt && !hasOwnerToken(mid ?? '')
+
+	/** The meeting as a portable record, for saving or exporting. */
+	const asRecord = useCallback(
+		(): LocalMeeting => ({
 			id: mid ?? 'meeting',
 			title: meetingTitle ?? 'Meeting',
 			started_at: meetingStartedAt || new Date().toISOString(),
@@ -323,13 +441,106 @@ export default function Summary() {
 			client_stats: clientStats,
 			updated_at: new Date().toISOString(),
 			unfinished: false,
-		})
-	}, [meeting.localMeeting, mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats])
+		}),
+		[mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats],
+	)
 
-	// Streaming output has nowhere to live until the run is saved, so it gets
-	// its own card while it arrives.
-	const showStreaming = localSummary.state.streaming.length > 0 && localSummary.state.phase !== 'done'
-	const showLocalPanel = isLocal && !!transcript && !summaryMarkdown && !showStreaming
+	/**
+	 * Take somebody else's shared meeting and make it yours.
+	 *
+	 * Under a *new* id, which is the whole point. The copy used to be stored
+	 * under the original's id, and that broke two things at once. Sharing it
+	 * on was impossible: `POST /publish` checks the owner token against the
+	 * hash minted by whoever shared it first, so it came back 403 — "This
+	 * meeting belongs to another browser." And the copy shadowed the original
+	 * in this browser forever, because `getLocalMeeting` is consulted before
+	 * the server and the two answered to the same name.
+	 *
+	 * There are no accounts, so ownership is "holds the token for this id".
+	 * A new id is therefore the only way to be an owner, and being an owner
+	 * is what lets you edit the meeting and hand out a link of your own. The
+	 * two meetings never sync afterwards, in either direction: what you are
+	 * saving is a copy, which is what a share has always handed out.
+	 */
+	const saveSharedCopy = useCallback(async () => {
+		if (!mid) return
+		const ownId = crypto.randomUUID()
+		const record: LocalMeeting = {
+			...asRecord(),
+			id: ownId,
+			// Nobody else can reach this one yet, however widely the meeting it
+			// came from is shared.
+			published: false,
+			shared_until: null,
+			copied_from: mid,
+			updated_at: new Date().toISOString(),
+		}
+		await putLocalMeeting(record)
+		saveMeetingMeta({
+			id: ownId,
+			title: record.title,
+			started_at: record.started_at,
+			status: 'complete',
+			storage: 'local',
+			duration_seconds: record.duration_seconds,
+		})
+		setSavedCopy(true)
+		// `replace`, not `push`: the link that was open is now the *other*
+		// meeting, and Back should reach the list rather than a copy of the
+		// page that just moved.
+		navigate(`/summary/${ownId}`, { replace: true, state: { savedFrom: mid } })
+	}, [mid, asRecord, navigate])
+
+	/**
+	 * Save the meeting as a file. Offered for cloud meetings too — the fact
+	 * that the server has a copy is not a reason to make someone copy-paste
+	 * their own notes into a document.
+	 */
+	const handleDownload = useCallback(() => {
+		downloadMeetingMarkdown(meeting.localMeeting ?? asRecord())
+	}, [meeting.localMeeting, asRecord])
+
+	/**
+	 * Pull the meeting into this browser.
+	 *
+	 * No `window.confirm` here any more: the switch that calls this opens a
+	 * panel listing exactly what the move costs, in the app’s own type rather
+	 * than a browser dialog with bullet characters in it. Two confirmations for
+	 * one deliberate action is one too many.
+	 */
+	/**
+	 * Take the meeting back, from wherever it currently is.
+	 *
+	 * Two different operations behind one padlock, because to the reader they
+	 * are one thing — "nobody but me": a local meeting that has been shared
+	 * only needs its server copy deleted, while a cloud meeting has no local
+	 * original yet and one has to be written and verified before the server's
+	 * is touched. Throws, so the panel can show why it failed and stay open.
+	 */
+	const handleKeepLocal = useCallback(async () => {
+		if (!mid) return
+		setConvertError(null)
+		if (isLocal) {
+			await unpublishMeeting(mid)
+			setShare(null)
+			return
+		}
+		await meeting.makePrivate()
+	}, [mid, isLocal, meeting])
+
+	/**
+	 * One control for both modes, because they are the same thing.
+	 *
+	 * A cloud meeting *is* a meeting shared with no expiry — the server holds a
+	 * copy and anyone with the link can read it. So there is no separate "share"
+	 * and "make private" button: the popover shows the current state and offers
+	 * the moves out of it, whichever state you are in.
+	 */
+	const shareTitle = !isShared
+		? 'Only in this browser — share it with a link'
+		: share?.expires_at
+			? 'Shared — manage the link or let it expire'
+			: 'Shared with no expiry — anyone with the link can read it'
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -359,28 +570,110 @@ export default function Summary() {
 				color: currentThemeColors.text,
 				transition: 'max-width 0.2s ease',
 			}}>
-			{/* Top nav */}
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-				<button
-					onClick={() => navigate('/record')}
-					style={{
-						background: 'none',
-						border: 'none',
-						cursor: 'pointer',
-						color: currentThemeColors.secondaryText,
-						fontSize: '15px',
-						fontFamily: 'inherit',
-					}}>
-					← Back
-				</button>
-				<StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} size="md" />
-				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+			{/* Top nav. Six button groups at their widest, so it wraps: Back
+			    keeps the first line and the toolbar drops beneath it, rather
+			    than the row sliding off the side of a phone. */}
+			<div
+				style={{
+					display: 'flex',
+					flexWrap: 'wrap',
+					justifyContent: 'space-between',
+					alignItems: 'center',
+					columnGap: '10px',
+					rowGap: '8px',
+					marginBottom: '12px',
+				}}>
+				<div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+					<button
+						onClick={() => navigate('/record')}
+						style={{
+							background: 'none',
+							border: 'none',
+							cursor: 'pointer',
+							color: currentThemeColors.secondaryText,
+							fontSize: '15px',
+							fontFamily: 'inherit',
+							padding: 0,
+						}}>
+						← Back
+					</button>
+					{/* Nothing about storage lives here any more. Sharing *is*
+					    storage — a cloud meeting is one shared with no expiry —
+					    so the share control below states it and changes it, and a
+					    second control saying the same thing was just somewhere
+					    else for the two to disagree. A removed meeting keeps its
+					    marker, because `TombstoneNotice` is the only other place
+					    that says so and it can be scrolled past. */}
+					{meeting.tombstone && <StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} gone />}
+				</div>
+				<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'flex-end' }}>
+					<LocalActivityBadge theme={currentThemeColors} />
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering
 					    "edit" while an on-device run is on screen would imply the
 					    run is editable, and "copy" would quietly copy the other one. */}
 					{hasSummary && !isProcessing && (
 						<>
+							{/* Private or shared, as a pair rather than one button
+							    whose icon swaps — same reasoning, and the same
+							    control, as the mode switch on the record page.
+							    First in the row because it is about the meeting
+							    rather than about this copy of its text.
+
+							    Both segments open the sharing panel. Neither
+							    direction is a free flip: sharing puts the text on
+							    a server, and locking it takes away access people
+							    already have (and, for a cloud meeting, deletes the
+							    only copy anyone else could reach). The panel is
+							    where those say so and where the buttons live. */}
+							<div style={{ position: 'relative', display: 'flex' }}>
+								<SegmentedToggle
+									theme={currentThemeColors}
+									ariaLabel="Whether this meeting is shared"
+									value={isShared ? 'shared' : 'private'}
+									options={[
+										{
+											value: 'private',
+											icon: LockIcon,
+											title: isShared
+												? 'Stop sharing — keep this meeting in this browser alone'
+												: 'Only in this browser. Nobody else can reach it.',
+										},
+										{
+											value: 'shared',
+											icon: ShareIcon,
+											title: shareTitle,
+											// The same amber the history list uses for a share
+											// that is counting down. A share with no expiry
+											// is not going anywhere, so it stays plain.
+											accent: share?.expires_at ? '#f59e0b' : undefined,
+										},
+									]}
+									onSelect={(side) => {
+										const wanted = side === 'private' ? 'lock' : 'share'
+										setStoragePanel((open) => (open === wanted ? null : wanted))
+									}}
+								/>
+								{storagePanel === 'share' && (
+									<SharePopover
+										theme={currentThemeColors}
+										meeting={meeting.localMeeting ?? asRecord()}
+										status={share}
+										isLocal={isLocal}
+										onChange={setShare}
+										onClose={() => setStoragePanel(null)}
+									/>
+								)}
+								{storagePanel === 'lock' && (
+									<KeepLocalPopover
+										theme={currentThemeColors}
+										isLocal={isLocal}
+										isShared={isShared}
+										onKeepLocal={handleKeepLocal}
+										onClose={() => setStoragePanel(null)}
+									/>
+								)}
+							</div>
 							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '13px', opacity: 0.7 }}>Copied!</span>}
 							<div
 								style={{
@@ -470,8 +763,39 @@ export default function Summary() {
 				</div>
 			</div>
 
+			{meeting.tombstone && (
+				<TombstoneNotice
+					theme={currentThemeColors}
+					tombstone={meeting.tombstone}
+					recovered={meeting.recoveredCopy}
+					onBack={() => navigate('/record')}
+					onOpenCopy={() => window.location.reload()}
+				/>
+			)}
+
+			{viewingSharedCopy && share?.expires_at && !meeting.tombstone && (
+				<SaveCopyBanner theme={currentThemeColors} expiresAt={share.expires_at} saved={savedCopy} onSave={saveSharedCopy} />
+			)}
+
+			{/* Landed here from a Save Copy, one navigation ago. */}
+			{justSavedFrom && isLocal && !meeting.tombstone && <SaveCopyBanner theme={currentThemeColors} expiresAt={null} saved />}
+
+			{convertError && (
+				<p
+					style={{
+						margin: '0 0 12px',
+						padding: '10px 12px',
+						borderRadius: '10px',
+						border: `1px solid ${currentThemeColors.button.danger}55`,
+						color: currentThemeColors.button.danger,
+						lineHeight: 1.5,
+					}}>
+					{convertError}
+				</p>
+			)}
+
 			{/* Settings card */}
-			{(hasSummary || isProcessing) && (
+			{!meeting.tombstone && (hasSummary || isProcessing) && (
 				<div
 					style={{
 						padding: '10px 12px',
@@ -483,18 +807,10 @@ export default function Summary() {
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
 							<SummaryLengthSelector
 								value={currentMeetingLength}
-								disabled={isRegenerating || isProcessing}
-								onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })}
+								disabled={regenerating || isProcessing}
+								onSelect={(l: SummaryLength) => (isLocal ? void rerunLocally({ summary_length: l }, l) : handleRegenerate({ newLength: l }))}
 							/>
-							{isLocal ? (
-								<span
-									title="Translation runs in the cloud, and this meeting never leaves your device."
-									style={{ fontSize: '13px', color: currentThemeColors.secondaryText }}>
-									Translation is cloud-only
-								</span>
-							) : (
-								<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
-							)}
+							<LanguageSelector disabled={regenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 						<div>
 							<textarea
@@ -502,7 +818,7 @@ export default function Summary() {
 								value={editedContext ?? ''}
 								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Context: participant names, project codes, key terms..."
-								disabled={isRegenerating || isProcessing}
+								disabled={regenerating || isProcessing}
 								style={{
 									width: '100%',
 									minHeight: '36px',
@@ -515,13 +831,13 @@ export default function Summary() {
 									fontFamily: 'inherit',
 									resize: 'vertical',
 									boxSizing: 'border-box',
-									opacity: isRegenerating || isProcessing ? 0.7 : 1,
+									opacity: regenerating || isProcessing ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
 								<button
 									onClick={handleContextUpdateConfirm}
-									disabled={isRegenerating || isProcessing}
+									disabled={regenerating || isProcessing}
 									style={{
 										marginTop: '6px',
 										padding: '8px 14px',
@@ -531,8 +847,8 @@ export default function Summary() {
 										color: currentThemeColors.button.primaryText,
 										fontSize: '15px',
 										fontWeight: '500',
-										cursor: isRegenerating || isProcessing ? 'not-allowed' : 'pointer',
-										opacity: isRegenerating || isProcessing ? 0.6 : 1,
+										cursor: regenerating || isProcessing ? 'not-allowed' : 'pointer',
+										opacity: regenerating || isProcessing ? 0.6 : 1,
 										transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate
@@ -637,6 +953,7 @@ export default function Summary() {
 					webgpuAvailable={localSummary.webgpuAvailable}
 					onGenerate={() => localSummary.generate(currentMeetingLength)}
 					onCancel={localSummary.cancel}
+					blocked={localSummary.runningElsewhere}
 				/>
 			)}
 
@@ -671,7 +988,7 @@ export default function Summary() {
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 						boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
-						opacity: showRegeneratingBanner ? 0.5 : 1,
+						opacity: dimStaleSummary ? 0.5 : 1,
 						transition: 'box-shadow 0.15s ease, opacity 0.2s ease',
 					}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}

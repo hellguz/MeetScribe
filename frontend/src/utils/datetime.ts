@@ -61,6 +61,44 @@ export function formatMeetingDateShort(value?: string | null): string {
 }
 
 /**
+ * "We", "Mi", "火" — the weekday, short enough to sit in front of a date
+ * without becoming the widest thing on the line.
+ *
+ * `Intl` offers 'short' ("Wed", "Mi.") and 'narrow' ("W", "M"), and neither is
+ * two letters: narrow collides across days in most languages (Tuesday and
+ * Thursday are both "T" in English) and short is wide and sometimes carries a
+ * full stop. So 'short' is taken and trimmed, which keeps the locale's own
+ * abbreviation and leaves scripts that write a day in one character alone.
+ */
+export function formatWeekdayShort(value?: string | null): string {
+	const date = parseServerDate(value)
+	if (!date) return ''
+	try {
+		const short = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(date)
+		// Drop the abbreviation dot German and others add, then take two.
+		const letters = short.replace(/[^\p{L}\p{N}]/gu, '')
+		return [...letters].slice(0, 2).join('')
+	} catch {
+		return ''
+	}
+}
+
+/**
+ * "42 min", "1 h 12", "38 s" — how long the meeting ran.
+ *
+ * Minutes are the unit that matters for a meeting, so they are what most rows
+ * show. Past an hour the minutes stay, because "1 h" for anything from sixty
+ * to a hundred and nineteen minutes is the one rounding nobody accepts.
+ */
+export function formatDuration(seconds?: number | null): string {
+	if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 1) return ''
+	if (seconds < 60) return `${Math.round(seconds)} s`
+	const minutes = Math.round(seconds / 60)
+	if (minutes < 60) return `${minutes} min`
+	return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`
+}
+
+/**
  * "31 Aug 2026, 21:44" — date and time for the history list, in the viewer's
  * timezone. No zone name here: the list would get noisy, and the summary page
  * spells it out in full when it matters.

@@ -11,12 +11,13 @@ import AudioSourceSelector from '../components/AudioSourceSelector'
 import FileUpload from '../components/FileUpload'
 import RecordingStatus from '../components/RecordingStatus'
 import HistoryList from '../components/HistoryList'
-import InfoPanel, { InfoButton } from '../components/InfoPanel'
+import InfoPanel, { InfoButton, hasUnseenChangelog } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { useOnDevice } from '../ondevice/useOnDevice'
 import { deleteLocalMeeting } from '../local/store'
 import LocalModeToggle from '../components/LocalModeToggle'
+import LocalActivityBadge from '../components/LocalActivityBadge'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -114,6 +115,18 @@ export default function Record() {
 
 	useEffect(() => {
 		setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent))
+	}, [])
+
+	/**
+	 * Show the release notes once, to whoever has not seen these ones.
+	 *
+	 * Only here, and only on arrival: this is the page people land on, and
+	 * somebody opening a link somebody else sent them is not the audience for
+	 * "what's new". Closing the panel is what marks it read, so a reload
+	 * mid-glance does not lose it. See `hasUnseenChangelog`.
+	 */
+	useEffect(() => {
+		if (hasUnseenChangelog()) setInfoOpen(true)
 	}, [])
 
 	const drawWaveform = useCallback(() => {
@@ -247,12 +260,18 @@ export default function Record() {
 	return (
 		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<InfoPanel theme={currentThemeColors} open={infoOpen} setOpen={setInfoOpen} />
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
+			{/* Wraps rather than overflows; see `.app-header` for what happens
+			    to the title when it does. */}
+			<div className="app-header" style={{ marginBottom: '8px' }}>
+				<div className="app-header-info">
 					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
 				</div>
-				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+				<h1 className="app-header-title" style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>
+					🎙️ MeetScribe
+				</h1>
+				<div className="app-header-actions">
+					{/* Renders nothing at all while the device is idle. */}
+					<LocalActivityBadge theme={currentThemeColors} />
 					<LocalModeToggle theme={currentThemeColors} locked={isUiLocked} />
 					<ThemeToggle />
 				</div>

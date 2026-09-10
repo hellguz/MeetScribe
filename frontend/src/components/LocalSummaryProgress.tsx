@@ -1,8 +1,8 @@
 import React from 'react'
 import { AppTheme } from '../styles/theme'
 import type { LocalSummaryState } from '../ondevice/summary/useLocalSummary'
-import { formatBytes } from '../utils/formatBytes'
 import Spinner from './Spinner'
+import { LockIcon } from './Icons'
 
 /**
  * What the on-device summariser is doing right now.
@@ -24,33 +24,55 @@ interface Props {
 	onCancel: () => void
 	/** Offered when the run failed, or when the user declined earlier. */
 	onUseCloud?: () => void
+	/**
+	 * The summariser is busy with a different meeting. One model on one GPU,
+	 * so this one has to wait — and offering a button that quietly does
+	 * nothing would be worse than saying so.
+	 */
+	blocked?: boolean
 }
 
-const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud }) => {
-	const { phase, statusText, error, download, prefill, decode, measured } = state
+const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud, blocked = false }) => {
+	const { phase, statusText, error, download, measured } = state
 
-	const detail = (): string | null => {
-		if (download && !download.total) return 'Downloading the model…'
-		if (download && download.total > 0 && phase === 'loading') {
-			const pct = Math.round((download.loaded / download.total) * 100)
-			return `Downloading the model — ${formatBytes(download.loaded)} of ${formatBytes(download.total)} (${pct}%)`
+	/**
+	 * What is happening, in words and nothing else.
+	 *
+	 * The numbers used to live here as well — megabytes downloaded of
+	 * megabytes, the prefill percentage and its ETA, the decode rate — from
+	 * before there was anywhere else to put them. The dial in the top bar now
+	 * carries all of it, and having both meant reading
+	 * "Downloading the model — 3.05 GB of 3.05 GB (100%)" underneath a dial
+	 * that had just said the same thing more briefly.
+	 *
+	 * So this line names the step and this card keeps the Stop button, which
+	 * is the thing the dial cannot be.
+	 */
+	const detail = (): string => {
+		switch (phase) {
+			case 'prompt':
+				return 'Reading the transcript'
+			case 'loading':
+				// "Downloading" only while bytes are actually moving; a model
+				// already on disk goes straight to loading it into the GPU.
+				return download && download.total > 0 && download.loaded < download.total ? 'Downloading the model' : 'Loading the model'
+			case 'prefilling':
+				return 'Reading the transcript'
+			case 'generating':
+				return 'Writing the summary'
+			case 'titling':
+				return 'Naming the meeting'
+			case 'saving':
+				return 'Saving to this device'
+			default:
+				return statusText ?? 'Summarizing on this device'
 		}
-		if (phase === 'prefilling' && prefill) {
-			const pct = prefill.total > 0 ? Math.round((prefill.processed / prefill.total) * 100) : 0
-			const eta = prefill.etaMs ? ` · ~${fmtMs(prefill.etaMs)} left` : ''
-			return `Reading the transcript — ${pct}%${eta}`
-		}
-		if (phase === 'generating' && decode) {
-			const rate = decode.tokensPerSecond ? ` · ${decode.tokensPerSecond.toFixed(1)} words/s` : ''
-			return `Writing the summary${rate}`
-		}
-		return statusText
 	}
 
 	const card: React.CSSProperties = {
 		marginBottom: '12px',
 		padding: '12px 14px',
-		borderRadius: '12px',
+		borderRadius: '8px',
 		border: `1px solid ${error ? '#f59e0b66' : theme.border}`,
 		backgroundColor: error ? '#f59e0b0f' : theme.background,
 		fontSize: '13px',
@@ -62,8 +84,8 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 			type="button"
 			onClick={onClick}
 			style={{
-				padding: '7px 14px',
-				borderRadius: '8px',
+				padding: '7px 12px',
+				borderRadius: '6px',
 				border: primary ? '1px solid transparent' : `1px solid ${theme.border}`,
 				backgroundColor: primary ? theme.button.primary : 'transparent',
 				color: primary ? theme.button.primaryText : theme.text,
@@ -107,7 +129,7 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 			<div style={card}>
 				<div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
 					<Spinner label="Summarizing on this device" />
-					<span style={{ flex: 1, minWidth: 0 }}>{detail() ?? 'Summarizing on this device…'}</span>
+					<span style={{ flex: 1, minWidth: 0 }}>{detail()}</span>
 					{button('Stop', onCancel)}
 				</div>
 				{measured.totalMs !== null && (
@@ -120,11 +142,23 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 	// Idle with no summary yet: the meeting has a transcript and is waiting.
 	return (
 		<div style={card}>
-			<strong>🧠 Summarize on this device</strong>
+			<span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+				<LockIcon size={13} />
+				<strong>Summarize on this device</strong>
+			</span>
 			<p style={{ margin: '5px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
-				Runs Qwen3-4B on your graphics card. Nothing leaves this browser.
+				{blocked
+					? 'The summariser is finishing another meeting. This one starts as soon as it is free — there is one model and one graphics card.'
+					: 'Runs Qwen3-4B on your graphics card. Nothing leaves this browser.'}
 			</p>
-			{button('Generate summary', onGenerate, true)}
+			{blocked ? (
+				<span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: theme.secondaryText }}>
+					<Spinner label="Waiting for the summariser" />
+					Waiting its turn
+				</span>
+			) : (
+				button('Generate summary', onGenerate, true)
+			)}
 		</div>
 	)
 }

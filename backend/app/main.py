@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import json
 import logging
+import hashlib
 import shutil
 import uuid
 import datetime as dt
@@ -33,6 +34,12 @@ from .models import (
     FeedbackDelete,
     MeetingMeta,
     MeetingSyncRequest,
+    MeetingTombstone,
+    MeetingSection,
+    PublishPayload,
+    PublishStatus,
+    MeetingExport,
+    MeetingGone,
     RegeneratePayload,
     MeetingConfigUpdate,
     FeedbackStatusUpdate,
@@ -83,6 +90,9 @@ async def lifespan(app: FastAPI):
 
     # Schedule periodic tasks
     _scheduler.add_job(tasks.cleanup_stuck_meetings, "interval", minutes=15, id="cleanup")
+    # Every 5 minutes: a share that says "until 14:32" should not still be
+    # readable at 15:00.
+    _scheduler.add_job(tasks.sweep_expired_shares, "interval", minutes=5, id="share_sweep")
     _scheduler.add_job(tasks.backup_database, "cron", hour=0, minute=0, id="backup")
     _scheduler.start()
     LOGGER.info("APScheduler started.")
@@ -136,6 +146,71 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
         else:
             display_texts.append("[...]")
     return " ".join(display_texts).strip()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ownership, without accounts
+# ──────────────────────────────────────────────────────────────────────────────
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _require_owner(mtg: Meeting, request: Request) -> None:
+    """
+    Reading a meeting needs nothing; changing one needs the token its creator
+    minted. Meetings that predate this have no `owner_hash` and stay open, so
+    the check cannot lock anyone out of what they already have.
+    """
+    if not mtg.owner_hash:
+        return
+    token = request.headers.get("x-owner-token")
+    if not token or _hash_token(token) != mtg.owner_hash:
+        raise HTTPException(403, "This meeting belongs to another browser.")
+
+
+def _entomb(db: Session, mtg: Meeting, reason: str) -> None:
+    """
+    Delete a meeting's content, keep its identity.
+
+    Everything that made it readable goes: audio, chunks, transcript, summary,
+    feedback, sections. What remains is a marker so anyone still holding the
+    link is told what happened rather than shown a bare 404.
+    """
+    mid = mtg.id
+    mtg_dir = AUDIO_DIR / str(mid)
+    if mtg_dir.exists() and mtg_dir.is_dir():
+        shutil.rmtree(mtg_dir, ignore_errors=True)
+
+    db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mid))
+    db.exec(delete(Feedback).where(Feedback.meeting_id == mid))
+    db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mid))
+
+    if not db.get(MeetingTombstone, mid):
+        db.add(
+            MeetingTombstone(
+                id=mid, title=mtg.title, started_at=mtg.started_at, reason=reason
+            )
+        )
+    db.delete(mtg)
+    db.commit()
+    LOGGER.info("Meeting %s removed (%s); tombstone kept.", mid, reason)
+
+
+def _gone(db: Session, mid: uuid.UUID) -> None:
+    """Raise 410 with the tombstone's details, if there is one. Else 404."""
+    stone = db.get(MeetingTombstone, mid)
+    if not stone:
+        raise HTTPException(404, "Meeting not found")
+    raise HTTPException(
+        status_code=410,
+        detail=MeetingGone(
+            id=stone.id,
+            title=stone.title,
+            started_at=stone.started_at,
+            removed_at=stone.removed_at,
+            reason=stone.reason,
+        ).model_dump(mode="json"),
+    )
 
 
 @app.post("/api/meetings", response_model=MeetingStatus, status_code=201)
@@ -272,8 +347,28 @@ def sync_meetings_history(payload: MeetingSyncRequest):
                     title=mtg.title,
                     started_at=mtg.started_at,
                     status="complete" if mtg.done else "pending",
+                    expires_at=mtg.expires_at,
+                    duration_seconds=mtg.duration_seconds,
                 )
             )
+
+        # Meetings that have since been removed. Reported so a history list can
+        # mark them without anyone having to open one to find out.
+        found = {m.id for m in meetings}
+        missing = [i for i in payload.ids if i not in found]
+        if missing:
+            for stone in db.exec(
+                select(MeetingTombstone).where(MeetingTombstone.id.in_(missing))
+            ).all():
+                history.append(
+                    MeetingMeta(
+                        id=stone.id,
+                        title=stone.title,
+                        started_at=stone.started_at,
+                        status="gone",
+                        reason=stone.reason,
+                    )
+                )
         return history
 
 
@@ -282,7 +377,7 @@ def get_meeting(mid: uuid.UUID):
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
-            raise HTTPException(404, "Meeting not found")
+            _gone(db, mid)
         now = dt.datetime.utcnow()
         if (
             not mtg.final_received
@@ -438,27 +533,14 @@ def rediarize_meeting(mid: uuid.UUID):
 
 
 @app.delete("/api/meetings/{mid}", status_code=204)
-def delete_meeting(mid: uuid.UUID):
+def delete_meeting(mid: uuid.UUID, request: Request):
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
         if not mtg:
-            # If it's already gone, that's fine.
+            # Already gone, by whatever route. Deleting twice is not an error.
             return Response(status_code=204)
-
-        # Delete associated chunks from filesystem
-        mtg_dir = AUDIO_DIR / str(mid)
-        if mtg_dir.exists() and mtg_dir.is_dir():
-            shutil.rmtree(mtg_dir)
-            LOGGER.info(f"Deleted audio directory for meeting {mid}")
-
-        # Bulk delete associated chunks and feedback
-        db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mid))
-        db.exec(delete(Feedback).where(Feedback.meeting_id == mid))
-
-        # Delete meeting itself
-        db.delete(mtg)
-        db.commit()
-        LOGGER.info(f"Deleted meeting {mid} and all associated data.")
+        _require_owner(mtg, request)
+        _entomb(db, mtg, "deleted")
     return Response(status_code=204)
 
 
@@ -957,6 +1039,177 @@ def get_summary_prompt(mid: uuid.UUID, summary_length: str | None = None):
         summary_length=mode,
         prompt_chars=len(prompt),
     )
+
+
+@app.post("/api/meetings/{mid}/publish", response_model=PublishStatus)
+def publish_meeting(mid: uuid.UUID, body: PublishPayload, request: Request):
+    """
+    Put a copy of a browser-held meeting on the server, so a link works.
+
+    Create-or-refresh: calling it again on an already-published meeting moves
+    the expiry, which is what "share for longer" does, and replaces the
+    content, which is what "I fixed a typo and the link should show it" does.
+
+    The content used to be written on the first call only, to protect edits
+    made "through the link". Nothing makes those: a link gives a read-only
+    view plus Save Copy, and a saved copy is now a separate meeting under an
+    id of its own (see `saveSharedCopy` in the frontend). So the only person
+    who can reach this branch is the owner, holding the only authority there
+    is, pushing their own newer text — and refusing them left the link
+    serving a version they had already corrected.
+
+    A published meeting arrives finished. `done` is set and no task is queued:
+    there is no audio to transcribe and the summary already exists.
+    """
+    if body.expires_in_seconds is not None and body.expires_in_seconds <= 0:
+        raise HTTPException(422, "expires_in_seconds must be positive, or null for no expiry")
+
+    expires_at = (
+        dt.datetime.utcnow() + dt.timedelta(seconds=body.expires_in_seconds)
+        if body.expires_in_seconds is not None
+        else None
+    )
+
+    with Session(engine) as db:
+        # A tombstone here is not an error. It means this meeting was shared
+        # before and the share ended — by expiry, or because the owner stopped
+        # it — and the owner is now sharing it again. The browser still holds
+        # the original, so the link should simply start working again.
+        #
+        # Refusing was a bug: "stop sharing, then share again" is an ordinary
+        # thing to do, and it left the meeting permanently unshareable.
+        stone = db.get(MeetingTombstone, mid)
+        if stone:
+            db.delete(stone)
+            db.commit()
+
+        mtg = db.get(Meeting, mid)
+        if mtg:
+            _require_owner(mtg, request)
+            mtg.expires_at = expires_at
+            # The browser is the authority, so its copy wins wholesale rather
+            # than field by field: `transcript` is required on the payload, so
+            # a request that got this far carries the whole record.
+            mtg.title = body.title
+            mtg.transcript_text = body.transcript
+            mtg.summary_markdown = body.summary_markdown
+            mtg.context = body.context
+            mtg.summary_length = body.summary_length or mtg.summary_length
+            mtg.summary_language_mode = body.summary_language_mode or mtg.summary_language_mode
+            mtg.summary_custom_language = body.summary_custom_language
+            mtg.timezone = body.timezone or mtg.timezone
+            mtg.duration_seconds = body.duration_seconds
+            mtg.word_count = body.word_count
+            mtg.speaker_count = body.speaker_count
+        else:
+            mtg = Meeting(
+                id=mid,
+                title=body.title,
+                started_at=body.started_at or dt.datetime.utcnow(),
+                transcript_text=body.transcript,
+                summary_markdown=body.summary_markdown,
+                context=body.context,
+                summary_length=body.summary_length or "narrative",
+                summary_language_mode=body.summary_language_mode or "auto",
+                summary_custom_language=body.summary_custom_language,
+                timezone=body.timezone,
+                duration_seconds=body.duration_seconds,
+                word_count=body.word_count,
+                speaker_count=body.speaker_count,
+                # It came in labelled or it did not; either way the pipeline
+                # has nothing left to add without the audio.
+                diarization_attempted=True,
+                origin="published",
+                expires_at=expires_at,
+                owner_hash=_hash_token(body.owner_token),
+                user_agent=request.headers.get("user-agent"),
+                # Finished on arrival: never queue a summary for one of these.
+                done=True,
+                final_received=True,
+                expected_chunks=0,
+                received_chunks=0,
+                summary_task_queued=True,
+            )
+            db.add(mtg)
+
+        db.commit()
+        db.refresh(mtg)
+        LOGGER.info(
+            "Meeting %s published (expires %s)", mid, expires_at.isoformat() if expires_at else "never"
+        )
+        return PublishStatus(id=mid, published=True, expires_at=mtg.expires_at, origin=mtg.origin)
+
+
+@app.delete("/api/meetings/{mid}/publish", response_model=PublishStatus)
+def unpublish_meeting(mid: uuid.UUID, request: Request):
+    """
+    Take the shared copy down now, rather than waiting for the window to close.
+
+    Identical in effect to the expiry passing: the content goes, a tombstone
+    stays, and copies people already took are untouched.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            _gone(db, mid)
+        _require_owner(mtg, request)
+        _entomb(db, mtg, "expired")
+        return PublishStatus(id=mid, published=False, expires_at=None, origin="published")
+
+
+@app.get("/api/meetings/{mid}/export", response_model=MeetingExport)
+def export_meeting(mid: uuid.UUID):
+    """
+    Everything needed to rebuild this meeting inside a browser.
+
+    Reading is deliberately open, exactly as the summary page is: anyone who
+    can read a meeting can already see all of this. It is `Make private` that
+    is gated, because that destroys the server's copy.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            _gone(db, mid)
+        if not mtg.done:
+            raise HTTPException(409, "This meeting is still being processed.")
+        return MeetingExport(
+            id=mtg.id,
+            title=mtg.title,
+            started_at=mtg.started_at,
+            transcript=mtg.transcript_text or _build_live_transcript(db, mid),
+            summary_markdown=mtg.summary_markdown,
+            context=mtg.context,
+            summary_length=mtg.summary_length,
+            summary_language_mode=mtg.summary_language_mode,
+            summary_custom_language=mtg.summary_custom_language,
+            timezone=mtg.timezone,
+            duration_seconds=mtg.duration_seconds,
+            word_count=mtg.word_count,
+            speaker_count=mtg.speaker_count,
+            client_stats=mtg.client_stats,
+            expires_at=mtg.expires_at,
+            origin=mtg.origin,
+        )
+
+
+@app.post("/api/meetings/{mid}/make-private", status_code=200)
+def make_meeting_private(mid: uuid.UUID, request: Request):
+    """
+    Remove a meeting from the server because the browser now holds it.
+
+    Called only after the client has written and verified its own copy — this
+    is destructive and there is nothing to undo it with. The tombstone is why
+    anyone else's next visit is an explanation rather than a 404.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            _gone(db, mid)
+        _require_owner(mtg, request)
+        if not mtg.done:
+            raise HTTPException(409, "Wait until the summary is finished.")
+        _entomb(db, mtg, "made_private")
+    return {"ok": True}
 
 
 @app.get("/healthz")

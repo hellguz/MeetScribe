@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react'
-import { formatMeetingDateTimeShort } from '../utils/datetime'
+import { formatMeetingDateTimeShort, formatWeekdayShort, formatDuration } from '../utils/datetime'
 import { useNavigate } from 'react-router-dom'
 import { MeetingMeta, storageOf } from '../utils/history'
 import StorageBadge from './StorageBadge'
@@ -194,11 +194,37 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 									<>
 										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
 											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>{m.title}</span>
-											<span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-												<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
-													{formatMeetingDateTimeShort(m.started_at)}
+											{/* One quiet line, dot-separated: weekday, when, how
+											    long, and whether anyone else can reach it. The
+											    italics went with the redesign — slanted 12px grey
+											    was the least readable text on the page, and it was
+											    carrying the only fact every row has. */}
+											<span
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: '6px',
+													flexWrap: 'wrap',
+													fontSize: 12,
+													color: currentThemeColors.secondaryText,
+												}}>
+												<span style={{ fontVariantNumeric: 'tabular-nums' }}>
+													{[formatWeekdayShort(m.started_at), formatMeetingDateTimeShort(m.started_at)].filter(Boolean).join(' ')}
 												</span>
-												<StorageBadge storage={storageOf(m)} theme={currentThemeColors} loud={badgeLoud} />
+												{formatDuration(m.duration_seconds) && (
+													<>
+														<span aria-hidden style={{ opacity: 0.5 }}>·</span>
+														<span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDuration(m.duration_seconds)}</span>
+													</>
+												)}
+												<StorageBadge
+													storage={storageOf(m)}
+													theme={currentThemeColors}
+													loud={badgeLoud}
+													sharedUntil={m.shared_until ?? null}
+													published={m.published}
+													gone={m.status === 'gone'}
+												/>
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>

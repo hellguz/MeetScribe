@@ -120,7 +120,22 @@ export interface PreloadRequest {
 	model: string
 }
 
-export type SummarizerRequest = SummarizeRequest | PreloadRequest
+/**
+ * One short, unstreamed generation, for naming the meeting.
+ *
+ * A separate message rather than a flag on `summarize`, because the page
+ * reads the two completely differently: a summary streams into the document
+ * and a title replaces a heading. Sharing the type would mean every consumer
+ * of `token` and `done` having to ask which run it was watching.
+ */
+export interface TitleRequest {
+	type: 'title'
+	prompt: string
+	model: string
+	maxNewTokens: number
+}
+
+export type SummarizerRequest = SummarizeRequest | PreloadRequest | TitleRequest
 
 /** What the run is actually executing on, asked of the browser itself. */
 export interface AdapterInfo {
@@ -149,6 +164,7 @@ export type SummarizerResponse =
 	| { type: 'decode'; tokens: number; ms: number }
 	| { type: 'done'; text: string; outputTokens: number; decodeMs: number; totalMs: number; truncated: boolean }
 	| { type: 'preloaded'; cached: boolean }
+	| { type: 'titled'; text: string; ms: number }
 	| { type: 'error'; message: string }
 
 const post = (msg: SummarizerResponse) => self.postMessage(msg)
@@ -525,6 +541,61 @@ async function summarize(req: SummarizeRequest) {
 	})
 }
 
+/**
+ * Name the meeting: one generation, a few dozen tokens, no streaming.
+ *
+ * Chunked prefill is reused unchanged even though the prompt is short by the
+ * summariser's standards — a summary plus 2000 characters of transcript is
+ * still several thousand tokens, which is well past the point where the
+ * unsliced logits tensor is what makes the machine crawl. See
+ * `prefillInChunks`.
+ */
+async function makeTitle(req: TitleRequest) {
+	const { tokenizer, model, prefillChunk } = await load(req.model)
+	post({ type: 'status', text: 'Naming the meeting…' })
+	const startedAt = performance.now()
+
+	const inputs = tokenizer.apply_chat_template([{ role: 'user', content: req.prompt }], {
+		add_generation_prompt: true,
+		return_dict: true,
+		enable_thinking: false,
+	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: Tensor; attention_mask: Tensor }
+
+	const promptTokens = inputs.input_ids.dims.at(-1) ?? 0
+	const past = await prefillInChunks(model, inputs.input_ids, inputs.attention_mask, promptTokens, prefillChunk)
+
+	// Collected through a streamer rather than decoded off the output tensor:
+	// it is the same path `summarize` already uses, so there is one way of
+	// turning tokens into text here instead of two.
+	let raw = ''
+	const streamer = new TextStreamer(tokenizer, {
+		skip_prompt: true,
+		skip_special_tokens: false,
+		callback_function: (chunk: string) => {
+			raw += chunk
+		},
+	})
+
+	await model.generate({
+		...inputs,
+		...(past ? { past_key_values: past } : {}),
+		max_new_tokens: req.maxNewTokens,
+		do_sample: false,
+		streamer,
+	} as unknown as Parameters<typeof model.generate>[0])
+
+	try {
+		await (past as { dispose?: () => Promise<void> } | null)?.dispose?.()
+	} catch {
+		/* best effort: the point is to free VRAM, not to be exact */
+	}
+
+	const text = stripThinking(raw)
+	const ms = Math.round(performance.now() - startedAt)
+	post({ type: 'log', line: `title in ${ms}ms: ${text.slice(0, 120)}` })
+	post({ type: 'titled', text, ms })
+}
+
 self.addEventListener('message', async (event: MessageEvent<SummarizerRequest>) => {
 	try {
 		if (event.data.type === 'preload') {
@@ -533,6 +604,10 @@ self.addEventListener('message', async (event: MessageEvent<SummarizerRequest>) 
 			const before = await cachedBytesFor(event.data.model)
 			await load(event.data.model)
 			post({ type: 'preloaded', cached: before > 0 })
+			return
+		}
+		if (event.data.type === 'title') {
+			await makeTitle(event.data)
 			return
 		}
 		await summarize(event.data)

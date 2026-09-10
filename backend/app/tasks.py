@@ -17,6 +17,7 @@ from faster_whisper import WhisperModel
 from groq import Groq
 import anthropic
 from sqlmodel import Session, select, func, create_engine
+from sqlalchemy import delete
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .config import settings
-from .models import Meeting, MeetingChunk
+from .models import Meeting, MeetingChunk, Feedback, MeetingTombstone
 from . import prompts as P
 from . import diarization
 
@@ -765,6 +766,67 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
                     db.commit()
         except Exception:
             LOGGER.exception("Could not restore state for %s.", meeting_id_str)
+
+
+def sweep_expired_shares() -> None:
+    """
+    Take down share links whose window has closed, and forget old tombstones.
+
+    A published meeting is a copy: the browser that made it still has the
+    original, and everyone who opened the link in time took their own. So this
+    removes content without removing anything that only existed here — which is
+    exactly the promise the share sheet makes when it names a date.
+
+    Tombstones outlive the content by 90 days so that "this was made private"
+    is still explainable to someone who comes back late. After that it really
+    is a 404.
+    """
+    engine = get_db_engine()
+    now = dt.datetime.utcnow()
+
+    try:
+        with Session(engine) as db:
+            due = db.exec(
+                select(Meeting).where(
+                    Meeting.expires_at.is_not(None), Meeting.expires_at <= now
+                )
+            ).all()
+            for mtg in due:
+                # A published copy carries no audio, but a cloud meeting given
+                # an expiry does. Delete by the rows' own paths rather than
+                # duplicating main.py's AUDIO_DIR here.
+                for chunk in db.exec(
+                    select(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id)
+                ).all():
+                    if chunk.path:
+                        Path(chunk.path).unlink(missing_ok=True)
+                db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id))
+                db.exec(delete(Feedback).where(Feedback.meeting_id == mtg.id))
+                if not db.get(MeetingTombstone, mtg.id):
+                    db.add(
+                        MeetingTombstone(
+                            id=mtg.id,
+                            title=mtg.title,
+                            started_at=mtg.started_at,
+                            reason="expired",
+                        )
+                    )
+                db.delete(mtg)
+                LOGGER.info("Share for meeting %s expired; content removed.", mtg.id)
+
+            cutoff = now - dt.timedelta(days=90)
+            stale = db.exec(
+                select(MeetingTombstone).where(MeetingTombstone.removed_at < cutoff)
+            ).all()
+            for stone in stale:
+                db.delete(stone)
+            if due or stale:
+                db.commit()
+                LOGGER.info(
+                    "Share sweep: %d expired, %d tombstone(s) forgotten.", len(due), len(stale)
+                )
+    except Exception:
+        LOGGER.exception("Share expiry sweep failed.")
 
 
 def backup_database() -> None:
