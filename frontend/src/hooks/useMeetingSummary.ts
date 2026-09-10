@@ -47,6 +47,8 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [tombstone, setTombstone] = useState<Tombstone | null>(null)
 	/** True when a cached copy was found and promoted to a real local meeting. */
 	const [recoveredCopy, setRecoveredCopy] = useState(false)
+	/** Expiry of the shared copy, straight off the status the page already polls. */
+	const [expiresAt, setExpiresAt] = useState<string | null>(null)
 
 	/** Populate every piece of page state from a stored local meeting. */
 	const applyLocalMeeting = useCallback((m: LocalMeeting) => {
@@ -64,6 +66,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		// The audio was never kept, so speakers can never be re-identified.
 		setCanRediarize(false)
 		setDiarizationAttempted(true)
+		setExpiresAt(m.shared_until ?? null)
 		setProcessingStage(null)
 		setProcessingTotal(null)
 		setIsLoading(false)
@@ -159,6 +162,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				} catch {
 					setClientStats(null)
 				}
+				setExpiresAt(data.expires_at ?? null)
 				setProcessingStage(data.processing_stage ?? null)
 				setProcessingTotal(typeof data.processing_total === 'number' ? data.processing_total : null)
 				const trn = data.transcript_text || null
@@ -452,6 +456,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	}, [mid, applyLocalMeeting])
 
 	return {
+		expiresAt,
 		tombstone,
 		recoveredCopy,
 		makePrivate,

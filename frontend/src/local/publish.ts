@@ -8,7 +8,7 @@
  * granting access to something that has to stay online.
  */
 import { apiUrl } from '../utils/api'
-import type { LocalMeeting } from './store'
+import { patchLocalMeeting, type LocalMeeting } from './store'
 
 const TOKEN_PREFIX = 'meetscribe_owner_'
 
@@ -99,7 +99,11 @@ export async function publishMeeting(meeting: LocalMeeting, expiresInSeconds: nu
 		const body = await res.json().catch(() => ({}))
 		throw new Error(typeof body.detail === 'string' ? body.detail : `Could not share this meeting (HTTP ${res.status}).`)
 	}
-	return res.json()
+	const status: PublishStatus = await res.json()
+	// The record is the only place that knows this meeting is shared, so the
+	// page never has to ask the server on load.
+	await patchLocalMeeting(meeting.id, { shared_until: status.expires_at ?? null })
+	return status
 }
 
 /** Take the shared copy down now. */
@@ -112,18 +116,7 @@ export async function unpublishMeeting(meetingId: string): Promise<void> {
 		const body = await res.json().catch(() => ({}))
 		throw new Error(typeof body.detail === 'string' ? body.detail : `Could not stop sharing (HTTP ${res.status}).`)
 	}
-}
-
-/** Is the shared copy still up, and until when? */
-export async function publishStatus(meetingId: string): Promise<PublishStatus | null> {
-	try {
-		const res = await fetch(apiUrl(`/api/meetings/${meetingId}/export`))
-		if (!res.ok) return null
-		const data = await res.json()
-		return { id: meetingId, published: true, expires_at: data.expires_at ?? null, origin: data.origin ?? 'recorded' }
-	} catch {
-		return null
-	}
+	await patchLocalMeeting(meetingId, { shared_until: null })
 }
 
 export const shareUrl = (meetingId: string): string => `${window.location.origin}/summary/${meetingId}`

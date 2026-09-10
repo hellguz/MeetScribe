@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import { formatExpiry, msUntil } from '../local/publish'
+import { ShareIcon, CheckIcon } from './Icons'
 
 /**
  * "This copy disappears on 17 Sep."
@@ -36,8 +37,20 @@ const SaveCopyBanner: React.FC<Props> = ({ theme, expiresAt, saved, onSave }) =>
 
 	if (saved) {
 		return (
-			<div style={{ margin: '0 0 12px', padding: '9px 12px', borderRadius: '10px', backgroundColor: `${theme.text}0d`, color: theme.secondaryText, fontSize: '13px' }}>
-				✅ Saved to this device. Yours to keep.
+			<div
+				style={{
+					margin: '0 0 12px',
+					padding: '9px 12px',
+					borderRadius: '8px',
+					backgroundColor: `${theme.text}0d`,
+					color: theme.secondaryText,
+					fontSize: '13px',
+					display: 'flex',
+					alignItems: 'center',
+					gap: '7px',
+				}}>
+				<CheckIcon size={13} />
+				Saved to this device. Yours to keep.
 			</div>
 		)
 	}
@@ -55,8 +68,8 @@ const SaveCopyBanner: React.FC<Props> = ({ theme, expiresAt, saved, onSave }) =>
 			type="button"
 			onClick={onSave}
 			style={{
-				padding: '7px 14px',
-				borderRadius: '8px',
+				padding: '7px 12px',
+				borderRadius: '6px',
 				border: '1px solid transparent',
 				backgroundColor: accent,
 				color: '#ffffff',
@@ -88,15 +101,15 @@ const SaveCopyBanner: React.FC<Props> = ({ theme, expiresAt, saved, onSave }) =>
 				zIndex: 30,
 				margin: '0 0 12px',
 				padding: '11px 13px',
-				borderRadius: '10px',
+				borderRadius: '8px',
 				border: `1px solid ${accent}66`,
 				backgroundColor: `${accent}1f`,
 				display: 'flex',
 				alignItems: 'center',
 				gap: '12px',
 			}}>
-			<span aria-hidden style={{ fontSize: '16px', flexShrink: 0 }}>
-				🔗
+			<span style={{ display: 'flex', flexShrink: 0, color: accent }}>
+				<ShareIcon size={16} />
 			</span>
 			<div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
 				<div style={{ fontWeight: 600, fontSize: '13.5px', color: theme.text }}>{headline}</div>

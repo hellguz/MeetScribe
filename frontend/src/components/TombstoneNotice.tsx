@@ -54,7 +54,7 @@ const TombstoneNotice: React.FC<Props> = ({ theme, tombstone, recovered, onBack,
 			style={{
 				margin: '24px 0',
 				padding: '20px 22px',
-				borderRadius: '12px',
+				borderRadius: '8px',
 				border: `1px solid ${theme.border}`,
 				backgroundColor: theme.background,
 				color: theme.text,
@@ -72,8 +72,8 @@ const TombstoneNotice: React.FC<Props> = ({ theme, tombstone, recovered, onBack,
 						type="button"
 						onClick={onOpenCopy}
 						style={{
-							padding: '8px 16px',
-							borderRadius: '8px',
+							padding: '7px 14px',
+							borderRadius: '6px',
 							border: '1px solid transparent',
 							backgroundColor: theme.button.primary,
 							color: theme.button.primaryText,
@@ -87,10 +87,10 @@ const TombstoneNotice: React.FC<Props> = ({ theme, tombstone, recovered, onBack,
 					type="button"
 					onClick={onBack}
 					style={{
-						padding: '8px 16px',
-						borderRadius: '8px',
+						padding: '7px 14px',
+						borderRadius: '6px',
 						border: `1px solid ${theme.border}`,
-						backgroundColor: 'transparent',
+						backgroundColor: theme.backgroundSecondary,
 						color: theme.text,
 						font: 'inherit',
 						cursor: 'pointer',

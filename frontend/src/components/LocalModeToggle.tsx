@@ -6,6 +6,7 @@ import { measurePlanBytes } from '../ondevice/hub'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities } from '../ondevice/capabilities'
 import { SUMMARY_MODELS } from '../ondevice/summary/models'
 import { formatBytes } from './OnDevicePanel'
+import { LockIcon, UnlockIcon, AlertIcon } from './Icons'
 
 /**
  * The Local mode switch, in the record page's top bar.
@@ -77,20 +78,22 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 		else setRefusal(result.message)
 	}
 
+	// Same metrics as the tags/favourite icon buttons it sits beside.
 	const pill: React.CSSProperties = {
 		display: 'inline-flex',
 		alignItems: 'center',
-		gap: '5px',
-		padding: '4px 10px',
-		borderRadius: '999px',
-		fontSize: '13px',
+		gap: '6px',
+		padding: '7px 9px',
+		borderRadius: '6px',
+		fontSize: '12px',
 		fontFamily: 'inherit',
+		lineHeight: 1,
 		cursor: locked ? 'not-allowed' : 'pointer',
 		border: `1px solid ${enabled ? theme.text : theme.border}`,
-		backgroundColor: enabled ? `${theme.text}12` : 'transparent',
+		backgroundColor: enabled ? `${theme.text}12` : theme.backgroundSecondary,
 		color: enabled ? theme.text : theme.secondaryText,
 		opacity: locked ? 0.5 : 1,
-		transition: 'background-color 0.15s, border-color 0.15s, color 0.15s',
+		transition: 'background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease',
 	}
 
 	const row = (label: string, value: string): React.ReactElement => (
@@ -102,8 +105,8 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 
 	const warn = (children: React.ReactNode, tone: 'warn' | 'stop' = 'warn'): React.ReactElement => (
 		<li style={{ display: 'flex', gap: '7px', color: tone === 'stop' ? '#d97706' : theme.secondaryText, lineHeight: 1.45 }}>
-			<span aria-hidden style={{ flexShrink: 0 }}>
-				⚠️
+			<span style={{ display: 'flex', flexShrink: 0, marginTop: '1px', color: tone === 'stop' ? '#d97706' : theme.secondaryText }}>
+				<AlertIcon size={12} />
 			</span>
 			<span>{children}</span>
 		</li>
@@ -118,32 +121,36 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 				onClick={() => !locked && setOpen((v) => !v)}
 				title={enabled ? 'Local mode is on' : 'Local mode is off'}
 				style={pill}>
-				<span aria-hidden>{enabled ? '🔒' : '🔓'}</span>
+				{enabled ? <LockIcon size={13} /> : <UnlockIcon size={13} />}
 				{enabled ? 'Local' : 'Cloud'}
-				{enabled && (noWebgpu || mobile) && <span aria-hidden>⚠️</span>}
+				{enabled && (noWebgpu || mobile) && <AlertIcon size={12} />}
 			</button>
 
 			{open && (
 				<div
 					role="dialog"
 					aria-label="Local mode"
+					onClick={(e) => e.stopPropagation()}
 					style={{
+						// Matches the tags dropdown so the menus read as a family.
 						position: 'absolute',
-						top: 'calc(100% + 8px)',
+						top: '100%',
 						right: 0,
-						zIndex: 40,
-						width: 'min(360px, calc(100vw - 32px))',
-						padding: '14px 16px',
-						borderRadius: '12px',
+						marginTop: '4px',
+						zIndex: 1000,
+						width: 'min(330px, calc(100vw - 32px))',
+						padding: '12px',
+						borderRadius: '8px',
 						border: `1px solid ${theme.border}`,
 						backgroundColor: theme.background,
-						boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+						boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
 						fontSize: '13px',
 						color: theme.text,
 						textAlign: 'left',
 					}}>
-					<div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-						<strong style={{ fontSize: '14px' }}>🔒 Local mode</strong>
+					<div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
+						<LockIcon size={13} />
+						<strong style={{ fontSize: '13px' }}>Local mode</strong>
 						<span
 							style={{
 								fontSize: '10px',
@@ -166,7 +173,7 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 						<div
 							style={{
 								padding: '9px 11px',
-								borderRadius: '8px',
+								borderRadius: '6px',
 								backgroundColor: theme.backgroundSecondary,
 								marginBottom: '10px',
 								display: 'flex',
@@ -228,7 +235,7 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 							style={{
 								margin: '0 0 10px',
 								padding: '9px 11px',
-								borderRadius: '8px',
+								borderRadius: '6px',
 								lineHeight: 1.5,
 								color: '#b45309',
 								backgroundColor: '#f59e0b1f',
@@ -243,12 +250,13 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 							type="button"
 							onClick={() => setOpen(false)}
 							style={{
-								padding: '7px 14px',
-								borderRadius: '8px',
+								padding: '7px 11px',
+								borderRadius: '6px',
 								border: `1px solid ${theme.border}`,
-								backgroundColor: 'transparent',
+								backgroundColor: theme.backgroundSecondary,
 								color: theme.text,
 								font: 'inherit',
+								fontSize: '12px',
 								cursor: 'pointer',
 							}}>
 							Cancel
@@ -261,9 +269,10 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 									setOpen(false)
 								}}
 								style={{
-									padding: '7px 14px',
-									borderRadius: '8px',
-									border: '1px solid transparent',
+									padding: '7px 11px',
+									borderRadius: '6px',
+									fontSize: '12px',
+									border: `1px solid ${theme.border}`,
 									backgroundColor: theme.backgroundSecondary,
 									color: theme.text,
 									font: 'inherit',
@@ -277,8 +286,9 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 								disabled={busy}
 								onClick={handleEnable}
 								style={{
-									padding: '7px 14px',
-									borderRadius: '8px',
+									padding: '7px 11px',
+									borderRadius: '6px',
+									fontSize: '12px',
 									border: '1px solid transparent',
 									backgroundColor: theme.button.primary,
 									color: theme.button.primaryText,

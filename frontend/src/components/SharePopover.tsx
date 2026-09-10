@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import type { LocalMeeting } from '../local/store'
+import { ShareIcon } from './Icons'
 import {
 	DEFAULT_DURATION_SECONDS,
 	SHARE_DURATIONS,
@@ -98,22 +99,29 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 			ref={wrapRef}
 			role="dialog"
 			aria-label="Share this meeting"
+			onClick={(e) => e.stopPropagation()}
 			style={{
+				// Matches the tags dropdown: same offset, radius, shadow and
+				// stacking, so the two menus read as one family.
 				position: 'absolute',
-				top: 'calc(100% + 8px)',
+				top: '100%',
 				right: 0,
-				zIndex: 40,
-				width: 'min(360px, calc(100vw - 32px))',
-				padding: '14px 16px',
-				borderRadius: '12px',
+				marginTop: '4px',
+				zIndex: 1000,
+				width: 'min(320px, calc(100vw - 32px))',
+				padding: '12px',
+				borderRadius: '8px',
 				border: `1px solid ${theme.border}`,
 				backgroundColor: theme.background,
-				boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+				boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
 				fontSize: '13px',
 				color: theme.text,
 				textAlign: 'left',
 			}}>
-			<strong style={{ fontSize: '14px' }}>{status?.published ? '🔗 Shared' : '🔗 Share this meeting'}</strong>
+			<div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '6px' }}>
+				<ShareIcon size={13} />
+				<strong style={{ fontSize: '13px' }}>{status?.published ? 'Shared' : 'Share this meeting'}</strong>
+			</div>
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				Anyone with the link can read it. They get their own copy — edits don't travel in either direction.
 			</p>
@@ -182,15 +190,16 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 							})
 						}
 						style={{
-							padding: '7px 14px',
-							borderRadius: '8px',
+							padding: '7px 11px',
+							borderRadius: '6px',
 							border: `1px solid ${theme.border}`,
-							backgroundColor: 'transparent',
+							backgroundColor: theme.backgroundSecondary,
 							color: theme.text,
 							font: 'inherit',
+							fontSize: '12px',
 							cursor: busy ? 'wait' : 'pointer',
 						}}>
-						Stop sharing now
+						Stop sharing
 					</button>
 				)}
 				<button
@@ -203,12 +212,13 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 						})
 					}
 					style={{
-						padding: '7px 14px',
-						borderRadius: '8px',
+						padding: '7px 11px',
+						borderRadius: '6px',
 						border: '1px solid transparent',
 						backgroundColor: theme.button.primary,
 						color: theme.button.primaryText,
 						font: 'inherit',
+						fontSize: '12px',
 						cursor: busy ? 'wait' : 'pointer',
 						opacity: busy ? 0.7 : 1,
 					}}>

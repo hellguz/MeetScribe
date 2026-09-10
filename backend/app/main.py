@@ -1063,8 +1063,17 @@ def publish_meeting(mid: uuid.UUID, body: PublishPayload, request: Request):
     )
 
     with Session(engine) as db:
-        if db.get(MeetingTombstone, mid):
-            raise HTTPException(409, "This meeting was removed and cannot be re-published under the same link.")
+        # A tombstone here is not an error. It means this meeting was shared
+        # before and the share ended — by expiry, or because the owner stopped
+        # it — and the owner is now sharing it again. The browser still holds
+        # the original, so the link should simply start working again.
+        #
+        # Refusing was a bug: "stop sharing, then share again" is an ordinary
+        # thing to do, and it left the meeting permanently unshareable.
+        stone = db.get(MeetingTombstone, mid)
+        if stone:
+            db.delete(stone)
+            db.commit()
 
         mtg = db.get(Meeting, mid)
         if mtg:

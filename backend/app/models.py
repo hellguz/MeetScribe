@@ -209,6 +209,11 @@ class MeetingStatus(SQLModel):
     can_rediarize: bool = False
     client_processing: bool = False
     client_stats: str | None = None
+    # When this copy is deleted, if it is a share with a clock on it. Carried
+    # on the status the page already polls so the summary page never has to
+    # make a second request to find out.
+    expires_at: dt.datetime | None = None
+    origin: str = "recorded"
     feedback: list[str] = []  # List of submitted feedback types
 
 

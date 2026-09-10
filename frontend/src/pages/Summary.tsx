@@ -10,7 +10,7 @@ import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, LockIcon, DownloadIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -29,7 +29,7 @@ import { downloadMeetingMarkdown } from '../local/export'
 import SharePopover from '../components/SharePopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
 import TombstoneNotice from '../components/TombstoneNotice'
-import { publishStatus, hasOwnerToken, type PublishStatus } from '../local/publish'
+import { hasOwnerToken, type PublishStatus } from '../local/publish'
 import { putLocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
@@ -303,29 +303,18 @@ export default function Summary() {
 	const [savedCopy, setSavedCopy] = useState(false)
 	const [convertError, setConvertError] = useState<string | null>(null)
 
-	// Is a shared copy of this local meeting still up? Only worth asking for a
-	// meeting this browser owns — a viewer's copy was never published by them.
+	// Whether this meeting is shared comes from what the page already loaded —
+	// the local record for a local meeting, the status payload for a cloud one.
+	// It used to be discovered by probing /export, which meant a 404 in the
+	// console every time someone opened a meeting they had never shared.
 	useEffect(() => {
-		if (!mid || !isLocal || !hasOwnerToken(mid)) return
-		let live = true
-		publishStatus(mid).then((st) => live && setShare(st))
-		return () => {
-			live = false
-		}
-	}, [mid, isLocal])
+		if (!mid) return
+		setShare(meeting.expiresAt ? { id: mid, published: true, expires_at: meeting.expiresAt, origin: 'published' } : null)
+	}, [mid, meeting.expiresAt])
 
-	// A cloud meeting with an expiry is somebody's shared copy. If this browser
-	// did not publish it, the viewer needs to be told it is going away — and
-	// offered the copy, because after the date there is nothing to come back to.
-	const viewingSharedCopy = !isLocal && !!share?.expires_at && !hasOwnerToken(mid ?? '')
-	useEffect(() => {
-		if (!mid || isLocal) return
-		let live = true
-		publishStatus(mid).then((st) => live && st?.expires_at && setShare(st))
-		return () => {
-			live = false
-		}
-	}, [mid, isLocal])
+	// A cloud meeting with an expiry is somebody else's shared copy: it is
+	// going away, and after that there is nothing to come back to.
+	const viewingSharedCopy = !isLocal && !!meeting.expiresAt && !hasOwnerToken(mid ?? '')
 
 	const saveSharedCopy = useCallback(async () => {
 		if (!mid) return
@@ -405,26 +394,28 @@ export default function Summary() {
 			}}>
 			{/* Top nav */}
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-				<button
-					onClick={() => navigate('/record')}
-					style={{
-						background: 'none',
-						border: 'none',
-						cursor: 'pointer',
-						color: currentThemeColors.secondaryText,
-						fontSize: '15px',
-						fontFamily: 'inherit',
-					}}>
-					← Back
-				</button>
-				<StorageBadge
-					storage={storage}
-					theme={currentThemeColors}
-					loud={badgeLoud}
-					size="md"
-					sharedUntil={isLocal ? (share?.expires_at ?? null) : null}
-					gone={!!meeting.tombstone}
-				/>
+				<div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+					<button
+						onClick={() => navigate('/record')}
+						style={{
+							background: 'none',
+							border: 'none',
+							cursor: 'pointer',
+							color: currentThemeColors.secondaryText,
+							fontSize: '15px',
+							fontFamily: 'inherit',
+							padding: 0,
+						}}>
+						← Back
+					</button>
+					<StorageBadge
+						storage={storage}
+						theme={currentThemeColors}
+						loud={badgeLoud}
+						sharedUntil={isLocal ? (share?.expires_at ?? null) : null}
+						gone={!!meeting.tombstone}
+					/>
+				</div>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering
@@ -486,12 +477,20 @@ export default function Summary() {
 								</button>
 							</div>
 							{isLocal && meeting.localMeeting && (
-								<div style={{ position: 'relative' }}>
+								<div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
 									<button
 										onClick={() => setShareOpen((v) => !v)}
-										title="Share this meeting with a link"
-										style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
-										🔗
+										title={share?.expires_at ? 'Sharing — manage the link' : 'Share this meeting with a link'}
+										style={{
+											...copyButtonStyle,
+											border: `1px solid ${share?.expires_at ? '#f59e0b88' : currentThemeColors.border}`,
+											borderRadius: '6px',
+											backgroundColor: share?.expires_at ? '#f59e0b14' : currentThemeColors.backgroundSecondary,
+											color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText,
+										}}
+										onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+										onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = share?.expires_at ? '#f59e0b14' : currentThemeColors.backgroundSecondary)}>
+										<ShareIcon />
 									</button>
 									{shareOpen && (
 										<SharePopover
@@ -507,9 +506,16 @@ export default function Summary() {
 							{!isLocal && hasSummary && (
 								<button
 									onClick={handleMakePrivate}
-									title="Copy into this browser and remove from the server"
-									style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
-									🔒
+									title="Make private — copy into this browser and remove from the server"
+									style={{
+										...copyButtonStyle,
+										border: `1px solid ${currentThemeColors.border}`,
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.backgroundSecondary,
+									}}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}>
+									<LockIcon />
 								</button>
 							)}
 							{isLocal && (
@@ -519,8 +525,15 @@ export default function Summary() {
 										if (record) downloadMeetingMarkdown(record)
 									}}
 									title="Export as Markdown — the only copy is in this browser"
-									style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
-									⬇︎
+									style={{
+										...copyButtonStyle,
+										border: `1px solid ${currentThemeColors.border}`,
+										borderRadius: '6px',
+										backgroundColor: currentThemeColors.backgroundSecondary,
+									}}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}>
+									<DownloadIcon />
 								</button>
 							)}
 							{mid && (

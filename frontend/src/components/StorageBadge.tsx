@@ -2,11 +2,12 @@ import React from 'react'
 import { AppTheme } from '../styles/theme'
 import type { MeetingStorage } from '../utils/history'
 import { shortRemaining } from '../local/publish'
+import { LockIcon, CloudIcon, ShareIcon, AlertIcon } from './Icons'
 
 /**
  * Where this meeting is kept, stated on the meeting itself.
  *
- * Shown on every meeting, everywhere — but stamping "☁️ Cloud" on every row of
+ * Shown on every meeting, everywhere — but stamping "Cloud" on every row of
  * someone who has never heard of Local mode is noise, so the cloud badge stays
  * quiet (no border, secondary text) until local mode has been used at least
  * once. From then on both states are real statements and both get a full pill.
@@ -31,11 +32,18 @@ const StorageBadge: React.FC<Props> = ({ storage, theme, loud, size = 'sm', titl
 	const isShared = isLocal && !!sharedUntil
 	// A cloud badge nobody asked for should read as a footnote, not a label.
 	const quiet = !isLocal && !loud && !gone
+	const iconSize = size === 'sm' ? 11 : 12
 
 	// A share has a clock on it, so it borrows the colour the app already uses
 	// for "temporarily paused" rather than reading as a permanent state.
-	const label = gone ? 'Removed from cloud' : isShared ? `Shared · ${shortRemaining(sharedUntil as string)}` : isLocal ? 'On this device' : 'Cloud'
-	const icon = gone ? '⚠️' : isShared ? '🔗' : isLocal ? '🔒' : '☁️'
+	const label = gone
+		? 'Removed from cloud'
+		: isShared
+			? `Shared · ${shortRemaining(sharedUntil as string)}`
+			: isLocal
+				? 'On this device'
+				: 'Cloud'
+	const Icon = gone ? AlertIcon : isShared ? ShareIcon : isLocal ? LockIcon : CloudIcon
 	const accent = gone ? theme.button.danger : isShared ? '#f59e0b' : isLocal ? theme.text : theme.secondaryText
 
 	return (
@@ -53,19 +61,19 @@ const StorageBadge: React.FC<Props> = ({ storage, theme, loud, size = 'sm', titl
 			style={{
 				display: 'inline-flex',
 				alignItems: 'center',
-				gap: '4px',
+				gap: '5px',
 				flexShrink: 0,
 				whiteSpace: 'nowrap',
 				fontSize: size === 'sm' ? '11px' : '12px',
-				lineHeight: 1.6,
-				padding: quiet ? 0 : size === 'sm' ? '1px 7px' : '2px 9px',
+				lineHeight: 1,
+				padding: quiet ? 0 : size === 'sm' ? '4px 8px' : '5px 10px',
 				borderRadius: '999px',
 				border: quiet ? 'none' : `1px solid ${accent}55`,
 				backgroundColor: quiet ? 'transparent' : `${accent}14`,
 				color: quiet ? theme.secondaryText : accent,
 				fontWeight: quiet ? 400 : 500,
 			}}>
-			<span aria-hidden>{icon}</span>
+			<Icon size={iconSize} />
 			{label}
 		</span>
 	)

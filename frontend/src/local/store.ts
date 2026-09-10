@@ -38,6 +38,15 @@ export interface LocalMeeting {
 	client_stats: ClientStats | null
 	updated_at: string
 	/**
+	 * ISO expiry of the shared copy on the server, or null when this meeting
+	 * has never been shared. Kept here rather than discovered by asking the
+	 * server, so opening a meeting that was never published makes no request
+	 * at all — probing for it produced a 404/410 in the console every time.
+	 *
+	 * `undefined` on records written before sharing existed.
+	 */
+	shared_until?: string | null
+	/**
 	 * The transcript exists but no summary was ever produced — the tab was
 	 * closed mid-run, or the user declined to fall back to the cloud. A real,
 	 * supported end state, not an error: the transcript is still worth having.

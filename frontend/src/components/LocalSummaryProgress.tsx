@@ -3,6 +3,7 @@ import { AppTheme } from '../styles/theme'
 import type { LocalSummaryState } from '../ondevice/summary/useLocalSummary'
 import { formatBytes } from './OnDevicePanel'
 import Spinner from './Spinner'
+import { LockIcon } from './Icons'
 
 /**
  * What the on-device summariser is doing right now.
@@ -50,7 +51,7 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 	const card: React.CSSProperties = {
 		marginBottom: '12px',
 		padding: '12px 14px',
-		borderRadius: '12px',
+		borderRadius: '8px',
 		border: `1px solid ${error ? '#f59e0b66' : theme.border}`,
 		backgroundColor: error ? '#f59e0b0f' : theme.background,
 		fontSize: '13px',
@@ -62,8 +63,8 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 			type="button"
 			onClick={onClick}
 			style={{
-				padding: '7px 14px',
-				borderRadius: '8px',
+				padding: '7px 12px',
+				borderRadius: '6px',
 				border: primary ? '1px solid transparent' : `1px solid ${theme.border}`,
 				backgroundColor: primary ? theme.button.primary : 'transparent',
 				color: primary ? theme.button.primaryText : theme.text,
@@ -120,7 +121,10 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 	// Idle with no summary yet: the meeting has a transcript and is waiting.
 	return (
 		<div style={card}>
-			<strong>🧠 Summarize on this device</strong>
+			<span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+				<LockIcon size={13} />
+				<strong>Summarize on this device</strong>
+			</span>
 			<p style={{ margin: '5px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				Runs Qwen3-4B on your graphics card. Nothing leaves this browser.
 			</p>
