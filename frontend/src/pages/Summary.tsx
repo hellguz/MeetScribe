@@ -26,6 +26,11 @@ import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
 import { isLocalMode } from '../local/mode'
 import { storageOf, getHistory } from '../utils/history'
 import { downloadMeetingMarkdown } from '../local/export'
+import SharePopover from '../components/SharePopover'
+import SaveCopyBanner from '../components/SaveCopyBanner'
+import TombstoneNotice from '../components/TombstoneNotice'
+import { publishStatus, hasOwnerToken, type PublishStatus } from '../local/publish'
+import { putLocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 
@@ -292,6 +297,79 @@ export default function Summary() {
 		localSummary.generate(currentMeetingLength)
 	}, [needsLocalSummary, localSummary, currentMeetingLength])
 
+	// ── Sharing ──────────────────────────────────────────────────────────
+	const [shareOpen, setShareOpen] = useState(false)
+	const [share, setShare] = useState<PublishStatus | null>(null)
+	const [savedCopy, setSavedCopy] = useState(false)
+	const [convertError, setConvertError] = useState<string | null>(null)
+
+	// Is a shared copy of this local meeting still up? Only worth asking for a
+	// meeting this browser owns — a viewer's copy was never published by them.
+	useEffect(() => {
+		if (!mid || !isLocal || !hasOwnerToken(mid)) return
+		let live = true
+		publishStatus(mid).then((st) => live && setShare(st))
+		return () => {
+			live = false
+		}
+	}, [mid, isLocal])
+
+	// A cloud meeting with an expiry is somebody's shared copy. If this browser
+	// did not publish it, the viewer needs to be told it is going away — and
+	// offered the copy, because after the date there is nothing to come back to.
+	const viewingSharedCopy = !isLocal && !!share?.expires_at && !hasOwnerToken(mid ?? '')
+	useEffect(() => {
+		if (!mid || isLocal) return
+		let live = true
+		publishStatus(mid).then((st) => live && st?.expires_at && setShare(st))
+		return () => {
+			live = false
+		}
+	}, [mid, isLocal])
+
+	const saveSharedCopy = useCallback(async () => {
+		if (!mid) return
+		await putLocalMeeting({
+			id: mid,
+			title: meetingTitle ?? 'Meeting',
+			started_at: meetingStartedAt || new Date().toISOString(),
+			transcript: transcript ?? '',
+			segments: [],
+			summary_markdown: summaryMarkdown,
+			context: context ?? null,
+			summary_length: currentMeetingLength,
+			summary_language_mode: 'auto',
+			summary_custom_language: null,
+			timezone: null,
+			duration_seconds: null,
+			word_count: null,
+			speaker_count: speakerCount,
+			client_stats: clientStats,
+			updated_at: new Date().toISOString(),
+			unfinished: false,
+		})
+		setSavedCopy(true)
+	}, [mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats])
+
+	const handleMakePrivate = useCallback(async () => {
+		if (
+			!window.confirm(
+				'Make this meeting private?\n\n' +
+					'It will be copied into this browser and removed from the server.\n\n' +
+					'• Anyone you shared the link with loses access.\n' +
+					'• The original audio is deleted, so speakers can never be re-identified.\n' +
+					'• It will exist only in this browser. Clearing site data deletes it.',
+			)
+		)
+			return
+		setConvertError(null)
+		try {
+			await meeting.makePrivate()
+		} catch (e) {
+			setConvertError(e instanceof Error ? e.message : String(e))
+		}
+	}, [meeting])
+
 	// Streaming output has nowhere to live until the run is saved, so it gets
 	// its own card while it arrives.
 	const showStreaming = localSummary.state.streaming.length > 0 && localSummary.state.phase !== 'done'
@@ -339,7 +417,14 @@ export default function Summary() {
 					}}>
 					← Back
 				</button>
-				<StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} size="md" />
+				<StorageBadge
+					storage={storage}
+					theme={currentThemeColors}
+					loud={badgeLoud}
+					size="md"
+					sharedUntil={isLocal ? (share?.expires_at ?? null) : null}
+					gone={!!meeting.tombstone}
+				/>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering
@@ -400,6 +485,33 @@ export default function Summary() {
 									<TrashIcon />
 								</button>
 							</div>
+							{isLocal && meeting.localMeeting && (
+								<div style={{ position: 'relative' }}>
+									<button
+										onClick={() => setShareOpen((v) => !v)}
+										title="Share this meeting with a link"
+										style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
+										🔗
+									</button>
+									{shareOpen && (
+										<SharePopover
+											theme={currentThemeColors}
+											meeting={meeting.localMeeting}
+											status={share}
+											onChange={setShare}
+											onClose={() => setShareOpen(false)}
+										/>
+									)}
+								</div>
+							)}
+							{!isLocal && hasSummary && (
+								<button
+									onClick={handleMakePrivate}
+									title="Copy into this browser and remove from the server"
+									style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
+									🔒
+								</button>
+							)}
 							{isLocal && (
 								<button
 									onClick={async () => {
@@ -438,8 +550,36 @@ export default function Summary() {
 				</div>
 			</div>
 
+			{meeting.tombstone && (
+				<TombstoneNotice
+					theme={currentThemeColors}
+					tombstone={meeting.tombstone}
+					recovered={meeting.recoveredCopy}
+					onBack={() => navigate('/record')}
+					onOpenCopy={() => window.location.reload()}
+				/>
+			)}
+
+			{viewingSharedCopy && share?.expires_at && !meeting.tombstone && (
+				<SaveCopyBanner theme={currentThemeColors} expiresAt={share.expires_at} saved={savedCopy} onSave={saveSharedCopy} />
+			)}
+
+			{convertError && (
+				<p
+					style={{
+						margin: '0 0 12px',
+						padding: '10px 12px',
+						borderRadius: '10px',
+						border: `1px solid ${currentThemeColors.button.danger}55`,
+						color: currentThemeColors.button.danger,
+						lineHeight: 1.5,
+					}}>
+					{convertError}
+				</p>
+			)}
+
 			{/* Settings card */}
-			{(hasSummary || isProcessing) && (
+			{!meeting.tombstone && (hasSummary || isProcessing) && (
 				<div
 					style={{
 						padding: '10px 12px',

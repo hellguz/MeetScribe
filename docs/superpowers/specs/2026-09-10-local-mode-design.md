@@ -854,15 +854,13 @@ mirror to R2, mirror the `onnx-community` files and set
 | Optional local audio retention? | **No.** On-device transcription is good enough that re-transcription is not worth hundreds of MB per meeting. Audio is discarded at finalize, always. |
 | Warn about Parakeet's 25 languages? | **Yes, on the toggle itself**, at the same level as the other warnings — it is a hard failure, not a quality drop. §5.2. |
 | What happens to the `LocalSummaryRun` eval data? | **Dropped with the table.** §13. |
+| What if `navigator.storage.persist()` is refused? | **Refuse to enable Local mode.** Storing someone's only copy of a meeting in a bucket the browser may evict without warning, while telling them it is safe, is worse than not offering the feature. The message names the usual remedies (visit again, install the app). |
 
 ### Still open
 
 1. **Encrypted publish (§2.5)** — worth it, or is a 7-day plaintext window
    acceptable given that the alternative is a link that dies if it loses its
    fragment? Deferred to after PR 2 either way.
-2. **`navigator.storage.persist()` refusal (row AB)** — if the browser declines
-   to persist, local mode is running on storage the browser may evict at any
-   time. Warn and continue, or refuse to enable local mode at all?
-3. **Local translation** — §7 recommends hiding the control rather than
+2. **Local translation** — §7 recommends hiding the control rather than
    shipping a worse silent path. Confirm that is the call, or offer it clearly
    labelled as lower quality?

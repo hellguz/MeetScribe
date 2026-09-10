@@ -11,7 +11,7 @@ export interface MeetingMeta {
 	id: string
 	title: string
 	started_at: string // ISO 8601
-	status: 'pending' | 'complete'
+	status: 'pending' | 'complete' | 'gone'
 	/**
 	 * Where the meeting body actually lives. Absent on entries written before
 	 * Local mode existed, which are all server meetings — hence the default in
