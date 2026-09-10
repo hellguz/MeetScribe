@@ -13,16 +13,17 @@
  * `state` for the panel and in `client_stats` on the meeting.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { apiUrl } from '../utils/api'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities, type ParakeetPlan, type PlanChoice } from './capabilities'
-import { fetchModelManifest, finalizeMeeting, putChunkTranscript, requestServerFallback, type ModelManifest } from './api'
+import { fetchModelManifest, serverSink, type MeetingSink, type ModelManifest } from './api'
+import { MODEL_BASE } from './hub'
 import { labelTranscript, pruneMinorSpeakers, renumberByFirstAppearance, type SpeakerTurn, type TranscriptChunk, type TranscriptSegment } from './diarization/label'
 import type { ParakeetWorkerRequest, ParakeetWorkerResponse } from './parakeet.worker'
 import type { DiarizationWorkerRequest, DiarizationWorkerResponse } from './diarization.worker'
 import type { TranscribeWord } from './types'
+import { isLocalMode } from '../local/mode'
+import { setLocalActivity } from '../local/activity'
 
 const SAMPLE_RATE = 16_000
-const STORAGE_ENABLED = 'meetscribe_ondevice'
 const STORAGE_PLAN = 'meetscribe_ondevice_plan'
 
 export type OnDevicePhase = 'idle' | 'loading' | 'ready' | 'diarizing' | 'finalizing' | 'error' | 'fallback'
@@ -59,16 +60,25 @@ export interface OnDeviceState {
 	backend: 'webgpu' | 'wasm' | null
 	threads: number | null
 	transcription: { done: number; queued: number; audioSeconds: number; processMs: number }
+	/**
+	 * Everything transcribed so far, in chunk order. A local meeting is never
+	 * polled, so without this the recording page had no live transcript at all
+	 * — the text existed, it just never left the worker's bookkeeping.
+	 */
+	transcript: string
 	diarization: { stage: string | null; done: number; total: number; ms: number | null; speakers: number | null; modelBytes: number | null; modelLoadMs: number | null }
 }
 
 export interface OnDeviceController {
 	state: OnDeviceState
-	setEnabled: (enabled: boolean) => void
 	setPlanChoice: (choice: PlanChoice) => void
 	/** True when a meeting started now would be processed on this device. */
 	isUsable: boolean
-	beginMeeting: (meetingId: string) => void
+	/**
+	 * Start a meeting. `sink` decides where the results go — omit it and they
+	 * go to the server, exactly as before.
+	 */
+	beginMeeting: (meetingId: string, sink?: MeetingSink) => void
 	addChunk: (blob: Blob, index: number) => void
 	/** Drain, diarize, hand over. Resolves once the server has the transcript. */
 	finish: () => Promise<void>
@@ -77,13 +87,10 @@ export interface OnDeviceController {
 }
 
 const initialState = (): OnDeviceState => ({
-	enabled: (() => {
-		try {
-			return localStorage.getItem(STORAGE_ENABLED) === 'true'
-		} catch {
-			return false
-		}
-	})(),
+	// Driven by Local mode, not a switch of its own. There used to be a
+	// separate "transcribe on device" toggle, which meant a meeting could be
+	// half-private — transcribed here, summarized in the cloud.
+	enabled: isLocalMode(),
 	planChoice: (() => {
 		try {
 			const v = localStorage.getItem(STORAGE_PLAN)
@@ -105,6 +112,7 @@ const initialState = (): OnDeviceState => ({
 	backend: null,
 	threads: null,
 	transcription: { done: 0, queued: 0, audioSeconds: 0, processMs: 0 },
+	transcript: '',
 	diarization: { stage: null, done: 0, total: 0, ms: null, speakers: null, modelBytes: null, modelLoadMs: null },
 })
 
@@ -177,6 +185,7 @@ export function useOnDevice(): OnDeviceController {
 
 	// Per-meeting data.
 	const meetingIdRef = useRef<string | null>(null)
+	const sinkRef = useRef<MeetingSink | null>(null)
 	const chunksRef = useRef<Map<number, ChunkRecord>>(new Map())
 	const queueRef = useRef<number[]>([])
 	const inFlightRef = useRef<number | null>(null)
@@ -279,8 +288,7 @@ export function useOnDevice(): OnDeviceController {
 				}
 			})
 			parakeetReady.current.catch(() => {})
-			const modelBase = (import.meta.env.VITE_PARAKEET_MODEL_BASE as string | undefined) || undefined
-			parakeet.postMessage({ type: 'load', plan: chosen, modelBase } satisfies ParakeetWorkerRequest)
+			parakeet.postMessage({ type: 'load', plan: chosen, modelBase: MODEL_BASE } satisfies ParakeetWorkerRequest)
 
 			const diarizer = new Worker(new URL('./diarization.worker.ts', import.meta.url), { type: 'module' })
 			diarizerRef.current = diarizer
@@ -306,36 +314,92 @@ export function useOnDevice(): OnDeviceController {
 		[patch, terminateWorkers],
 	)
 
-	// Load as soon as the feature is on and we know the plan, so the download
-	// happens before the meeting rather than during it.
+	/**
+	 * Nothing is fetched until a meeting starts.
+	 *
+	 * This used to load the moment Local mode was switched on, so that the
+	 * download was over before the meeting began. It also meant that simply
+	 * *having* the switch on pulled ~700 MB of Parakeet plus the diarization
+	 * models every time the record page was opened — seventeen requests
+	 * before the user had touched anything — and put "Reading model 3%" in
+	 * the top bar of a page where nothing had been asked for.
+	 *
+	 * So the models are armed by `beginMeeting` instead. The first chunk
+	 * waits on the load, which costs the first thirty seconds of a meeting
+	 * and is the trade the user asked for. Staying armed afterwards keeps a
+	 * second recording instant.
+	 */
+	const [armed, setArmed] = useState(false)
+
 	useEffect(() => {
 		if (!state.enabled) {
 			if (state.phase !== 'idle' || state.plan !== null) {
 				terminateWorkers()
 				patch({ phase: 'idle', error: null, download: null, plan: null, statusText: null, log: [], autoFallbackPlan: null, autoFallbackReason: null })
 			}
+			setArmed(false)
 			return
 		}
+		if (!armed) return
 		if (!plan) return
-		if (meetingIdRef.current) return // never swap models mid-meeting
+		if (meetingIdRef.current && state.plan === plan) return // never swap models mid-meeting
 		// Load once per plan. A failed load stays failed until the user flips
 		// the switch (or picks another plan) — no silent retry loop.
 		if (state.plan !== plan || state.phase === 'idle') loadWorkers(plan)
-	}, [state.enabled, plan, state.plan, state.phase, loadWorkers, terminateWorkers, patch])
+	}, [state.enabled, armed, plan, state.plan, state.phase, loadWorkers, terminateWorkers, patch])
+
+	// Local mode lives in localStorage and can be flipped from the toggle or
+	// another tab; this keeps the pipeline in step with it.
+	useEffect(() => {
+		const sync = () => patch({ enabled: isLocalMode() })
+		window.addEventListener('storage', sync)
+		window.addEventListener('meetscribe:localmode', sync)
+		return () => {
+			window.removeEventListener('storage', sync)
+			window.removeEventListener('meetscribe:localmode', sync)
+		}
+	}, [patch])
+
+	// ---- the top bar's one-line "what is happening" -----------------------
+	//
+	// Derived rather than pushed from each message handler: the phase and the
+	// counters already say everything the indicator shows, and a single place
+	// to map them means the record page and the summary page cannot disagree
+	// about what the device is doing.
+	const { enabled, phase, download, transcription, diarization } = state
+	useEffect(() => {
+		if (!enabled) return setLocalActivity(null)
+		if (phase === 'loading') {
+			if (download && !download.done && download.total > 0) {
+				return setLocalActivity({
+					label: download.cached ? 'Reading model' : 'Fetching speech model',
+					progress: download.loaded / download.total,
+				})
+			}
+			return setLocalActivity({ label: 'Loading model', progress: null })
+		}
+		if (phase === 'diarizing') {
+			return setLocalActivity({
+				label: 'Finding speakers',
+				progress: diarization.total > 0 ? diarization.done / diarization.total : null,
+			})
+		}
+		if (phase === 'finalizing') return setLocalActivity({ label: 'Finishing up', progress: null })
+		if (phase === 'ready' && transcription.queued > 0) {
+			const total = transcription.done + transcription.queued
+			return setLocalActivity({
+				label: 'Transcribing',
+				progress: total > 0 ? transcription.done / total : null,
+				detail: `${transcription.done} of ${total} chunks transcribed on this device`,
+			})
+		}
+		return setLocalActivity(null)
+	}, [enabled, phase, download, transcription, diarization])
+
+	// Leaving the page must not leave a stale pill behind.
+	useEffect(() => () => setLocalActivity(null), [])
 
 	useEffect(() => () => terminateWorkers(), [terminateWorkers])
-
-	const setEnabled = useCallback(
-		(enabled: boolean) => {
-			try {
-				localStorage.setItem(STORAGE_ENABLED, String(enabled))
-			} catch {
-				/* private mode */
-			}
-			patch({ enabled })
-		},
-		[patch],
-	)
 
 	const setPlanChoice = useCallback(
 		(choice: PlanChoice) => {
@@ -378,7 +442,16 @@ export function useOnDevice(): OnDeviceController {
 			})
 			record.text = result.text
 			record.segments = wordsToSegments(result.words, result.text, result.audioSeconds)
+			// Rebuilt from the chunk map rather than appended, because chunks
+			// finish out of order and the transcript has to read in order.
+			const soFar = [...chunksRef.current.keys()]
+				.sort((a, b) => a - b)
+				.map((i) => chunksRef.current.get(i)?.text ?? '')
+				.filter(Boolean)
+				.join(' ')
+				.trim()
 			patch((s) => ({
+				transcript: soFar,
 				transcription: {
 					done: s.transcription.done + 1,
 					queued: Math.max(0, s.transcription.queued - 1),
@@ -386,11 +459,12 @@ export function useOnDevice(): OnDeviceController {
 					processMs: s.transcription.processMs + result.ms,
 				},
 			}))
+			const sink = sinkRef.current
 			try {
-				await putChunkTranscript(meetingId, index, result.text, record.segments, result.audioSeconds)
+				await sink?.putChunk(index, result.text, record.segments, result.audioSeconds)
 			} catch (err) {
-				console.warn('Retrying chunk transcript upload once:', err)
-				await putChunkTranscript(meetingId, index, result.text, record.segments, result.audioSeconds).catch((e) => console.error(e))
+				console.warn('Retrying chunk transcript hand-off once:', err)
+				await sink?.putChunk(index, result.text, record.segments, result.audioSeconds).catch((e) => console.error(e))
 			}
 		} catch (err) {
 			console.error(`On-device transcription failed for chunk ${index}:`, err)
@@ -403,14 +477,19 @@ export function useOnDevice(): OnDeviceController {
 	}, [patch])
 
 	const beginMeeting = useCallback(
-		(meetingId: string) => {
+		(meetingId: string, sink?: MeetingSink) => {
+			// The moment the models are actually needed. Everything up to here
+			// has cost the user nothing.
+			setArmed(true)
 			meetingIdRef.current = meetingId
+			sinkRef.current = sink ?? serverSink(meetingId)
 			chunksRef.current = new Map()
 			queueRef.current = []
 			inFlightRef.current = null
 			decodingRef.current = 0
 			drainWaitersRef.current = []
 			patch({
+				transcript: '',
 				transcription: { done: 0, queued: 0, audioSeconds: 0, processMs: 0 },
 				diarization: { ...stateRef.current.diarization, stage: null, done: 0, total: 0, ms: null, speakers: null },
 			})
@@ -450,9 +529,8 @@ export function useOnDevice(): OnDeviceController {
 	const finish = useCallback(async () => {
 		const meetingId = meetingIdRef.current
 		if (!meetingId) return
-		const heartbeat = setInterval(() => {
-			fetch(apiUrl(`/api/meetings/${meetingId}/heartbeat`), { method: 'POST' }).catch(() => {})
-		}, 60_000)
+		const sink = sinkRef.current ?? serverSink(meetingId)
+		const heartbeat = setInterval(() => sink.heartbeat(), 60_000)
 
 		try {
 			await waitForDrain()
@@ -527,15 +605,36 @@ export function useOnDevice(): OnDeviceController {
 			}
 
 			patch({ phase: 'finalizing' })
-			await finalizeMeeting(meetingId, { transcript, speaker_count: speakers, duration_seconds: durationSeconds, client_stats: clientStats })
+			await sink.finalize({
+				transcript,
+				// Chunk-relative timings, shifted onto the meeting's own clock —
+				// the only form that survives without the audio to re-derive them.
+				segments: chunks.flatMap((c) => {
+					const offset = c.offset ?? 0
+					return c.segments.map((seg) => ({ ...seg, start: seg.start + offset, end: seg.end + offset }))
+				}),
+				speakerCount: speakers,
+				durationSeconds,
+				clientStats,
+			})
 		} catch (err) {
-			// Anything unrecoverable: let the server pipeline take the audio it already has.
-			console.error('On-device processing failed; falling back to the server.', err)
-			patch({ phase: 'fallback', error: err instanceof Error ? err.message : String(err) })
-			await requestServerFallback(meetingId)
+			const message = err instanceof Error ? err.message : String(err)
+			if (sink.requestFallback) {
+				// The server already has the audio, so it can simply take over.
+				console.error('On-device processing failed; falling back to the server.', err)
+				patch({ phase: 'fallback', error: message })
+				await sink.requestFallback()
+			} else {
+				// A local meeting never uploaded anything, so there is nothing to
+				// fall back to without the user's say-so. Stop here and let the
+				// page ask; `error` is what it shows them.
+				console.error('On-device processing failed and this meeting is local; awaiting consent.', err)
+				patch({ phase: 'error', error: message })
+			}
 		} finally {
 			clearInterval(heartbeat)
 			meetingIdRef.current = null
+			sinkRef.current = null
 			chunksRef.current = new Map()
 		}
 	}, [patch])
@@ -543,15 +642,30 @@ export function useOnDevice(): OnDeviceController {
 	// A failed load while a meeting is running means the server must take over.
 	useEffect(() => {
 		if (state.phase === 'error' && meetingIdRef.current) {
-			const id = meetingIdRef.current
+			const fallback = sinkRef.current?.requestFallback
+			// Local meetings have nothing on the server to take over; the page
+			// asks for consent instead of this firing silently.
+			if (!fallback) return
 			meetingIdRef.current = null
+			sinkRef.current = null
 			patch({ phase: 'fallback' })
-			requestServerFallback(id).catch(console.error)
+			fallback().catch(console.error)
 		}
 	}, [state.phase, patch])
 
-	const isUsable = state.enabled && state.phase !== 'error' && state.phase !== 'fallback' && state.phase !== 'idle'
+	/**
+	 * Would a meeting started now be handled here?
+	 *
+	 * "Local mode is on and nothing has failed" — deliberately not "the model
+	 * is already loaded". `useRecording` reads this to decide where a meeting
+	 * goes, and the models are no longer fetched until a meeting starts, so
+	 * requiring them to be resident first would send every first recording of
+	 * a session to the server while the switch said "On device". A failed or
+	 * abandoned load still says no, which is what hands the next meeting to
+	 * the server on purpose.
+	 */
+	const isUsable = state.enabled && state.phase !== 'error' && state.phase !== 'fallback'
 	const localStage = state.phase === 'diarizing' ? 'diarizing' : state.phase === 'finalizing' ? 'summarizing' : null
 
-	return { state: { ...state, plan }, setEnabled, setPlanChoice, isUsable, beginMeeting, addChunk, finish, localStage }
+	return { state: { ...state, plan }, setPlanChoice, isUsable, beginMeeting, addChunk, finish, localStage }
 }

@@ -56,6 +56,42 @@ class Meeting(SQLModel, table=True):
     # JSON blob of what the browser measured: model download size/time,
     # transcription speed, diarization time, backend used. Purely informative.
     client_stats: str | None = None
+    # 'recorded' — created here, the server is where it lives.
+    # 'published' — a copy of a meeting that lives in someone's browser. It
+    # arrives finished: never transcribe, diarize or re-summarize one, and it
+    # has no audio, so `can_rediarize` is false for it forever.
+    origin: str = Field(default="recorded")
+    # When the published copy is deleted. NULL means it stays until removed by
+    # hand — which is what every meeting recorded in cloud mode is.
+    expires_at: dt.datetime | None = None
+    # sha256 of the token the creating browser holds. Reading never needs it;
+    # unpublishing, extending and deleting do. Without this any link-holder
+    # could delete someone else's meeting, which was true until now.
+    owner_hash: str | None = None
+
+
+class MeetingTombstone(SQLModel, table=True):
+    """
+    What is left of a meeting after its content is gone.
+
+    A hard delete leaves anyone holding the link with a bare 404, which is
+    indistinguishable from a typo. People who opened a meeting before its owner
+    made it private deserve to be told that is what happened — and told that
+    the copy their browser already saved is now theirs. So the identity
+    survives the content: id, title, when, and why.
+
+    Swept after 90 days, at which point it really is a 404 again.
+    """
+
+    id: uuid.UUID = Field(primary_key=True)
+    title: str
+    started_at: dt.datetime
+    removed_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    # 'made_private' — the owner pulled it into their browser.
+    # 'expired'     — a share window ran out. Not the same thing, and the UI
+    #                 says so: a schedule ending is not access being revoked.
+    # 'deleted'     — plainly deleted.
+    reason: str = Field(default="deleted")
 
 
 class MeetingChunk(SQLModel, table=True):
@@ -90,6 +126,18 @@ class Feedback(SQLModel, table=True):
     suggestion_text: Optional[str] = None
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     status: str = Field(default="new")  # 'new', 'done', etc.
+
+
+class SummaryPromptOut(SQLModel):
+    """
+    The exact prompt the server would send Claude for this meeting, so the
+    on-device model can be given the same one.
+    """
+
+    prompt: str
+    target_language: str
+    summary_length: str
+    prompt_chars: int
 
 
 class MeetingCreate(SQLModel):
@@ -161,6 +209,11 @@ class MeetingStatus(SQLModel):
     can_rediarize: bool = False
     client_processing: bool = False
     client_stats: str | None = None
+    # When this copy is deleted, if it is a share with a clock on it. Carried
+    # on the status the page already polls so the summary page never has to
+    # make a second request to find out.
+    expires_at: dt.datetime | None = None
+    origin: str = "recorded"
     feedback: list[str] = []  # List of submitted feedback types
 
 
@@ -212,7 +265,80 @@ class MeetingMeta(SQLModel):
     id: uuid.UUID
     title: str
     started_at: dt.datetime
-    status: str  # "pending" | "complete"
+    status: str  # "pending" | "complete" | "gone"
+    # Set when status is "gone", so a list can explain itself without anyone
+    # having to open the meeting to find out.
+    reason: str | None = None
+    expires_at: dt.datetime | None = None
+    # How long the recording ran, for the history list. Null while a meeting is
+    # still being processed, and on anything recorded before it was measured.
+    duration_seconds: int | None = None
+
+
+class PublishPayload(SQLModel):
+    """
+    Put a copy of a browser-held meeting on the server so a link can be shared.
+
+    The content comes with the request because the server has never seen this
+    meeting: it was recorded, transcribed and summarized entirely in the
+    browser. Audio is deliberately absent — a published meeting is text.
+    """
+
+    owner_token: str
+    # None means "no expiry": the copy stays until it is removed by hand.
+    expires_in_seconds: int | None = None
+    title: str
+    started_at: dt.datetime | None = None
+    transcript: str = Field(max_length=2_000_000)
+    summary_markdown: str | None = Field(default=None, max_length=500_000)
+    context: str | None = None
+    summary_length: str | None = None
+    summary_language_mode: str | None = None
+    summary_custom_language: str | None = None
+    timezone: str | None = None
+    duration_seconds: int | None = None
+    word_count: int | None = None
+    speaker_count: int | None = None
+
+
+class PublishStatus(SQLModel):
+    """What the share sheet needs to render itself."""
+
+    id: uuid.UUID
+    published: bool
+    expires_at: dt.datetime | None = None
+    origin: str = "recorded"
+
+
+class MeetingExport(SQLModel):
+    """Everything needed to reconstruct a meeting inside a browser."""
+
+    id: uuid.UUID
+    title: str
+    started_at: dt.datetime
+    transcript: str | None = None
+    summary_markdown: str | None = None
+    context: str | None = None
+    summary_length: str = "narrative"
+    summary_language_mode: str = "auto"
+    summary_custom_language: str | None = None
+    timezone: str | None = None
+    duration_seconds: int | None = None
+    word_count: int | None = None
+    speaker_count: int | None = None
+    client_stats: str | None = None
+    expires_at: dt.datetime | None = None
+    origin: str = "recorded"
+
+
+class MeetingGone(SQLModel):
+    """The 410 body: enough to explain what happened, and nothing else."""
+
+    id: uuid.UUID
+    title: str
+    started_at: dt.datetime
+    removed_at: dt.datetime
+    reason: str
 
 
 class MeetingSyncRequest(SQLModel):

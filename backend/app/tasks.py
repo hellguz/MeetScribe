@@ -17,6 +17,7 @@ from faster_whisper import WhisperModel
 from groq import Groq
 import anthropic
 from sqlmodel import Session, select, func, create_engine
+from sqlalchemy import delete
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .config import settings
-from .models import Meeting, MeetingChunk
+from .models import Meeting, MeetingChunk, Feedback, MeetingTombstone
 from . import prompts as P
 from . import diarization
 
@@ -278,6 +279,91 @@ def looks_diarized(transcript: str) -> bool:
     return bool(transcript) and bool(_SPEAKER_LINE.search(transcript))
 
 
+def build_summary_prompt(
+    full_transcript: str,
+    summary_length: str,
+    summary_language_mode: str | None,
+    summary_custom_language: str | None,
+    context: str | None,
+    meeting_date: str | None = None,
+    duration_seconds: int | None = None,
+) -> tuple[str, str, str]:
+    """Assemble the exact prompt the summariser sends to Claude.
+
+    Split out of `summarise_transcript_in_worker` so the experimental
+    on-device summariser can be handed byte-for-byte the same prompt (see
+    GET /api/meetings/{mid}/summary-prompt). If the two ever drift, the
+    cloud-vs-local comparison stops measuring the model and starts
+    measuring the prompt.
+
+    Returns (prompt, target_language, mode).
+    """
+    detected_language = detect_language_local(full_transcript[:2000])
+
+    if summary_language_mode == "custom" and summary_custom_language:
+        target_language = summary_custom_language
+    elif summary_language_mode == "english":
+        target_language = "English"
+    else:
+        target_language = detected_language
+
+    context_section = ""
+    if looks_diarized(full_transcript):
+        # Kept in the instruction section rather than inside the transcript
+        # block, so every summary template picks it up unchanged.
+        context_section += P.SPEAKER_NOTE
+    if context and context.strip():
+        # `+=` not `=`: a plain assignment here discarded the speaker note
+        # whenever the user had supplied context.
+        context_section += f"""
+<user_provided_context>
+Critical context from the user — use as source of truth for names, projects, and technical terms.
+---
+{context}
+---
+</user_provided_context>
+"""
+
+    # Map legacy / unknown modes to narrative
+    mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
+
+    date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
+    duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
+
+    template_map = {
+        "briefing": P.BRIEFING,
+        "essence": P.ESSENCE,
+        "narrative": P.NARRATIVE,
+        "minutes": P.MINUTES,
+    }
+    prompt = template_map[mode].format(
+        target_language=target_language,
+        context_section=context_section,
+        full_transcript=full_transcript,
+        date=date_str,
+        duration=duration_str,
+    )
+
+    # Restate the target language after the transcript. The instruction at
+    # the top of the template is a long way from where generation starts,
+    # and has been observed to drift (a German transcript summarised in
+    # Polish). This also covers the briefing template, which never
+    # interpolated {target_language} at all.
+    prompt += (
+        f"\n\n---\n\nWrite the entire summary in {target_language}, "
+        "regardless of the language of the transcript. Quotations may stay "
+        "in their original language."
+    )
+    return prompt, target_language, mode
+
+
+TOO_BRIEF = "Recording is too brief to generate a meaningful summary."
+
+
+def transcript_too_brief(full_transcript: str) -> bool:
+    return not full_transcript or len(full_transcript.strip().split()) < 25
+
+
 def summarise_transcript_in_worker(
     full_transcript: str,
     summary_length: str,
@@ -287,66 +373,18 @@ def summarise_transcript_in_worker(
     meeting_date: str | None = None,
     duration_seconds: int | None = None,
 ) -> str:
-    if not full_transcript or len(full_transcript.strip().split()) < 25:
-        return "Recording is too brief to generate a meaningful summary."
+    if transcript_too_brief(full_transcript):
+        return TOO_BRIEF
     try:
-        detected_language = detect_language_local(full_transcript[:2000])
-
-        if summary_language_mode == "custom" and summary_custom_language:
-            target_language = summary_custom_language
-        elif summary_language_mode == "english":
-            target_language = "English"
-        else:
-            target_language = detected_language
-
-        context_section = ""
-        if looks_diarized(full_transcript):
-            # Kept in the instruction section rather than inside the transcript
-            # block, so every summary template picks it up unchanged.
-            context_section += P.SPEAKER_NOTE
-        if context and context.strip():
-            # `+=` not `=`: a plain assignment here discarded the speaker note
-            # whenever the user had supplied context.
-            context_section += f"""
-<user_provided_context>
-Critical context from the user — use as source of truth for names, projects, and technical terms.
----
-{context}
----
-</user_provided_context>
-"""
-
-        # Map legacy / unknown modes to narrative
-        mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
-
-        date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
-        duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
-
-        template_map = {
-            "briefing": P.BRIEFING,
-            "essence": P.ESSENCE,
-            "narrative": P.NARRATIVE,
-            "minutes": P.MINUTES,
-        }
-        prompt = template_map[mode].format(
-            target_language=target_language,
-            context_section=context_section,
-            full_transcript=full_transcript,
-            date=date_str,
-            duration=duration_str,
+        prompt, _target_language, _mode = build_summary_prompt(
+            full_transcript,
+            summary_length,
+            summary_language_mode,
+            summary_custom_language,
+            context,
+            meeting_date,
+            duration_seconds,
         )
-
-        # Restate the target language after the transcript. The instruction at
-        # the top of the template is a long way from where generation starts,
-        # and has been observed to drift (a German transcript summarised in
-        # Polish). This also covers the briefing template, which never
-        # interpolated {target_language} at all.
-        prompt += (
-            f"\n\n---\n\nWrite the entire summary in {target_language}, "
-            "regardless of the language of the transcript. Quotations may stay "
-            "in their original language."
-        )
-
         response = _anthropic_client.messages.create(
             model=settings.summary_model,
             max_tokens=8096,
@@ -752,6 +790,67 @@ def rediarize_meeting_in_worker(meeting_id_str: str, retranscribe: bool = True) 
                     db.commit()
         except Exception:
             LOGGER.exception("Could not restore state for %s.", meeting_id_str)
+
+
+def sweep_expired_shares() -> None:
+    """
+    Take down share links whose window has closed, and forget old tombstones.
+
+    A published meeting is a copy: the browser that made it still has the
+    original, and everyone who opened the link in time took their own. So this
+    removes content without removing anything that only existed here — which is
+    exactly the promise the share sheet makes when it names a date.
+
+    Tombstones outlive the content by 90 days so that "this was made private"
+    is still explainable to someone who comes back late. After that it really
+    is a 404.
+    """
+    engine = get_db_engine()
+    now = dt.datetime.utcnow()
+
+    try:
+        with Session(engine) as db:
+            due = db.exec(
+                select(Meeting).where(
+                    Meeting.expires_at.is_not(None), Meeting.expires_at <= now
+                )
+            ).all()
+            for mtg in due:
+                # A published copy carries no audio, but a cloud meeting given
+                # an expiry does. Delete by the rows' own paths rather than
+                # duplicating main.py's AUDIO_DIR here.
+                for chunk in db.exec(
+                    select(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id)
+                ).all():
+                    if chunk.path:
+                        Path(chunk.path).unlink(missing_ok=True)
+                db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id))
+                db.exec(delete(Feedback).where(Feedback.meeting_id == mtg.id))
+                if not db.get(MeetingTombstone, mtg.id):
+                    db.add(
+                        MeetingTombstone(
+                            id=mtg.id,
+                            title=mtg.title,
+                            started_at=mtg.started_at,
+                            reason="expired",
+                        )
+                    )
+                db.delete(mtg)
+                LOGGER.info("Share for meeting %s expired; content removed.", mtg.id)
+
+            cutoff = now - dt.timedelta(days=90)
+            stale = db.exec(
+                select(MeetingTombstone).where(MeetingTombstone.removed_at < cutoff)
+            ).all()
+            for stone in stale:
+                db.delete(stone)
+            if due or stale:
+                db.commit()
+                LOGGER.info(
+                    "Share sweep: %d expired, %d tombstone(s) forgotten.", len(due), len(stale)
+                )
+    except Exception:
+        LOGGER.exception("Share expiry sweep failed.")
 
 
 def backup_database() -> None:

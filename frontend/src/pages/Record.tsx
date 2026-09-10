@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
-import { getHistory, MeetingMeta, syncHistory, saveMeeting, removeMeeting } from '../utils/history'
+import { getHistory, MeetingMeta, syncHistory, saveMeeting, removeMeeting, syncableIds, storageOf } from '../utils/history'
 import { apiUrl } from '../utils/api'
 import ThemeToggle from '../components/ThemeToggle'
 import { useTheme } from '../contexts/ThemeContext'
@@ -11,11 +11,13 @@ import AudioSourceSelector from '../components/AudioSourceSelector'
 import FileUpload from '../components/FileUpload'
 import RecordingStatus from '../components/RecordingStatus'
 import HistoryList from '../components/HistoryList'
-import InfoPanel, { InfoButton } from '../components/InfoPanel'
+import InfoPanel, { InfoButton, hasUnseenChangelog } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { useOnDevice } from '../ondevice/useOnDevice'
-import OnDevicePanel from '../components/OnDevicePanel'
+import { deleteLocalMeeting } from '../local/store'
+import LocalModeToggle from '../components/LocalModeToggle'
+import LocalActivityBadge from '../components/LocalActivityBadge'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -93,13 +95,13 @@ export default function Record() {
 
 	useEffect(() => {
 		const fetchAndSyncHistory = async () => {
-			const localHistory = getHistory()
-			if (localHistory.length > 0) {
+			const ids = syncableIds()
+			if (ids.length > 0) {
 				try {
 					const res = await fetch(apiUrl(`/api/meetings/sync`), {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ ids: localHistory.map((m) => m.id) }),
+						body: JSON.stringify({ ids }),
 					})
 					if (res.ok) syncHistory(await res.json())
 				} catch (error) {
@@ -113,6 +115,18 @@ export default function Record() {
 
 	useEffect(() => {
 		setIsSystemAudioSupported(typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPad|iPhone|iPod/.test(navigator.userAgent))
+	}, [])
+
+	/**
+	 * Show the release notes once, to whoever has not seen these ones.
+	 *
+	 * Only here, and only on arrival: this is the page people land on, and
+	 * somebody opening a link somebody else sent them is not the audience for
+	 * "what's new". Closing the panel is what marks it read, so a reload
+	 * mid-glance does not lose it. See `hasUnseenChangelog`.
+	 */
+	useEffect(() => {
+		if (hasUnseenChangelog()) setInfoOpen(true)
 	}, [])
 
 	const drawWaveform = useCallback(() => {
@@ -216,9 +230,16 @@ export default function Record() {
 	}
 
 	const handleMeetingDelete = async (id: string) => {
+		const wasLocal = storageOf(history.find((m) => m.id === id) ?? {}) === 'local'
 		// Optimistically remove from UI
 		setHistory((prev) => prev.filter((m) => m.id !== id))
 		removeMeeting(id)
+		// A local meeting has no server row to delete, and asking for one to be
+		// deleted would be a request about a meeting the server never saw.
+		if (wasLocal) {
+			await deleteLocalMeeting(id).catch((e) => console.error(e))
+			return
+		}
 		try {
 			const response = await fetch(apiUrl(`/api/meetings/${id}`), {
 				method: 'DELETE',
@@ -239,12 +260,19 @@ export default function Record() {
 	return (
 		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<InfoPanel theme={currentThemeColors} open={infoOpen} setOpen={setInfoOpen} />
-			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
+			{/* Wraps rather than overflows; see `.app-header` for what happens
+			    to the title when it does. */}
+			<div className="app-header" style={{ marginBottom: '8px' }}>
+				<div className="app-header-info">
 					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
 				</div>
-				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+				<h1 className="app-header-title" style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>
+					🎙️ MeetScribe
+				</h1>
+				<div className="app-header-actions">
+					{/* Renders nothing at all while the device is idle. */}
+					<LocalActivityBadge theme={currentThemeColors} />
+					<LocalModeToggle theme={currentThemeColors} locked={isUiLocked} />
 					<ThemeToggle />
 				</div>
 			</div>
@@ -268,11 +296,9 @@ export default function Record() {
 							<FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
 						</div>
 					)}
-					{audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={false} />}
+
 				</>
 			)}
-
-			{isUiLocked && onDevice.state.enabled && audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={true} />}
 
 			{isRecording && (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '10px' }}>
