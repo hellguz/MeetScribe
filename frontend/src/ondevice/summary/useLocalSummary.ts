@@ -190,23 +190,24 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 	const { phase, download, prefill, decode } = state
 	useEffect(() => {
 		// A run for another meeting is not this page's story to tell.
-		if (runningElsewhere) return setLocalActivity(null)
+		if (runningElsewhere) return setLocalActivity('summary', null)
 		switch (phase) {
 			case 'prompt':
-				return setLocalActivity({ label: 'Preparing', progress: null })
+				return setLocalActivity('summary', { label: 'Preparing', progress: null })
 			case 'loading':
 				return setLocalActivity(
+					'summary',
 					download && download.total > 0
 						? { label: 'Fetching summary model', progress: download.loaded / download.total }
 						: { label: 'Loading model', progress: null },
 				)
 			case 'prefilling':
-				return setLocalActivity({
+				return setLocalActivity('summary', {
 					label: 'Reading transcript',
 					progress: prefill && prefill.total > 0 ? prefill.processed / prefill.total : null,
 				})
 			case 'generating':
-				return setLocalActivity({
+				return setLocalActivity('summary', {
 					label: 'Writing summary',
 					progress: null,
 					// A token count against the cap is not progress: most runs
@@ -215,15 +216,15 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 					detail: decode?.tokensPerSecond ? `${decode.tokens} words so far, ${decode.tokensPerSecond.toFixed(1)}/s` : undefined,
 				})
 			case 'titling':
-				return setLocalActivity({ label: 'Naming meeting', progress: null })
+				return setLocalActivity('summary', { label: 'Naming meeting', progress: null })
 			case 'saving':
-				return setLocalActivity({ label: 'Saving', progress: null })
+				return setLocalActivity('summary', { label: 'Saving', progress: null })
 			default:
-				return setLocalActivity(null)
+				return setLocalActivity('summary', null)
 		}
 	}, [runningElsewhere, phase, download, prefill, decode])
 
-	useEffect(() => () => setLocalActivity(null), [])
+	useEffect(() => () => setLocalActivity('summary', null), [])
 
 	/** Store a patch, tell the history list, and hand the record to the page. */
 	const persist = useCallback(async (id: string, patch: Partial<LocalMeeting>) => {

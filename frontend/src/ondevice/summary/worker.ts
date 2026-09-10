@@ -49,13 +49,13 @@ export function preloadSummaryModel(model: string): void {
 	const onMessage = (event: MessageEvent<SummarizerResponse>) => {
 		const msg = event.data
 		if (msg.type === 'download') {
-			setLocalActivity({
+			setLocalActivity('summary-preload', {
 				label: 'Fetching summary model',
 				progress: msg.total > 0 ? msg.loaded / msg.total : null,
 				detail: 'Downloading the summariser now, so it is ready when the meeting ends.',
 			})
 		} else if (msg.type === 'preloaded' || msg.type === 'error') {
-			setLocalActivity(null)
+			setLocalActivity('summary-preload', null)
 			w.removeEventListener('message', onMessage)
 		}
 	}

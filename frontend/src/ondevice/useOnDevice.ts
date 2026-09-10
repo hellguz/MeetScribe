@@ -368,36 +368,36 @@ export function useOnDevice(): OnDeviceController {
 	// about what the device is doing.
 	const { enabled, phase, download, transcription, diarization } = state
 	useEffect(() => {
-		if (!enabled) return setLocalActivity(null)
+		if (!enabled) return setLocalActivity('speech', null)
 		if (phase === 'loading') {
 			if (download && !download.done && download.total > 0) {
-				return setLocalActivity({
+				return setLocalActivity('speech', {
 					label: download.cached ? 'Reading model' : 'Fetching speech model',
 					progress: download.loaded / download.total,
 				})
 			}
-			return setLocalActivity({ label: 'Loading model', progress: null })
+			return setLocalActivity('speech', { label: 'Loading model', progress: null })
 		}
 		if (phase === 'diarizing') {
-			return setLocalActivity({
+			return setLocalActivity('speech', {
 				label: 'Finding speakers',
 				progress: diarization.total > 0 ? diarization.done / diarization.total : null,
 			})
 		}
-		if (phase === 'finalizing') return setLocalActivity({ label: 'Finishing up', progress: null })
+		if (phase === 'finalizing') return setLocalActivity('speech', { label: 'Finishing up', progress: null })
 		if (phase === 'ready' && transcription.queued > 0) {
 			const total = transcription.done + transcription.queued
-			return setLocalActivity({
+			return setLocalActivity('speech', {
 				label: 'Transcribing',
 				progress: total > 0 ? transcription.done / total : null,
 				detail: `${transcription.done} of ${total} chunks transcribed on this device`,
 			})
 		}
-		return setLocalActivity(null)
+		return setLocalActivity('speech', null)
 	}, [enabled, phase, download, transcription, diarization])
 
 	// Leaving the page must not leave a stale pill behind.
-	useEffect(() => () => setLocalActivity(null), [])
+	useEffect(() => () => setLocalActivity('speech', null), [])
 
 	useEffect(() => () => terminateWorkers(), [terminateWorkers])
 
