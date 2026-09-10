@@ -348,6 +348,7 @@ def sync_meetings_history(payload: MeetingSyncRequest):
                     started_at=mtg.started_at,
                     status="complete" if mtg.done else "pending",
                     expires_at=mtg.expires_at,
+                    duration_seconds=mtg.duration_seconds,
                 )
             )
 
@@ -1045,10 +1046,17 @@ def publish_meeting(mid: uuid.UUID, body: PublishPayload, request: Request):
     """
     Put a copy of a browser-held meeting on the server, so a link works.
 
-    Create-or-extend: calling it again on an already-published meeting moves
-    the expiry, which is what "share for longer" does. The content is only
-    written on the first call — the browser stays the authority, and a later
-    extend must not quietly overwrite edits made through the link.
+    Create-or-refresh: calling it again on an already-published meeting moves
+    the expiry, which is what "share for longer" does, and replaces the
+    content, which is what "I fixed a typo and the link should show it" does.
+
+    The content used to be written on the first call only, to protect edits
+    made "through the link". Nothing makes those: a link gives a read-only
+    view plus Save Copy, and a saved copy is now a separate meeting under an
+    id of its own (see `saveSharedCopy` in the frontend). So the only person
+    who can reach this branch is the owner, holding the only authority there
+    is, pushing their own newer text — and refusing them left the link
+    serving a version they had already corrected.
 
     A published meeting arrives finished. `done` is set and no task is queued:
     there is no audio to transcribe and the summary already exists.
@@ -1079,7 +1087,20 @@ def publish_meeting(mid: uuid.UUID, body: PublishPayload, request: Request):
         if mtg:
             _require_owner(mtg, request)
             mtg.expires_at = expires_at
+            # The browser is the authority, so its copy wins wholesale rather
+            # than field by field: `transcript` is required on the payload, so
+            # a request that got this far carries the whole record.
             mtg.title = body.title
+            mtg.transcript_text = body.transcript
+            mtg.summary_markdown = body.summary_markdown
+            mtg.context = body.context
+            mtg.summary_length = body.summary_length or mtg.summary_length
+            mtg.summary_language_mode = body.summary_language_mode or mtg.summary_language_mode
+            mtg.summary_custom_language = body.summary_custom_language
+            mtg.timezone = body.timezone or mtg.timezone
+            mtg.duration_seconds = body.duration_seconds
+            mtg.word_count = body.word_count
+            mtg.speaker_count = body.speaker_count
         else:
             mtg = Meeting(
                 id=mid,

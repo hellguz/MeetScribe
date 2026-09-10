@@ -59,6 +59,15 @@ export interface LocalMeeting {
 	 */
 	published?: boolean
 	/**
+	 * The id of the shared meeting this one was saved from.
+	 *
+	 * Set only on a copy taken through somebody else's link. The two are not
+	 * connected afterwards and never sync in either direction — this exists
+	 * so the page can say so, and so a copy is distinguishable from an
+	 * original when reading the database by hand.
+	 */
+	copied_from?: string | null
+	/**
 	 * The transcript exists but no summary was ever produced — the tab was
 	 * closed mid-run, or the user declined to fall back to the cloud. A real,
 	 * supported end state, not an error: the transcript is still worth having.

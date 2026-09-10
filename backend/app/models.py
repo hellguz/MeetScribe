@@ -270,6 +270,9 @@ class MeetingMeta(SQLModel):
     # having to open the meeting to find out.
     reason: str | None = None
     expires_at: dt.datetime | None = None
+    # How long the recording ran, for the history list. Null while a meeting is
+    # still being processed, and on anything recorded before it was measured.
+    duration_seconds: int | None = None
 
 
 class PublishPayload(SQLModel):

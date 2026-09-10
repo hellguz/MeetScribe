@@ -139,8 +139,8 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 			</div>
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
 				{alreadyShared
-					? 'Anyone with the link can read it. Set an expiry to have the copy deleted automatically.'
-					: "Nobody else can reach this meeting yet. Sharing puts a copy on the server, and whoever opens the link keeps their own — edits don't travel in either direction."}
+					? 'Anyone with the link can read it, and anything you change here is pushed to that copy. Set an expiry to have it deleted automatically.'
+					: 'Nobody else can reach this meeting yet. Sharing puts a copy on the server; whoever opens the link can save it as their own meeting, at their own link, which yours is then unaffected by.'}
 			</p>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
@@ -187,8 +187,8 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMak
 						</button>
 					</div>
 					<p style={{ margin: '0 0 10px', color: theme.secondaryText, lineHeight: 1.45 }}>
-						{status?.expires_at ? `Expires ${formatExpiry(status.expires_at)}` : 'No expiry — stays until you remove it'} · people who open it keep
-						their own copy
+						{status?.expires_at ? `Expires ${formatExpiry(status.expires_at)}` : 'No expiry — stays until you remove it'} · your edits keep it up
+						to date · whoever saves it owns their copy
 					</p>
 				</>
 			)}

@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildSummaryPrompt, buildTitlePrompt, cleanTitle, isDefaultTitle } from '../../local/prompt'
 import { getLocalMeeting, patchLocalMeeting, type LocalMeeting } from '../../local/store'
+import { syncSharedCopy } from '../../local/publish'
 import { saveMeeting } from '../../utils/history'
 import { setLocalActivity } from '../../local/activity'
 import { getLocalSummaryModel } from './pref'
@@ -195,6 +196,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 			// shared meeting as private in the history list.
 			shared_until: updated.shared_until ?? null,
 			published: updated.published ?? !!updated.shared_until,
+			duration_seconds: updated.duration_seconds,
 		})
 		onSavedRef.current?.(updated)
 		return updated
@@ -363,6 +365,10 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 									})
 									return
 								}
+								// Once, at the end, rather than after each write:
+								// the sync uploads the whole record, and a run
+								// that also names the meeting writes twice.
+								void syncSharedCopy(updated ?? (await getLocalMeeting(meetingId))!)
 								setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							} catch (e) {
 								// The summary is on screen either way; say plainly
@@ -377,7 +383,8 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							try {
 								// An empty or unusable answer leaves the date in
 								// place, which is a fine name for a meeting.
-								if (title) await persist(meetingId, { title })
+								const updated = title ? await persist(meetingId, { title }) : await getLocalMeeting(meetingId)
+								if (updated) void syncSharedCopy(updated)
 							} catch (e) {
 								console.warn('Could not store the generated title:', e)
 							}

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { marked } from 'marked'
 import { apiUrl } from '../utils/api'
 import TurndownService from 'turndown'
@@ -11,6 +11,7 @@ import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
 import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, LockIcon, DownloadIcon } from '../components/Icons'
+import SegmentedToggle from '../components/SegmentedToggle'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -25,7 +26,7 @@ import LocalActivityBadge from '../components/LocalActivityBadge'
 import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
 import { isLocalMode } from '../local/mode'
-import { storageOf, getHistory } from '../utils/history'
+import { storageOf, getHistory, saveMeeting as saveMeetingMeta } from '../utils/history'
 import { downloadMeetingMarkdown } from '../local/export'
 import SharePopover from '../components/SharePopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
@@ -44,6 +45,7 @@ turndown.addRule('spans', { filter: 'span', replacement: (content) => content })
 export default function Summary() {
 	const { mid } = useParams<{ mid: string }>()
 	const navigate = useNavigate()
+	const location = useLocation()
 	const { theme } = useTheme()
 	const currentThemeColors: AppTheme = theme === 'light' ? lightTheme : darkTheme
 	const isDark = theme !== 'light'
@@ -211,8 +213,37 @@ export default function Summary() {
 		[doSave],
 	)
 
+	/**
+	 * Summarize this meeting again with something changed.
+	 *
+	 * Length, language and context are one operation, not three: each is a
+	 * field on the record the prompt is built from, so writing the new value
+	 * and running the summariser again is all any of them is. `buildSummaryPrompt`
+	 * reads the language straight off the stored meeting, which is why
+	 * translating is nothing more than this.
+	 *
+	 * It exists because a local meeting has no server row: `/regenerate` and
+	 * `/translate` both need one, so the length selector silently 404'd on a
+	 * local meeting and the language selector was replaced by the words
+	 * "Translation is cloud-only" — which was only ever true of the *route*,
+	 * never of the model, and the model is sitting in this tab.
+	 */
+	const rerunLocally = useCallback(
+		async (patch: Partial<LocalMeeting>, nextLength?: SummaryLength) => {
+			if (!mid) return
+			await meeting.updateLocalMeeting(patch)
+			localSummary.generate(nextLength ?? currentMeetingLength)
+		},
+		[mid, meeting, localSummary, currentMeetingLength],
+	)
+
 	const handleContextUpdateConfirm = () => {
-		if (editedContext !== context) handleRegenerate({ newContext: editedContext })
+		if (editedContext === context) return
+		if (isLocal) {
+			void rerunLocally({ context: editedContext ?? null })
+			return
+		}
+		handleRegenerate({ newContext: editedContext })
 	}
 
 	const handleCopy = async (format: 'text' | 'markdown') => {
@@ -246,6 +277,15 @@ export default function Summary() {
 		if (!mid) return
 		const newState = { ...languageState, ...update }
 		setLanguageState(newState)
+		if (isLocal) {
+			// Not a translation of the summary but a fresh one written in the
+			// target language — which is also exactly what the server does.
+			await rerunLocally({
+				summary_language_mode: newState.mode,
+				summary_custom_language: newState.mode === 'custom' ? newState.lastCustomLanguage : null,
+			})
+			return
+		}
 		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
 		await handleTranslate(targetLanguage, newState.mode)
 	}
@@ -268,11 +308,21 @@ export default function Summary() {
 	const displayLoading = isLoading && !loadedFromCache
 	// `isRegenerating` only covers the request itself; the work continues while
 	// `isProcessing` polls, so the indicator has to key off both.
-	const busy = isProcessing || isRegenerating
+	/**
+	 * A local re-run is a regeneration; it just happens on the GPU in this tab
+	 * instead of on the server. Folded in here so the stale summary dims, the
+	 * selectors lock, and the banner appears exactly as they do for a cloud
+	 * meeting — rather than the only sign being the dial in the top bar.
+	 */
+	const regenerating = isRegenerating || (meeting.isLocal && localSummary.busy)
+	const busy = isProcessing || regenerating
 	// Regenerating with a summary already on screen used to show nothing at all,
 	// so changing the language looked like a no-op. Announce it over the stale text.
 	const showRegeneratingBanner = busy && !!summaryMarkdown
-	const showProcessingMessage = busy && !summaryMarkdown
+	// A local first run reports itself through `LocalSummaryProgress` and the
+	// streaming card, which say what is actually happening; this generic line
+	// would sit above them saying "Processing summary" and nothing more.
+	const showProcessingMessage = busy && !summaryMarkdown && !meeting.isLocal
 	// Whether this meeting already carries speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
 	// Offer the re-run only for meetings that predate the feature. Inferring
@@ -281,7 +331,11 @@ export default function Summary() {
 	// meetings were being offered a pointless re-run.
 	const offerSpeakerHint = canRediarize && !diarizationAttempted && !isDiarized
 	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
-	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
+	// On the device there are no server stages to count; the summariser's own
+	// status line is both more specific and more current.
+	const stageLabel = meeting.isLocal
+		? (localSummary.state.statusText ?? 'Summarizing on this device')
+		: stageText(processingStage, processingTotal, 'Processing summary')
 
 	// Where this meeting is stored, for the badge and for the actions that
 	// only make sense on one side (translate, find speakers, feedback).
@@ -332,6 +386,13 @@ export default function Summary() {
 	 */
 	const isShared = !isLocal || !!share?.published || !!share?.expires_at
 
+	/**
+	 * Set for one render after `saveSharedCopy` moved the page onto the new
+	 * id, so the banner can explain why the URL changed. Router state and not
+	 * component state, because the component is a different instance by then.
+	 */
+	const justSavedFrom = (location.state as { savedFrom?: string } | null)?.savedFrom ?? null
+
 	// A cloud meeting with an expiry is somebody else's shared copy: it is
 	// going away, and after that there is nothing to come back to.
 	const viewingSharedCopy = !isLocal && !!meeting.expiresAt && !hasOwnerToken(mid ?? '')
@@ -360,11 +421,51 @@ export default function Summary() {
 		[mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats],
 	)
 
+	/**
+	 * Take somebody else's shared meeting and make it yours.
+	 *
+	 * Under a *new* id, which is the whole point. The copy used to be stored
+	 * under the original's id, and that broke two things at once. Sharing it
+	 * on was impossible: `POST /publish` checks the owner token against the
+	 * hash minted by whoever shared it first, so it came back 403 — "This
+	 * meeting belongs to another browser." And the copy shadowed the original
+	 * in this browser forever, because `getLocalMeeting` is consulted before
+	 * the server and the two answered to the same name.
+	 *
+	 * There are no accounts, so ownership is "holds the token for this id".
+	 * A new id is therefore the only way to be an owner, and being an owner
+	 * is what lets you edit the meeting and hand out a link of your own. The
+	 * two meetings never sync afterwards, in either direction: what you are
+	 * saving is a copy, which is what a share has always handed out.
+	 */
 	const saveSharedCopy = useCallback(async () => {
 		if (!mid) return
-		await putLocalMeeting(asRecord())
+		const ownId = crypto.randomUUID()
+		const record: LocalMeeting = {
+			...asRecord(),
+			id: ownId,
+			// Nobody else can reach this one yet, however widely the meeting it
+			// came from is shared.
+			published: false,
+			shared_until: null,
+			copied_from: mid,
+			updated_at: new Date().toISOString(),
+		}
+		await putLocalMeeting(record)
+		saveMeetingMeta({
+			id: ownId,
+			title: record.title,
+			started_at: record.started_at,
+			status: 'complete',
+			storage: 'local',
+			duration_seconds: record.duration_seconds,
+		})
 		setSavedCopy(true)
-	}, [mid, asRecord])
+		// `replace`, not `push`: the link that was open is now the *other*
+		// meeting, and Back should reach the list rather than a copy of the
+		// page that just moved.
+		navigate(`/summary/${ownId}`, { replace: true, state: { savedFrom: mid } })
+	}, [mid, asRecord, navigate])
 
 	/**
 	 * Save the meeting as a file. Offered for cloud meetings too — the fact
@@ -477,6 +578,48 @@ export default function Summary() {
 					    run is editable, and "copy" would quietly copy the other one. */}
 					{hasSummary && !isProcessing && (
 						<>
+							{/* Private or shared, as a pair rather than one button
+							    whose icon swaps — same reasoning, and the same
+							    control, as the mode switch on the record page.
+							    First in the row because it is about the meeting
+							    rather than about this copy of its text.
+
+							    Both segments open the sharing panel. Neither
+							    direction is a free flip: sharing puts the text on
+							    a server, and locking it takes away access people
+							    already have (and, for a cloud meeting, deletes the
+							    only copy anyone else could reach). The panel is
+							    where those say so and where the buttons live. */}
+							<div style={{ position: 'relative', display: 'flex' }}>
+								<SegmentedToggle
+									theme={currentThemeColors}
+									ariaLabel="Whether this meeting is shared"
+									value={isShared ? 'shared' : 'private'}
+									options={[
+										{
+											value: 'private',
+											icon: LockIcon,
+											title: isShared
+												? 'Stop sharing — keep this meeting in this browser alone'
+												: 'Only in this browser. Nobody else can reach it.',
+										},
+										{ value: 'shared', icon: ShareIcon, title: shareTitle },
+									]}
+									onSelect={() => setShareOpen((v) => !v)}
+								/>
+								{shareOpen && (
+									<SharePopover
+										theme={currentThemeColors}
+										meeting={meeting.localMeeting ?? asRecord()}
+										status={share}
+										isLocal={isLocal}
+										canMakePrivate={!isLocal && hasSummary}
+										onMakePrivate={handleMakePrivate}
+										onChange={setShare}
+										onClose={() => setShareOpen(false)}
+									/>
+								)}
+							</div>
 							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '13px', opacity: 0.7 }}>Copied!</span>}
 							<div
 								style={{
@@ -512,52 +655,6 @@ export default function Summary() {
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 									<DownloadIcon />
 								</button>
-							</div>
-							{/* Sharing is its own control, not a third member of the
-							    edit/delete group: it acts on where the meeting is
-							    rather than on what it says. It is also the only
-							    place that says where the meeting is, so the glyph
-							    carries the state — a padlock while the meeting is
-							    only in this browser, the share mark once a copy is
-							    on the server. */}
-							<div
-								style={{
-									display: 'flex',
-									borderRadius: '6px',
-									// `overflow: hidden` would clip the share popover this
-									// group anchors, so the ends are rounded per-button by
-									// the group's own radius instead.
-									border: `1px solid ${currentThemeColors.border}`,
-									backgroundColor: currentThemeColors.backgroundSecondary,
-									position: 'relative',
-								}}>
-								<button
-									onClick={() => setShareOpen((v) => !v)}
-									title={shareTitle}
-									aria-label={shareTitle}
-									style={{
-										...copyButtonStyle,
-										// Amber only for a share with a clock on it,
-										// the colour the app already uses for
-										// "temporary". A padlock is not a warning.
-										color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText,
-									}}
-									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-									{isShared ? <ShareIcon /> : <LockIcon />}
-								</button>
-								{shareOpen && (
-									<SharePopover
-										theme={currentThemeColors}
-										meeting={meeting.localMeeting ?? asRecord()}
-										status={share}
-										isLocal={isLocal}
-										canMakePrivate={!isLocal && hasSummary}
-										onMakePrivate={handleMakePrivate}
-										onChange={setShare}
-										onClose={() => setShareOpen(false)}
-									/>
-								)}
 							</div>
 							<div
 								style={{
@@ -626,6 +723,9 @@ export default function Summary() {
 				<SaveCopyBanner theme={currentThemeColors} expiresAt={share.expires_at} saved={savedCopy} onSave={saveSharedCopy} />
 			)}
 
+			{/* Landed here from a Save Copy, one navigation ago. */}
+			{justSavedFrom && isLocal && !meeting.tombstone && <SaveCopyBanner theme={currentThemeColors} expiresAt={null} saved />}
+
 			{convertError && (
 				<p
 					style={{
@@ -653,18 +753,10 @@ export default function Summary() {
 						<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
 							<SummaryLengthSelector
 								value={currentMeetingLength}
-								disabled={isRegenerating || isProcessing}
-								onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })}
+								disabled={regenerating || isProcessing}
+								onSelect={(l: SummaryLength) => (isLocal ? void rerunLocally({ summary_length: l }, l) : handleRegenerate({ newLength: l }))}
 							/>
-							{isLocal ? (
-								<span
-									title="Translation runs in the cloud, and this meeting never leaves your device."
-									style={{ fontSize: '13px', color: currentThemeColors.secondaryText }}>
-									Translation is cloud-only
-								</span>
-							) : (
-								<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
-							)}
+							<LanguageSelector disabled={regenerating || isProcessing} onSelectionChange={handleLanguageChange} />
 						</div>
 						<div>
 							<textarea
@@ -672,7 +764,7 @@ export default function Summary() {
 								value={editedContext ?? ''}
 								onChange={(e) => setEditedContext(e.target.value)}
 								placeholder="Context: participant names, project codes, key terms..."
-								disabled={isRegenerating || isProcessing}
+								disabled={regenerating || isProcessing}
 								style={{
 									width: '100%',
 									minHeight: '36px',
@@ -685,13 +777,13 @@ export default function Summary() {
 									fontFamily: 'inherit',
 									resize: 'vertical',
 									boxSizing: 'border-box',
-									opacity: isRegenerating || isProcessing ? 0.7 : 1,
+									opacity: regenerating || isProcessing ? 0.7 : 1,
 								}}
 							/>
 							{contextHasChanged && (
 								<button
 									onClick={handleContextUpdateConfirm}
-									disabled={isRegenerating || isProcessing}
+									disabled={regenerating || isProcessing}
 									style={{
 										marginTop: '6px',
 										padding: '8px 14px',
@@ -701,8 +793,8 @@ export default function Summary() {
 										color: currentThemeColors.button.primaryText,
 										fontSize: '15px',
 										fontWeight: '500',
-										cursor: isRegenerating || isProcessing ? 'not-allowed' : 'pointer',
-										opacity: isRegenerating || isProcessing ? 0.6 : 1,
+										cursor: regenerating || isProcessing ? 'not-allowed' : 'pointer',
+										opacity: regenerating || isProcessing ? 0.6 : 1,
 										transition: 'all 0.2s ease',
 									}}>
 									Apply & Regenerate

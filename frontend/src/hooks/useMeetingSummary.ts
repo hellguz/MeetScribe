@@ -5,7 +5,7 @@ import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
 import { getLocalMeeting, patchLocalMeeting, deleteLocalMeeting, putLocalMeeting, type LocalMeeting } from '../local/store'
-import { ownerHeaders } from '../local/publish'
+import { ownerHeaders, syncSharedCopy } from '../local/publish'
 import type { Tombstone } from '../components/TombstoneNotice'
 import { saveMeeting as saveMeetingMeta } from '../utils/history'
 import type { ClientStats } from '../components/OnDeviceStats'
@@ -209,7 +209,13 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 					})
 					const historyList = getHistory()
 					const existingMeta = historyList.find((m) => m.id === data.id)
-					saveMeeting({ id: data.id, title: data.title, started_at: existingMeta?.started_at || data.started_at, status: 'complete' })
+					saveMeeting({
+						id: data.id,
+						title: data.title,
+						started_at: existingMeta?.started_at || data.started_at,
+						status: 'complete',
+						duration_seconds: typeof data.duration_seconds === 'number' ? data.duration_seconds : existingMeta?.duration_seconds,
+					})
 				} else {
 					setIsProcessing(true)
 					setIsLoading(false)
@@ -346,7 +352,13 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 			// chose to keep off the server.
 			if (localMeeting) {
 				const updated = await patchLocalMeeting(mid, { summary_markdown: content })
-				if (updated) applyLocalMeeting(updated)
+				if (updated) {
+					applyLocalMeeting(updated)
+					// If this meeting is shared, the link should show the edit
+					// rather than the version it was shared at. No-ops and never
+					// throws when it is not; see `syncSharedCopy`.
+					void syncSharedCopy(updated)
+				}
 				return
 			}
 			try {
@@ -380,7 +392,9 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 						storage: 'local',
 						shared_until: updated.shared_until ?? null,
 						published: updated.published ?? !!updated.shared_until,
+						duration_seconds: updated.duration_seconds,
 					})
+					void syncSharedCopy(updated)
 				}
 				return
 			}
@@ -485,7 +499,14 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 			const body = await del.json().catch(() => ({}))
 			throw new Error(typeof body.detail === 'string' ? body.detail : 'Copied to this device, but the server copy could not be removed.')
 		}
-		saveMeetingMeta({ id: mid, title: record.title, started_at: record.started_at, status: 'complete', storage: 'local' })
+		saveMeetingMeta({
+			id: mid,
+			title: record.title,
+			started_at: record.started_at,
+			status: 'complete',
+			storage: 'local',
+			duration_seconds: record.duration_seconds,
+		})
 		applyLocalMeeting(record)
 	}, [mid, applyLocalMeeting])
 

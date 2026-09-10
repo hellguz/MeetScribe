@@ -13,6 +13,11 @@ import { ShareIcon, CheckIcon } from './Icons'
  *
  * Dismissing collapses it to a single quiet line rather than removing it: an
  * unsaved copy that is about to vanish should keep saying so.
+ *
+ * With `saved` it does the other half of the job: saying what just happened.
+ * Saving mints a new id and moves the page to it, so the URL changes under
+ * the reader — which without a word of explanation looks like a glitch
+ * rather than like being handed something.
  */
 
 const AMBER = '#f59e0b'
@@ -20,9 +25,10 @@ const RED = '#dc2626'
 
 interface Props {
 	theme: AppTheme
-	expiresAt: string
+	/** Null once this is the reader's own copy: nothing is expiring any more. */
+	expiresAt: string | null
 	saved: boolean
-	onSave: () => void
+	onSave?: () => void
 }
 
 const SaveCopyBanner: React.FC<Props> = ({ theme, expiresAt, saved, onSave }) => {
@@ -50,10 +56,12 @@ const SaveCopyBanner: React.FC<Props> = ({ theme, expiresAt, saved, onSave }) =>
 					gap: '7px',
 				}}>
 				<CheckIcon size={13} />
-				Saved to this device. Yours to keep.
+				Saved to this device — your own copy, at its own link. Edit it or share it on; the original is unaffected.
 			</div>
 		)
 	}
+
+	if (!expiresAt) return null
 
 	const remainingMs = msUntil(expiresAt)
 	const urgent = remainingMs > 0 && remainingMs < 60_000

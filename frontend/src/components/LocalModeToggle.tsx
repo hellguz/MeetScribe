@@ -7,8 +7,8 @@ import { clearModelCaches, measureCachedModels, type CachedModels } from '../ond
 import { detectCapabilities, resolvePlan, type DeviceCapabilities } from '../ondevice/capabilities'
 import { SUMMARY_MODELS } from '../ondevice/summary/models'
 import { formatBytes } from '../utils/formatBytes'
-import { LockIcon, AlertIcon, CheckIcon } from './Icons'
-import StorageToggle from './StorageToggle'
+import { LockIcon, AlertIcon, CheckIcon, LaptopIcon, CloudIcon } from './Icons'
+import SegmentedToggle from './SegmentedToggle'
 
 /**
  * Where new meetings go, in the record page's top bar.
@@ -176,15 +176,26 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 
 	return (
 		<div ref={wrapRef} style={{ position: 'relative' }}>
-			<StorageToggle
+			<SegmentedToggle
 				theme={theme}
+				ariaLabel="Where new meetings go"
 				value={enabled ? 'local' : 'cloud'}
 				disabled={locked}
-				localWarning={noWebgpu || mobile}
-				titles={{
-					local: enabled ? 'New meetings stay in this browser — open for details' : 'Keep new meetings in this browser',
-					cloud: enabled ? 'Send new meetings to the server again' : 'New meetings are stored on the server',
-				}}
+				options={[
+					{
+						value: 'local',
+						label: 'On device',
+						icon: LaptopIcon,
+						warning: noWebgpu || mobile,
+						title: enabled ? 'New meetings stay in this browser — open for details' : 'Keep new meetings in this browser',
+					},
+					{
+						value: 'cloud',
+						label: 'Cloud',
+						icon: CloudIcon,
+						title: enabled ? 'Send new meetings to the server again' : 'New meetings are stored on the server',
+					},
+				]}
 				onSelect={(side) => {
 					if (locked) return
 					// Turning off is free and instant. Everything else opens the

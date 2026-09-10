@@ -86,7 +86,14 @@ export function createLocalSink(seed: LocalMeetingSeed): MeetingSink {
 				// summary page picks it up from here and clears this.
 				unfinished: true,
 			})
-			saveMeeting({ id: seed.id, title: seed.title, started_at: seed.started_at, status: 'complete', storage: 'local' })
+			saveMeeting({
+				id: seed.id,
+				title: seed.title,
+				started_at: seed.started_at,
+				status: 'complete',
+				storage: 'local',
+				duration_seconds: durationSeconds,
+			})
 		},
 
 		// No server row to keep warm.

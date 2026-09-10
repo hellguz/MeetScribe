@@ -16,8 +16,12 @@ const CHANGELOG: { when: string; lines: string[] }[] = [
 			'Opt in from the 🔒 switch at the top of the page. One download of about 4 GB the first time, cached afterwards; a desktop with WebGPU, and one of 25 European languages.',
 			'Local meetings live in this browser only. A 🔒 beside a meeting means nobody else can reach it; sharing it puts a copy on the server, for an hour, a week, or forever.',
 			'The panel behind the switch now shows which models are already downloaded, and will delete them again if you want the disk space back.',
+			'Save a meeting somebody shared with you and it becomes yours — your own copy, at your own link, which you can edit and share on. Theirs is untouched, and the two never sync.',
+			'Editing a meeting you have shared now updates what the link shows, instead of leaving it on the version you shared.',
+			'Length, language and context now all work on a local meeting: each one rewrites the summary on your own graphics card. Translation is no longer cloud-only.',
 			'⚡ A small dial in the top bar says what your device is doing — fetching a model, transcribing, writing the summary — and disappears when it is done.',
-			'Summaries there are written by a 4B model rather than Claude, and speech recognition covers fewer languages — the switch spells out the trade before you download anything.',
+			'Every meeting in the list now shows the day of the week and how long it ran.',
+			'Summaries and titles there are written by a 4B model rather than Claude, and speech recognition covers fewer languages — the switch spells out the trade before you download anything.',
 		],
 	},
 	{

@@ -134,6 +134,45 @@ export async function unpublishMeeting(meetingId: string): Promise<void> {
 	noteShare(meetingId, false, null)
 }
 
+/**
+ * Push the current text to a meeting that is already shared.
+ *
+ * A published meeting is a snapshot, so editing the local original used to
+ * leave the link serving the version it was shared at — someone fixing a
+ * wrong name in their notes had no way to tell that the person reading the
+ * link still saw the wrong one. Every write to a published local meeting
+ * comes back through here.
+ *
+ * The window is preserved rather than reset: the server takes a duration, so
+ * the remaining time is measured and handed back to it. A share that has
+ * already run out is *not* silently recreated — the copy is gone by then and
+ * the user let it go, so the flags are simply corrected locally.
+ *
+ * Never throws. A failed sync must not cost the user the edit they just made
+ * to their own meeting; the local write has already happened, and the link
+ * catches up on the next one.
+ */
+export async function syncSharedCopy(meeting: LocalMeeting): Promise<PublishStatus | null> {
+	if (!meeting.published && !meeting.shared_until) return null
+	if (meeting.shared_until) {
+		const remainingMs = msUntil(meeting.shared_until)
+		if (remainingMs <= 0) {
+			await patchLocalMeeting(meeting.id, { published: false, shared_until: null }).catch(() => null)
+			noteShare(meeting.id, false, null)
+			return null
+		}
+		return publishMeeting(meeting, Math.max(1, Math.round(remainingMs / 1000))).catch((err) => {
+			console.warn('Could not update the shared copy; the link still shows the previous version.', err)
+			return null
+		})
+	}
+	// Shared with no expiry — keep it that way.
+	return publishMeeting(meeting, null).catch((err) => {
+		console.warn('Could not update the shared copy; the link still shows the previous version.', err)
+		return null
+	})
+}
+
 export const shareUrl = (meetingId: string): string => `${window.location.origin}/summary/${meetingId}`
 
 /**
