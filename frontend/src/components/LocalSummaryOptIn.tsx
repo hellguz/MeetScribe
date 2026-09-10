@@ -52,7 +52,7 @@ const LocalSummaryOptIn: React.FC<{ theme: AppTheme }> = ({ theme }) => {
 			</label>
 
 			<p style={{ margin: '6px 0 0 26px', color: theme.secondaryText, lineHeight: 1.45 }}>
-				Adds a <strong>Generate here</strong> button to every summary page, which runs {chosen ? shortModelName(model) : 'Qwen3.5'} in your browser over the
+				Adds a <strong>Generate here</strong> button to every summary page, which runs {chosen ? shortModelName(model) : 'Qwen3'} in your browser over the
 				same prompt Claude gets. The Claude summary is never replaced — the two sit side by side so you can judge which is better.
 			</p>
 

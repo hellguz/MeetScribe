@@ -1,5 +1,5 @@
 /**
- * Runs Qwen3 or Qwen3.5 over a meeting transcript, in this tab, on the GPU.
+ * Runs Qwen3-4B over a meeting transcript, in this tab, on the GPU.
  *
  *   prompt (from the server, byte-for-byte the one Claude gets)
  *     │
@@ -19,14 +19,17 @@
  * every tensor inside a forward pass is as wide as what you hand it. The
  * expensive one is the decoder's own output: it emits logits for *every*
  * position it is given, so an 18k-token transcript asks for an
- * 18014 × 248320 fp16 tensor — 9 GB in one allocation, which ONNX Runtime
+ * 18014 × 151936 fp16 tensor — 5.5 GB in one allocation, which ONNX Runtime
  * refuses outright ("Tensor shape is too large") after having spent a while
  * trying, which is what makes the machine crawl. (transformers.js has a
- * `num_logits_to_keep` for exactly this, but the multimodal forward path
- * Qwen3.5 goes through drops it before the session sees it, so we cannot
- * ask for one row.) Slicing caps that at one chunk of positions and, as a
+ * `num_logits_to_keep` for exactly this, and the generic decoder path does
+ * pass it, but only once a cache exists — the first pass over a long
+ * prompt still asks for every row.) Slicing caps that at one chunk of positions and, as a
  * bonus, gives the panel something to count. The chunk is sized from the
  * GPU's own buffer limit, see `prefillChunkFor`.
+ *
+ * Nothing here leaves the machine: the weights come from a CDN once and
+ * are cached, and the transcript never goes anywhere but this worker.
  *
  * This worker deliberately loads its own copy of ONNX Runtime — the build
  * transformers.js pins, reached through its own dependency tree. It never
@@ -77,8 +80,8 @@ const DTYPE = 'q4f16'
  *
  * Sets the ceiling on transient memory during prefill: every intermediate
  * is this many tokens wide instead of the whole transcript, the discarded
- * logits (chunk × vocab × fp16: Qwen3.5's 248k vocab makes that 255 MB at
- * 512, 510 MB at 1024, 1 GB at 2048) included. Smaller is safer on a
+ * logits (chunk × 151936 × fp16: 156 MB at 512, 312 MB at 1024, 624 MB at
+ * 2048) included. Smaller is safer on a
  * small GPU and costs throughput, because each slice re-reads the KV cache
  * built so far and the launch overhead per slice is fixed.
  *
@@ -201,63 +204,6 @@ async function cachedBytesFor(modelId: string): Promise<number> {
 }
 
 /**
- * Two corrections to how transformers.js 4.2.0 prepares each forward pass
- * for this model, applied to the instance rather than by forking the
- * library. Both live in `Qwen2VLForConditionalGeneration.prepare_inputs_
- * for_generation`, which Qwen3.5 inherits wholesale.
- *
- * 1. It marks "no images this step" by setting `pixel_values` to **null**,
- *    and the forward path's `pick()` keeps null (it only drops undefined).
- *    A non-empty modality bag plus a multi-token input then routes into the
- *    vision encoder — which text-only loading never downloaded — and the
- *    run dies on `Cannot read properties of undefined (reading
- *    'inputNames')`. One-shot generation never hits it, because by the time
- *    a cache exists the input is a single token; chunked prefill hits it on
- *    the second slice, every time. Deleting the key is what null meant.
- *
- * 2. Its text-only rope delta is `max + 1 + length` where the reference
- *    implementation (and the generic decoder path in this same library, via
- *    `create_position_ids`) both say the next token sits at `past_length`.
- *    Left alone, every generated token is placed 2 × prompt-length past
- *    where it belongs — the model still writes, but it attends to the
- *    transcript from the wrong distance. Prefill positions are computed by
- *    a different branch and are correct; only the one-token decode step is
- *    rewritten here, and only for the shape this worker ever sends: a
- *    single unpadded sequence.
- */
-function patchQwen3_5(model: PreTrainedModel) {
-	type Inputs = {
-		pixel_values?: unknown
-		input_ids?: { dims: number[] }
-		past_key_values?: { get_seq_length(): number }
-		position_ids?: unknown
-	}
-	const m = model as unknown as { prepare_inputs_for_generation: (...args: unknown[]) => Inputs }
-	const original = m.prepare_inputs_for_generation.bind(model)
-	let saidWhatItWas = false
-	m.prepare_inputs_for_generation = (...args: unknown[]) => {
-		const inputs = original(...args)
-		if (inputs?.pixel_values === null) delete inputs.pixel_values
-		if (inputs?.past_key_values && inputs.input_ids?.dims?.[0] === 1 && inputs.input_ids.dims[1] === 1) {
-			const at = BigInt(inputs.past_key_values.get_seq_length())
-			if (!saidWhatItWas) {
-				// Logged once per run: if a summary ever comes out
-				// scrambled, this line says exactly what was overridden and
-				// by how much, which is the first thing to check.
-				const was = (inputs.position_ids as { data?: ArrayLike<bigint> } | undefined)?.data?.[0]
-				post({ type: 'log', line: `decode position pinned to past_length (${at})${was === undefined ? '' : `, library said ${was}`}` })
-				saidWhatItWas = true
-			}
-			// [3, batch, seq]: the three rope sections carry the same
-			// position for text, which is what the model was given for the
-			// prompt as well.
-			inputs.position_ids = new Tensor('int64', [at, at, at], [3, 1, 1])
-		}
-		return inputs
-	}
-}
-
-/**
  * Loading a multi-gigabyte model is slow enough that a second run against
  * the same model must not repeat it. Keyed by model id, so choosing a
  * different size loads afresh and frees the old one first.
@@ -366,12 +312,11 @@ async function load(modelId: string) {
 	const tokenizer = await AutoTokenizer.from_pretrained(modelId, { progress_callback })
 
 	post({ type: 'status', text: 'Loading model…' })
-	// Qwen3 is a plain causal LM and this is simply its class. For Qwen3.5,
-	// `AutoModelForCausalLM` against a config that declares
-	// `Qwen3_5ForConditionalGeneration` is what puts transformers.js into
-	// text-only mode, which drops the vision encoder from the file
-	// manifest — ~200 MB of download we would never use. Do not "fix" this
-	// to AutoModelForImageTextToText.
+	// Qwen3 is a plain causal LM, so this is simply its class, and it goes
+	// through the library's generic decoder path: that path slices already
+	// cached tokens off the input itself and places each decode position at
+	// `past_length`, which is what makes the chunked prefill below correct
+	// without any per-architecture patching.
 	// `use_external_data_format` overrides the repo's own config.json, which
 	// is where a wrong weight-file count comes from. See the field's note.
 	const externalDataChunks = modelById(modelId)?.externalDataChunks
@@ -382,13 +327,7 @@ async function load(modelId: string) {
 		progress_callback,
 		...(externalDataChunks ? { use_external_data_format: externalDataChunks } : {}),
 	})
-	// Only Qwen3.5 inherits Qwen2-VL's input preparation, which is what the
-	// patch corrects. Qwen3 goes through the library's generic decoder
-	// path, which slices cached tokens off itself and places positions at
-	// `past_length` already; patching it would break what works.
-	const modelType = String((model.config as { model_type?: string }).model_type ?? '')
-	if (modelType.startsWith('qwen3_5')) patchQwen3_5(model)
-	else post({ type: 'log', line: `model type ${modelType || '?'}: generic decoder path, no input patch` })
+	post({ type: 'log', line: `model type ${String((model.config as { model_type?: string }).model_type ?? '?')}` })
 
 	post({
 		type: 'log',
@@ -451,11 +390,10 @@ function stripThinking(text: string): string {
  * the slice, hands back `past_key_values`, and the sampled token is thrown
  * away (it is never fed back, so the cache holds prompt tokens only). The
  * next step passes the prompt truncated one chunk further along together
- * with that cache, which is the "externally provided past_key_values with
- * full input_ids" case Qwen2-VL's `prepare_inputs_for_generation` handles:
- * it slices off what the cache already covers and offsets the rope
- * positions accordingly. The generic decoder path Qwen3 uses does the
- * same slice (`decoder_prepare_inputs_for_generation`, case 2).
+ * with that cache. That is the "past shorter than input_ids" case in
+ * `decoder_prepare_inputs_for_generation`: the library slices off what the
+ * cache already covers and derives the positions for the rest, so the
+ * chunking is invisible to the model.
  *
  * Returns null when the prompt is short enough to prefill in one pass.
  */
@@ -491,9 +429,8 @@ async function summarize(req: SummarizeRequest) {
 		add_generation_prompt: true,
 		return_dict: true,
 		// Not in the typed options: extra keys are passed straight through
-		// to the Jinja template. Both generations read this key: the
-		// `enable_thinking is false` branch prefills an empty <think> block
-		// and so skips reasoning.
+		// to the Jinja template, whose `enable_thinking is false` branch
+		// prefills an empty <think> block and so skips reasoning.
 		enable_thinking: req.thinking,
 	} as unknown as Parameters<typeof tokenizer.apply_chat_template>[1]) as unknown as { input_ids: Tensor; attention_mask: Tensor }
 

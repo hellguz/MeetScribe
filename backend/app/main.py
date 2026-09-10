@@ -870,7 +870,7 @@ def get_dashboard_stats():
 # ──────────────────────────────────────────────────────────────────────────────
 # Experimental: summarization on the user's own device
 #
-# The browser can run Qwen3 or Qwen3.5 over a transcript instead of Claude (see
+# The browser can run Qwen3-4B over a transcript instead of Claude (see
 # frontend/src/ondevice/summary/). Nothing here replaces the real summary:
 # these endpoints hand the browser the server's own prompt so the comparison
 # is fair, then store what came back plus its measurements, so the question

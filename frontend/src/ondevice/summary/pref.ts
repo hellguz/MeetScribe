@@ -38,7 +38,7 @@ export const getLocalSummaryModel = (): string => {
 }
 
 /**
- * Qwen3.5 reasons by default, which for a summary means thousands of tokens
+ * Qwen3 reasons by default, which for a summary means thousands of tokens
  * of deliberation before the first line of output. Off unless asked for.
  */
 export const getLocalSummaryThinking = (): boolean => read(KEY_THINKING) === 'true'

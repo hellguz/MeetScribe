@@ -63,8 +63,9 @@ interface Props {
  * and watch the numbers. Everything it shows was measured in this browser.
  *
  * The card stays visible after a run so the settings for the next one are
- * one click away — comparing Qwen3 against Qwen3.5 against thinking-on is the
- * reason the feature exists, and each of those is a separate generate.
+ * one click away, and so the measurements from the last one stay readable.
+ * The model chip is a choice only while more than one model is offered;
+ * with a single model it is there to say what ran.
  */
 const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, summaryLength, onGenerate, onCancel, runs }) => {
 	const { model, setModel, thinking, setThinking } = useLocalSummaryPrefs()
@@ -82,6 +83,10 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 		opacity: disabled ? 0.6 : 1,
 		userSelect: 'none',
 	})
+
+	// A one-model catalogue makes the chip a label. Anything else reads as a
+	// control that does nothing.
+	const pickable = SUMMARY_MODELS.length > 1
 
 	const { hardware, prefill, decode } = state
 	const downloadPct = state.download && state.download.total > 0 ? Math.min(100, (state.download.loaded / state.download.total) * 100) : 0
@@ -218,7 +223,11 @@ const LocalSummaryPanel: React.FC<Props> = ({ theme, state, busy, webgpuAvailabl
 				<>
 					<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '8px 0 0', alignItems: 'center' }}>
 						{SUMMARY_MODELS.map((m) => (
-							<span key={m.id} style={chip(model === m.id, busy)} onClick={() => !busy && setModel(m.id)} title={m.note}>
+							<span
+								key={m.id}
+								style={{ ...chip(model === m.id, busy), cursor: pickable && !busy ? 'pointer' : 'default' }}
+								onClick={() => pickable && !busy && setModel(m.id)}
+								title={m.note}>
 								{m.label} · {formatBytes(m.bytes)}
 							</span>
 						))}

@@ -12,7 +12,10 @@ const CHANGELOG: { when: string; lines: string[] }[] = [
 	{
 		when: 'September 2026',
 		lines: [
-			'⚡ Experimental: transcribe and label speakers right in your browser — only the finished text reaches the server, and Claude still writes the summary.',
+			'🔒 First steps towards a meeting that never leaves your device: both the transcription and the summary can now run entirely in your own browser.',
+			'🧠 Experimental: write the summary here instead of in the cloud, with a 4-billion-parameter model on your graphics card. Your transcript is never sent anywhere.',
+			'One 3 GB model download, cached for next time. Claude still writes the summary you see by default — the local one sits beside it so you can judge which is better.',
+			'⚡ Experimental: transcribe and label speakers right in your browser — only the finished text reaches the server.',
 			'One model download of about 0.7 GB, cached for next time. Live recordings, 25 European languages.',
 		],
 	},

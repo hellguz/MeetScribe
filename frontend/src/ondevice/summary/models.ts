@@ -1,32 +1,39 @@
 /**
- * Which models the experimental on-device summariser offers.
+ * The model the experimental on-device summariser runs.
  *
- * Both are loaded through `AutoModelForCausalLM`, both switch reasoning
- * with the chat template's `enable_thinking`, and both fit an integrated
- * laptop GPU.
+ * One entry, deliberately. Qwen3-4B (Apr 2025) is a plain dense decoder,
+ * which is exactly why it wins: transformers.js runs it on the generic,
+ * well-fused ONNX Runtime WebGPU path, and it needs none of the input
+ * corrections a multimodal architecture does. 32k native context (40k with
+ * YaRN), comfortably more than a two-hour transcript. The `webgpu/` org
+ * hosts the q4f16-only export, which is why the repo is 3 GB rather than
+ * the 20 GB every-dtype one under `onnx-community/`.
  *
- * Qwen3-4B (Apr 2025) is the speed pick. It is a plain dense decoder that
- * transformers.js runs on its generic, well-fused ONNX Runtime WebGPU path;
- * the library's own issue tracker measures it at ~3× the decode speed and
- * ~20× the prompt-reading speed of Qwen3.5-4B on the same GPU. 32k native
- * context (40k with YaRN), enough for a two-hour transcript. The `webgpu/`
- * org hosts the q4f16-only export, which is why the repo is 3 GB rather
- * than the 20 GB every-dtype one under `onnx-community/`.
+ * Measured on one 1.2k-token meeting, same prompt, q4f16 throughout:
  *
- * Qwen3.5-4B (Feb 2026) is the newer generation: mostly Gated DeltaNet
- * (linear attention) with every fourth layer full attention, so the KV
- * cache stays small over a 30k-token transcript, and 262k native context.
- * It scores higher on knowledge benchmarks, but its hybrid layers and 248k
- * vocabulary hit unfused kernels on WebGPU today, which makes reading a
- * long transcript painfully slow. Kept for quality comparisons.
+ *   Apple M-series (Metal)          255 tok/s prefill, 35.9 tok/s decode
+ *   RTX 5070 laptop (D3D12)         144 tok/s prefill, 29.8 tok/s decode
+ *   Intel Arc iGPU (D3D12)          186 tok/s prefill,  8.8 tok/s decode
  *
- * Tried and dropped: Gemma 4 E4B (8B weights on disk, 4.9 GB, pages every
- * token on an integrated GPU — 0.6 tok/s measured), and Qwen3.5 2B/0.8B
- * (fast enough, not good enough).
+ * Chrome on Windows reaches the discrete GPU only when the user enables
+ * chrome://flags/#force-high-performance-gpu; `powerPreference` is ignored
+ * there. Decode on Windows stays around a tenth of what the hardware could
+ * do because Dawn's subgroup-matrix path, which is what reaches the tensor
+ * cores, does not exist on D3D12. That is a browser limit, not ours.
  *
- * `bytes` is the q4f16 text-only footprint — decoder + embeddings +
- * tokenizer. It only feeds the "~N GB once, then cached" hint; the real
- * figure is reported from the download itself.
+ * Tried and dropped, so nobody re-litigates it:
+ *
+ *   Qwen3.5-4B     newer and smarter, but its hybrid attention layers and
+ *                  248k vocabulary hit unfused WebGPU kernels: ~3× slower
+ *                  decode and ~20× slower prompt reading than Qwen3-4B on
+ *                  the same GPU, and it needed a Qwen2-VL input patch to
+ *                  work at all.
+ *   Gemma 4 E4B    8B weights on disk (4.9 GB); pages every token on an
+ *                  integrated GPU, measured at 0.6 tok/s.
+ *   Qwen3.5 2B/0.8B  fast enough, not good enough.
+ *
+ * `bytes` is the q4f16 download. It only feeds the "~N GB once, then
+ * cached" hint; the real figure is reported from the download itself.
  */
 
 export interface SummaryModel {
@@ -59,24 +66,19 @@ export const SUMMARY_MODELS: SummaryModel[] = [
 	{
 		id: 'webgpu/Qwen3-4B-ONNX',
 		label: 'Qwen3 4B',
-		// Whole-repo size as listed on Hugging Face (q4f16 only).
 		bytes: 3_050_000_000,
-		note: 'Fastest 4B on WebGPU: plain attention on the optimised kernel path. Reads a transcript many times faster than Qwen3.5.',
+		note: 'Dense 4B on the optimised WebGPU kernel path — the fastest browser summariser we measured at a quality worth reading.',
 		// The repo declares 2 data files for every dtype; q4f16 has one.
 		externalDataChunks: { 'model_q4f16.onnx': 1 },
 	},
-	{
-		id: 'onnx-community/Qwen3.5-4B-ONNX-OPT',
-		label: 'Qwen3.5 4B',
-		bytes: 2_821_000_000,
-		note: 'Newer generation, higher benchmark scores, but slow to read long transcripts on WebGPU today.',
-	},
 ]
 
-/** Speed decides the default; anyone stored on a dropped model lands here too. */
+/** The only model; anyone whose browser stored a dropped one lands here. */
 export const DEFAULT_SUMMARY_MODEL = SUMMARY_MODELS[0].id
 
 export const modelById = (id: string): SummaryModel | undefined => SUMMARY_MODELS.find((m) => m.id === id)
 
-/** "Qwen3-4B" — for a tab label, where the org prefix is noise. */
+/** "Qwen3-4B" — for a tab label, where the org prefix is noise. Older
+ * runs are stored under the ids of models no longer offered, so this still
+ * has to handle any of them. */
 export const shortModelName = (id: string): string => id.split('/').pop()?.replace(/-ONNX(-OPT)?$/, '') ?? id
