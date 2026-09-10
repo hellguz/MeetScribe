@@ -1,17 +1,23 @@
 /**
- * Drives the experimental on-device summariser from the summary page.
+ * Drives the on-device summariser for a local meeting.
  *
- *   GET /summary-prompt ──▶ summarizer.worker ──▶ streamed markdown
- *                                   │
- *                                   └─▶ POST /local-summaries  (text + timings)
+ *   local transcript ──▶ buildSummaryPrompt ──▶ summarizer.worker ──▶ markdown
+ *                                                        │
+ *                                                        └─▶ IndexedDB
  *
- * The point is comparison, so a run is never allowed to become the
- * meeting's real summary: `meeting.summary_markdown` is untouched and every
- * result lands in its own row, judged later against Claude's version.
+ * This used to produce a run *beside* the Claude summary, for comparison. It
+ * now produces the summary itself: a local meeting has no other one, and the
+ * result is written straight onto the stored meeting.
+ *
+ * The prompt is built here rather than fetched from /summary-prompt, which
+ * needs a transcript the server was never given. See `local/prompt.ts`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchLocalSummaries, fetchSummaryPrompt, saveLocalSummary, saveVerdict, type LocalSummaryRun } from './api'
-import { getLocalSummaryModel, getLocalSummaryThinking } from './pref'
+import { buildSummaryPrompt } from '../../local/prompt'
+import { getLocalMeeting, patchLocalMeeting } from '../../local/store'
+import { saveMeeting } from '../../utils/history'
+import { getLocalSummaryModel } from './pref'
+import type { SummaryLength as LocalSummaryLength } from '../../contexts/SummaryLengthContext'
 
 export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | 'generating' | 'saving' | 'done' | 'error'
 
@@ -19,10 +25,9 @@ export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | '
  * Claude gets max_tokens 8096 for the same job. Local decode runs at tens of
  * tokens a second, so an 8k cap would mean a five-minute tail on a model
  * that had already said everything; 3k covers the longest stored summary
- * (~2.6k tokens) with headroom. Thinking needs its own budget on top.
+ * (~2.6k tokens) with headroom.
  */
 const MAX_NEW_TOKENS = 3072
-const MAX_NEW_TOKENS_THINKING = 8192
 
 export interface LocalSummaryState {
 	phase: LocalSummaryPhase
@@ -87,59 +92,16 @@ const initialState = (): LocalSummaryState => ({
 	measured: emptyMeasured(),
 })
 
-/**
- * What the run happened on. Recorded with every row because "12 tokens a
- * second" is meaningless without it — the same model is four times faster on
- * a discrete GPU than on an integrated one.
- */
-async function describeDevice(): Promise<Record<string, unknown>> {
-	const nav = navigator as Navigator & { deviceMemory?: number; gpu?: { requestAdapter(): Promise<unknown> } }
-	const info: Record<string, unknown> = {
-		cores: nav.hardwareConcurrency ?? null,
-		memory_gb: nav.deviceMemory ?? null,
-		platform: nav.platform ?? null,
-		mobile: /Android|Mobile|iPad|iPhone/i.test(nav.userAgent),
-	}
-	try {
-		const adapter = (await nav.gpu?.requestAdapter()) as
-			| { info?: { vendor?: string; architecture?: string; device?: string }; limits?: { maxBufferSize?: number } }
-			| null
-			| undefined
-		if (adapter) {
-			info.gpu_vendor = adapter.info?.vendor ?? null
-			info.gpu_architecture = adapter.info?.architecture ?? null
-			info.max_buffer_size = adapter.limits?.maxBufferSize ?? null
-		}
-	} catch {
-		/* adapter details are a nicety, not a requirement */
-	}
-	return info
-}
-
 export function useLocalSummary(meetingId: string | undefined) {
 	const [state, setState] = useState<LocalSummaryState>(initialState)
-	const [runs, setRuns] = useState<LocalSummaryRun[]>([])
 	const workerRef = useRef<Worker | null>(null)
 	// Set for the duration of a run so the message handler knows what to
 	// store; a worker message carries measurements, not the settings.
-	const runContextRef = useRef<{ model: string; thinking: boolean; summaryLength: string; targetLanguage: string; maxNewTokens: number } | null>(null)
+	const runContextRef = useRef<{ model: string; summaryLength: string; targetLanguage: string; maxNewTokens: number } | null>(null)
 	const measuredRef = useRef(emptyMeasured())
 
 	/** WebGPU is not optional here: 4-bit weights on WASM would take hours. */
 	const webgpuAvailable = useMemo(() => typeof navigator !== 'undefined' && 'gpu' in navigator, [])
-
-	useEffect(() => {
-		if (!meetingId) return
-		let live = true
-		fetchLocalSummaries(meetingId)
-			.then((list) => live && setRuns(list))
-			.catch(() => {
-				/* the panel still works; only the history is missing */
-			})
-		return () => {
-			live = false
-		}
-	}, [meetingId])
 
 	useEffect(
 		() => () => {
@@ -155,27 +117,37 @@ export function useLocalSummary(meetingId: string | undefined) {
 			// Read at click time, not from the hook's own state: the panel
 			// owns these controls and may have changed them since render.
 			const model = getLocalSummaryModel()
-			const thinking = getLocalSummaryThinking()
 
 			measuredRef.current = emptyMeasured()
-			setState({ ...initialState(), phase: 'prompt', statusText: 'Fetching the prompt Claude was given…' })
+			setState({ ...initialState(), phase: 'prompt', statusText: 'Reading the transcript…' })
 
-			let prompt: Awaited<ReturnType<typeof fetchSummaryPrompt>>
+			let prompt: Awaited<ReturnType<typeof buildSummaryPrompt>>
 			try {
-				prompt = await fetchSummaryPrompt(meetingId, summaryLength)
+				const meeting = await getLocalMeeting(meetingId)
+				if (!meeting) throw new Error('This meeting is not stored on this device.')
+				if (!meeting.transcript.trim()) throw new Error('There is no transcript to summarize.')
+				prompt = await buildSummaryPrompt({
+					transcript: meeting.transcript,
+					summaryLength: summaryLength || meeting.summary_length,
+					languageMode: meeting.summary_language_mode,
+					customLanguage: meeting.summary_custom_language,
+					context: meeting.context,
+					meetingDate: meeting.started_at.slice(0, 10),
+					durationSeconds: meeting.duration_seconds,
+				})
 			} catch (e) {
 				setState((s) => ({ ...s, phase: 'error', error: e instanceof Error ? e.message : String(e) }))
 				return
 			}
 
-			const maxNewTokens = thinking ? MAX_NEW_TOKENS_THINKING : MAX_NEW_TOKENS
-			runContextRef.current = { model, thinking, summaryLength: prompt.summary_length, targetLanguage: prompt.target_language, maxNewTokens }
-			measuredRef.current.promptChars = prompt.prompt_chars
+			const maxNewTokens = MAX_NEW_TOKENS
+			runContextRef.current = { model, summaryLength: prompt.summaryLength, targetLanguage: prompt.targetLanguage, maxNewTokens }
+			measuredRef.current.promptChars = prompt.promptChars
 			setState((s) => ({
 				...s,
 				phase: 'loading',
 				statusText: 'Starting the model…',
-				measured: { ...s.measured, promptChars: prompt.prompt_chars },
+				measured: { ...s.measured, promptChars: prompt.promptChars },
 			}))
 
 			if (!workerRef.current) {
@@ -268,34 +240,28 @@ export function useLocalSummary(meetingId: string | undefined) {
 							setState((s) => ({
 								...s,
 								phase: 'saving',
-								statusText: 'Saving the run…',
+								statusText: 'Saving to this device…',
 								streaming: msg.text,
 								measured: { ...s.measured, ...measuredRef.current },
 							}))
 							if (!ctx) return
 							try {
-								const saved = await saveLocalSummary(meetingId, {
-									model: ctx.model,
-									dtype: measuredRef.current.dtype ?? 'q4f16',
-									device: measuredRef.current.device ?? 'webgpu',
-									thinking: ctx.thinking,
-									summary_length: ctx.summaryLength,
-									target_language: ctx.targetLanguage,
-									markdown: msg.text,
-									prompt_chars: measuredRef.current.promptChars,
-									prompt_tokens: measuredRef.current.promptTokens,
-									output_tokens: msg.outputTokens,
-									download_bytes: measuredRef.current.downloadBytes,
-									download_ms: measuredRef.current.downloadMs,
-									cached: measuredRef.current.cached,
-									load_ms: measuredRef.current.loadMs,
-									prefill_ms: measuredRef.current.prefillMs,
-									decode_ms: msg.decodeMs,
-									total_ms: msg.totalMs,
-									truncated: msg.truncated,
-									device_info: await describeDevice(),
+								// The run *is* the summary now: it goes onto the
+								// meeting, not into a table beside it.
+								const updated = await patchLocalMeeting(meetingId, {
+									summary_markdown: msg.text,
+									summary_length: ctx.summaryLength as LocalSummaryLength,
+									unfinished: false,
 								})
-								setRuns((list) => [...list.filter((r) => r.id !== saved.id), saved])
+								if (updated) {
+									saveMeeting({
+										id: updated.id,
+										title: updated.title,
+										started_at: updated.started_at,
+										status: 'complete',
+										storage: 'local',
+									})
+								}
 								setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							} catch (e) {
 								// The summary is on screen either way; say plainly
@@ -311,7 +277,7 @@ export function useLocalSummary(meetingId: string | undefined) {
 				})
 			}
 
-			workerRef.current.postMessage({ type: 'summarize', prompt: prompt.prompt, model, thinking, maxNewTokens })
+			workerRef.current.postMessage({ type: 'summarize', prompt: prompt.prompt, model, thinking: false, maxNewTokens })
 		},
 		[meetingId],
 	)
@@ -329,16 +295,7 @@ export function useLocalSummary(meetingId: string | undefined) {
 		setState((s) => ({ ...initialState(), log: s.log, hardware: s.hardware }))
 	}, [])
 
-	const setVerdict = useCallback(
-		async (runId: number, verdict: string | null, note: string | null) => {
-			if (!meetingId) return
-			const saved = await saveVerdict(meetingId, runId, verdict, note)
-			setRuns((list) => list.map((r) => (r.id === saved.id ? saved : r)))
-		},
-		[meetingId],
-	)
-
 	const busy = state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'error'
 
-	return { state, runs, busy, webgpuAvailable, generate, cancel, setVerdict }
+	return { state, busy, webgpuAvailable, generate, cancel }
 }

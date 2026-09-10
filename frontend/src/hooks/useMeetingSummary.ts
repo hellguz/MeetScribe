@@ -4,6 +4,7 @@ import { getHistory, saveMeeting } from '../utils/history'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
+import { getLocalMeeting, patchLocalMeeting, deleteLocalMeeting, type LocalMeeting } from '../local/store'
 import type { ClientStats } from '../components/OnDeviceStats'
 
 interface UseMeetingSummaryProps {
@@ -33,10 +34,52 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	const [clientStats, setClientStats] = useState<ClientStats | null>(null)
 	const [processingStage, setProcessingStage] = useState<string | null>(null)
 	const [processingTotal, setProcessingTotal] = useState<number | null>(null)
+	/**
+	 * The local record, when this meeting lives in the browser. `undefined`
+	 * means "not looked up yet" and `null` means "looked up, it is a server
+	 * meeting" — the difference decides whether to fetch from the API at all.
+	 */
+	const [localMeeting, setLocalMeeting] = useState<LocalMeeting | null | undefined>(undefined)
+
+	/** Populate every piece of page state from a stored local meeting. */
+	const applyLocalMeeting = useCallback((m: LocalMeeting) => {
+		setLocalMeeting(m)
+		setTranscript(m.transcript || null)
+		setSummaryMarkdown(m.summary_markdown)
+		setMeetingTitle(m.title)
+		setMeetingStartedAt(m.started_at)
+		setMeetingTimezone(m.timezone)
+		setContext(m.context ?? '')
+		setSpeakerCount(m.speaker_count)
+		setClientStats(m.client_stats)
+		setCurrentMeetingLength(m.summary_length)
+		setSubmittedFeedback([])
+		// The audio was never kept, so speakers can never be re-identified.
+		setCanRediarize(false)
+		setDiarizationAttempted(true)
+		setProcessingStage(null)
+		setProcessingTotal(null)
+		setIsLoading(false)
+		// Nothing is running server-side, so nothing is ever polled: the
+		// summariser hook owns progress for a local meeting.
+		setIsProcessing(false)
+	}, [])
 
 	const fetchMeetingData = useCallback(
 		async (isInitialFetch: boolean = false) => {
 			if (!mid) return
+
+			// A local meeting has no server row; asking for one would 404.
+			try {
+				const local = await getLocalMeeting(mid)
+				if (local) {
+					applyLocalMeeting(local)
+					return
+				}
+				setLocalMeeting(null)
+			} catch {
+				setLocalMeeting(null)
+			}
 
 			if (isInitialFetch) {
 				if (!loadedFromCache) setIsLoading(true)
@@ -120,7 +163,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				setIsProcessing(false)
 			}
 		},
-		[mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState],
+		[mid, loadedFromCache, meetingTitle, meetingStartedAt, languageState.lastCustomLanguage, setLanguageState, applyLocalMeeting],
 	)
 
 	/**
@@ -299,7 +342,27 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 		return () => clearInterval(pollInterval)
 	}, [isProcessing, fetchMeetingData])
 
+	/** Write an edited summary or title straight to the local record. */
+	const updateLocalMeeting = useCallback(
+		async (patch: Partial<LocalMeeting>) => {
+			if (!mid) return
+			const updated = await patchLocalMeeting(mid, patch)
+			if (updated) applyLocalMeeting(updated)
+		},
+		[mid, applyLocalMeeting],
+	)
+
+	const removeLocalMeeting = useCallback(async () => {
+		if (!mid) return
+		await deleteLocalMeeting(mid)
+	}, [mid])
+
 	return {
+		isLocal: localMeeting != null,
+		localMeeting,
+		applyLocalMeeting,
+		updateLocalMeeting,
+		removeLocalMeeting,
 		transcript,
 		summaryMarkdown,
 		isLoading,

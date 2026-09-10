@@ -41,13 +41,11 @@ from .models import (
     SummaryUpdate,
     ChunkTranscriptUpdate,
     ClientFinalizePayload,
-    LocalSummaryRun,
-    LocalSummaryRunCreate,
-    LocalSummaryVerdictUpdate,
     SummaryPromptOut,
 )
 from . import tasks
 from . import diarization
+from . import prompts as P
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -879,6 +877,47 @@ def get_dashboard_stats():
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+@app.get("/api/prompt-templates")
+def get_prompt_templates():
+    """
+    The raw summary templates, so a meeting that never reaches this server can
+    still be summarized from byte-for-byte the same prompt.
+
+    A local meeting has no row here, which makes /summary-prompt impossible for
+    it — that endpoint needs a transcript we are never given. Serving the
+    templates instead keeps `prompts.py` the single source of truth while the
+    formatting happens in the browser: the request carries no meeting data, no
+    transcript, and no id.
+
+    The browser caches the last successful response and reuses it when
+    offline, rather than the frontend carrying its own copy of the templates —
+    a second copy in the repo is exactly the drift this endpoint exists to
+    prevent.
+    """
+    return {
+        "templates": {
+            "briefing": P.BRIEFING,
+            "essence": P.ESSENCE,
+            "narrative": P.NARRATIVE,
+            "minutes": P.MINUTES,
+        },
+        "speaker_note": P.SPEAKER_NOTE,
+        # Appended after the transcript by build_summary_prompt. Restated there
+        # because the instruction at the top of a long template drifts.
+        "language_footer": (
+            "\n\n---\n\nWrite the entire summary in {target_language}, "
+            "regardless of the language of the transcript. Quotations may stay "
+            "in their original language."
+        ),
+        "context_wrapper": (
+            "\n<user_provided_context>\n"
+            "Critical context from the user \u2014 use as source of truth for "
+            "names, projects, and technical terms.\n---\n{context}\n---\n"
+            "</user_provided_context>\n"
+        ),
+    }
+
+
 @app.get("/api/meetings/{mid}/summary-prompt", response_model=SummaryPromptOut)
 def get_summary_prompt(mid: uuid.UUID, summary_length: str | None = None):
     """
@@ -918,59 +957,6 @@ def get_summary_prompt(mid: uuid.UUID, summary_length: str | None = None):
         summary_length=mode,
         prompt_chars=len(prompt),
     )
-
-
-@app.get("/api/meetings/{mid}/local-summaries", response_model=list[LocalSummaryRun])
-def list_local_summaries(mid: uuid.UUID):
-    """Every on-device summary recorded for this meeting, oldest first."""
-    with Session(engine) as db:
-        return list(
-            db.exec(
-                select(LocalSummaryRun)
-                .where(LocalSummaryRun.meeting_id == mid)
-                .order_by(LocalSummaryRun.created_at)
-            ).all()
-        )
-
-
-@app.post("/api/meetings/{mid}/local-summaries", response_model=LocalSummaryRun, status_code=201)
-def create_local_summary(mid: uuid.UUID, body: LocalSummaryRunCreate, request: Request):
-    """Store a summary the browser just generated, with its measurements."""
-    with Session(engine) as db:
-        if not db.get(Meeting, mid):
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        run = LocalSummaryRun(
-            meeting_id=mid,
-            user_agent=request.headers.get("user-agent"),
-            device_info=json.dumps(body.device_info) if body.device_info else None,
-            **body.model_dump(exclude={"device_info"}),
-        )
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-        LOGGER.info(
-            "Meeting %s: on-device summary from %s (%s/%s) — %s chars in %sms",
-            mid, run.model, run.device, run.dtype, len(run.markdown), run.total_ms,
-        )
-        return run
-
-
-@app.patch("/api/meetings/{mid}/local-summaries/{run_id}", response_model=LocalSummaryRun)
-def update_local_summary_verdict(mid: uuid.UUID, run_id: int, body: LocalSummaryVerdictUpdate):
-    """Record which summary the user judged better — the eval label."""
-    if body.verdict is not None and body.verdict not in ("cloud", "tie", "local"):
-        raise HTTPException(status_code=422, detail="verdict must be cloud, tie or local")
-    with Session(engine) as db:
-        run = db.get(LocalSummaryRun, run_id)
-        if not run or run.meeting_id != mid:
-            raise HTTPException(status_code=404, detail="Run not found")
-        run.verdict = body.verdict
-        run.verdict_note = body.verdict_note
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-        return run
 
 
 @app.get("/healthz")

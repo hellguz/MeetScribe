@@ -12,11 +12,10 @@ const CHANGELOG: { when: string; lines: string[] }[] = [
 	{
 		when: 'September 2026',
 		lines: [
-			'🔒 First steps towards a meeting that never leaves your device: both the transcription and the summary can now run entirely in your own browser.',
-			'🧠 Experimental: write the summary here instead of in the cloud, with a 4-billion-parameter model on your graphics card. Your transcript is never sent anywhere.',
-			'One 3 GB model download, cached for next time. Claude still writes the summary you see by default — the local one sits beside it so you can judge which is better.',
-			'⚡ Experimental: transcribe and label speakers right in your browser — only the finished text reaches the server.',
-			'One model download of about 0.7 GB, cached for next time. Live recordings, 25 European languages.',
+			'🔒 Local mode: record, transcribe, label speakers and write the summary entirely in your own browser. Nothing — no audio, no transcript, no summary — reaches our server or any AI provider.',
+			'Opt in from the 🔒 switch at the top of the page. One download of about 4 GB the first time, cached afterwards; a desktop with WebGPU, and one of 25 European languages.',
+			'Local meetings live in this browser only, and every meeting now says whether it is kept on this device or in the cloud.',
+			'Summaries there are written by a 4B model rather than Claude, and speech recognition covers fewer languages — the switch spells out the trade before you download anything.',
 		],
 	},
 	{

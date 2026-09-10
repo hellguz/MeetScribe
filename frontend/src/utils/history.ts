@@ -5,12 +5,23 @@ import { serverDateMs } from './datetime'
  * Records are kept for up to 5 years.
  */
 
+export type MeetingStorage = 'cloud' | 'local'
+
 export interface MeetingMeta {
 	id: string
 	title: string
 	started_at: string // ISO 8601
 	status: 'pending' | 'complete'
+	/**
+	 * Where the meeting body actually lives. Absent on entries written before
+	 * Local mode existed, which are all server meetings — hence the default in
+	 * `storageOf` rather than a migration.
+	 */
+	storage?: MeetingStorage
 }
+
+/** Treat a missing `storage` as 'cloud': that is what every old entry is. */
+export const storageOf = (meta: Pick<MeetingMeta, 'storage'>): MeetingStorage => meta.storage ?? 'cloud' 
 
 const STORAGE_KEY = 'meetscribe_history'
 const FIVE_YEARS_MS = 1000 * 60 * 60 * 24 * 365 * 5
@@ -37,12 +48,24 @@ export function syncHistory(serverMetas: MeetingMeta[]) {
 
 	// Merge server data into the local map
 	for (const serverMeta of serverMetas) {
+		const existing = localMetasMap.get(serverMeta.id)
+		// A local meeting has no server row, so anything coming back under its
+		// id is not about it — leave the browser's copy alone. Without this a
+		// stale id collision could relabel a private meeting as a cloud one.
+		if (existing && storageOf(existing) === 'local') continue
 		// Server is the source of truth for title and status
-		localMetasMap.set(serverMeta.id, serverMeta)
+		localMetasMap.set(serverMeta.id, { ...serverMeta, storage: 'cloud' })
 	}
 
 	const mergedList = Array.from(localMetasMap.values())
 	writeRaw(mergedList)
+}
+
+/** Only the ids the server could know about — local meetings must never be sent. */
+export function syncableIds(): string[] {
+	return readRaw()
+		.filter((m) => storageOf(m) !== 'local')
+		.map((m) => m.id)
 }
 
 /** Return history sorted by date DESC and trimmed to 5 years. */

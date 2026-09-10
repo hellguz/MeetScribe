@@ -49,3 +49,49 @@ export async function finalizeMeeting(meetingId: string, body: { transcript: str
 export async function requestServerFallback(meetingId: string): Promise<void> {
 	await fetch(apiUrl(`/api/meetings/${meetingId}/client-fallback`), { method: 'POST' })
 }
+
+/* ─── where a finished on-device meeting goes ───────────────────────────── */
+
+export interface FinalizeResult {
+	transcript: string
+	segments: TranscriptSegment[]
+	speakerCount: number | null
+	durationSeconds: number
+	clientStats: unknown
+}
+
+/**
+ * The destination for everything the on-device pipeline produces.
+ *
+ * `useOnDevice` used to call the API directly, which quietly assumed every
+ * on-device meeting also has a row on the server. Local-mode meetings do not,
+ * so the destination became a parameter.
+ */
+export interface MeetingSink {
+	putChunk(index: number, text: string, segments: TranscriptSegment[], audioSeconds: number): Promise<void>
+	finalize(result: FinalizeResult): Promise<void>
+	/** Keeps the server's janitor from auto-finalizing a long local job. */
+	heartbeat(): void
+	/**
+	 * Hand the meeting back to the server. Null when there is nothing to hand
+	 * back *to* — a local meeting never uploaded its audio, so the server
+	 * cannot take over without the user first agreeing to send it.
+	 */
+	requestFallback: (() => Promise<void>) | null
+}
+
+/** The original behaviour: a meeting the server already knows about. */
+export const serverSink = (meetingId: string): MeetingSink => ({
+	putChunk: (index, text, segments, audioSeconds) => putChunkTranscript(meetingId, index, text, segments, audioSeconds),
+	finalize: ({ transcript, speakerCount, durationSeconds, clientStats }) =>
+		finalizeMeeting(meetingId, {
+			transcript,
+			speaker_count: speakerCount,
+			duration_seconds: durationSeconds,
+			client_stats: clientStats,
+		}),
+	heartbeat: () => {
+		fetch(apiUrl(`/api/meetings/${meetingId}/heartbeat`), { method: 'POST' }).catch(() => {})
+	},
+	requestFallback: () => requestServerFallback(meetingId),
+})

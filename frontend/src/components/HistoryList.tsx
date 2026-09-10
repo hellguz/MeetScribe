@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react'
 import { formatMeetingDateTimeShort } from '../utils/datetime'
 import { useNavigate } from 'react-router-dom'
-import { MeetingMeta } from '../utils/history'
+import { MeetingMeta, storageOf } from '../utils/history'
+import StorageBadge from './StorageBadge'
+import { isLocalMode } from '../local/mode'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { useTheme } from '../contexts/ThemeContext'
 import { EditIcon, TrashIcon } from './Icons'
@@ -27,6 +29,9 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 	// Force re-render when favorites/tags change
 	const [, setTick] = useState(0)
 	const refresh = useCallback(() => setTick((t) => t + 1), [])
+
+	// Quiet cloud badges until Local mode has been met at all — see StorageBadge.
+	const badgeLoud = isLocalMode() || history.some((m) => storageOf(m) === 'local')
 
 	const [favouritesOnly, setFavouritesOnly] = useState(false)
 	const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
@@ -189,8 +194,11 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 									<>
 										<div style={{ flexGrow: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => navigate(`/summary/${m.id}`)}>
 											<span style={{ fontWeight: 500, fontSize: '0.9em', display: 'block' }}>{m.title}</span>
-											<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
-												{formatMeetingDateTimeShort(m.started_at)}
+											<span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+												<span style={{ fontSize: 12, color: currentThemeColors.secondaryText, fontStyle: 'italic' }}>
+													{formatMeetingDateTimeShort(m.started_at)}
+												</span>
+												<StorageBadge storage={storageOf(m)} theme={currentThemeColors} loud={badgeLoud} />
 											</span>
 										</div>
 										<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>

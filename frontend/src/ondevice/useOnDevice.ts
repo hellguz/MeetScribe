@@ -13,9 +13,8 @@
  * `state` for the panel and in `client_stats` on the meeting.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { apiUrl } from '../utils/api'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities, type ParakeetPlan, type PlanChoice } from './capabilities'
-import { fetchModelManifest, finalizeMeeting, putChunkTranscript, requestServerFallback, type ModelManifest } from './api'
+import { fetchModelManifest, serverSink, type MeetingSink, type ModelManifest } from './api'
 import { labelTranscript, pruneMinorSpeakers, renumberByFirstAppearance, type SpeakerTurn, type TranscriptChunk, type TranscriptSegment } from './diarization/label'
 import type { ParakeetWorkerRequest, ParakeetWorkerResponse } from './parakeet.worker'
 import type { DiarizationWorkerRequest, DiarizationWorkerResponse } from './diarization.worker'
@@ -68,7 +67,11 @@ export interface OnDeviceController {
 	setPlanChoice: (choice: PlanChoice) => void
 	/** True when a meeting started now would be processed on this device. */
 	isUsable: boolean
-	beginMeeting: (meetingId: string) => void
+	/**
+	 * Start a meeting. `sink` decides where the results go — omit it and they
+	 * go to the server, exactly as before.
+	 */
+	beginMeeting: (meetingId: string, sink?: MeetingSink) => void
 	addChunk: (blob: Blob, index: number) => void
 	/** Drain, diarize, hand over. Resolves once the server has the transcript. */
 	finish: () => Promise<void>
@@ -177,6 +180,7 @@ export function useOnDevice(): OnDeviceController {
 
 	// Per-meeting data.
 	const meetingIdRef = useRef<string | null>(null)
+	const sinkRef = useRef<MeetingSink | null>(null)
 	const chunksRef = useRef<Map<number, ChunkRecord>>(new Map())
 	const queueRef = useRef<number[]>([])
 	const inFlightRef = useRef<number | null>(null)
@@ -386,11 +390,12 @@ export function useOnDevice(): OnDeviceController {
 					processMs: s.transcription.processMs + result.ms,
 				},
 			}))
+			const sink = sinkRef.current
 			try {
-				await putChunkTranscript(meetingId, index, result.text, record.segments, result.audioSeconds)
+				await sink?.putChunk(index, result.text, record.segments, result.audioSeconds)
 			} catch (err) {
-				console.warn('Retrying chunk transcript upload once:', err)
-				await putChunkTranscript(meetingId, index, result.text, record.segments, result.audioSeconds).catch((e) => console.error(e))
+				console.warn('Retrying chunk transcript hand-off once:', err)
+				await sink?.putChunk(index, result.text, record.segments, result.audioSeconds).catch((e) => console.error(e))
 			}
 		} catch (err) {
 			console.error(`On-device transcription failed for chunk ${index}:`, err)
@@ -403,8 +408,9 @@ export function useOnDevice(): OnDeviceController {
 	}, [patch])
 
 	const beginMeeting = useCallback(
-		(meetingId: string) => {
+		(meetingId: string, sink?: MeetingSink) => {
 			meetingIdRef.current = meetingId
+			sinkRef.current = sink ?? serverSink(meetingId)
 			chunksRef.current = new Map()
 			queueRef.current = []
 			inFlightRef.current = null
@@ -450,9 +456,8 @@ export function useOnDevice(): OnDeviceController {
 	const finish = useCallback(async () => {
 		const meetingId = meetingIdRef.current
 		if (!meetingId) return
-		const heartbeat = setInterval(() => {
-			fetch(apiUrl(`/api/meetings/${meetingId}/heartbeat`), { method: 'POST' }).catch(() => {})
-		}, 60_000)
+		const sink = sinkRef.current ?? serverSink(meetingId)
+		const heartbeat = setInterval(() => sink.heartbeat(), 60_000)
 
 		try {
 			await waitForDrain()
@@ -527,15 +532,36 @@ export function useOnDevice(): OnDeviceController {
 			}
 
 			patch({ phase: 'finalizing' })
-			await finalizeMeeting(meetingId, { transcript, speaker_count: speakers, duration_seconds: durationSeconds, client_stats: clientStats })
+			await sink.finalize({
+				transcript,
+				// Chunk-relative timings, shifted onto the meeting's own clock —
+				// the only form that survives without the audio to re-derive them.
+				segments: chunks.flatMap((c) => {
+					const offset = c.offset ?? 0
+					return c.segments.map((seg) => ({ ...seg, start: seg.start + offset, end: seg.end + offset }))
+				}),
+				speakerCount: speakers,
+				durationSeconds,
+				clientStats,
+			})
 		} catch (err) {
-			// Anything unrecoverable: let the server pipeline take the audio it already has.
-			console.error('On-device processing failed; falling back to the server.', err)
-			patch({ phase: 'fallback', error: err instanceof Error ? err.message : String(err) })
-			await requestServerFallback(meetingId)
+			const message = err instanceof Error ? err.message : String(err)
+			if (sink.requestFallback) {
+				// The server already has the audio, so it can simply take over.
+				console.error('On-device processing failed; falling back to the server.', err)
+				patch({ phase: 'fallback', error: message })
+				await sink.requestFallback()
+			} else {
+				// A local meeting never uploaded anything, so there is nothing to
+				// fall back to without the user's say-so. Stop here and let the
+				// page ask; `error` is what it shows them.
+				console.error('On-device processing failed and this meeting is local; awaiting consent.', err)
+				patch({ phase: 'error', error: message })
+			}
 		} finally {
 			clearInterval(heartbeat)
 			meetingIdRef.current = null
+			sinkRef.current = null
 			chunksRef.current = new Map()
 		}
 	}, [patch])
@@ -543,10 +569,14 @@ export function useOnDevice(): OnDeviceController {
 	// A failed load while a meeting is running means the server must take over.
 	useEffect(() => {
 		if (state.phase === 'error' && meetingIdRef.current) {
-			const id = meetingIdRef.current
+			const fallback = sinkRef.current?.requestFallback
+			// Local meetings have nothing on the server to take over; the page
+			// asks for consent instead of this firing silently.
+			if (!fallback) return
 			meetingIdRef.current = null
+			sinkRef.current = null
 			patch({ phase: 'fallback' })
-			requestServerFallback(id).catch(console.error)
+			fallback().catch(console.error)
 		}
 	}, [state.phase, patch])
 

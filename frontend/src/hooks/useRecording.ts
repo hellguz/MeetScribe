@@ -5,6 +5,8 @@ import { saveMeeting } from '../utils/history'
 import { AudioSource } from '../types'
 import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
+import { isLocalMode } from '../local/mode'
+import { createLocalSink, seedLocalMeeting } from '../local/sink'
 import type { OnDeviceController } from '../ondevice/useOnDevice'
 
 const CHUNK_DURATION_MS = 30_000
@@ -33,6 +35,12 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 	const meetingId = useRef<string | null>(null)
 	// True while the current meeting is transcribed/diarized in the browser.
 	const onDeviceActiveRef = useRef(false)
+	/** Local mode as it was when this meeting started; the switch may move later. */
+	const localModeRef = useRef(false)
+	/** True while the meeting in flight is a local one. */
+	const localMeetingRef = useRef(false)
+	/** Recorder blobs held back from upload, so a consented fallback still can. */
+	const pendingAudioRef = useRef<{ blob: Blob; index: number }[]>([])
 	const mediaRef = useRef<MediaRecorder | null>(null)
 	const streamRef = useRef<MediaStream | null>(null)
 	const displayStreamRef = useRef<MediaStream | null>(null)
@@ -96,6 +104,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		chunkIndexRef.current = 0
 		meetingId.current = null
 		onDeviceActiveRef.current = false
+		localMeetingRef.current = false
+		pendingAudioRef.current = []
 		setWakeLockStatus('inactive')
 		setIsPaused(false)
 		isPausedRef.current = false
@@ -109,6 +119,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 	const pollMeetingStatus = useCallback(async () => {
 		if (!meetingId.current) return
+		// A local meeting has no server row to poll. Its progress comes from
+		// the on-device controller, and stopRecording navigates when it is done.
+		if (localMeetingRef.current) return
 		try {
 			const res = await fetch(apiUrl(`/api/meetings/${meetingId.current}`))
 			if (!res.ok) return
@@ -146,6 +159,31 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		async (title: string, context: string) => {
 			const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 			const useOnDeviceNow = !!onDevice?.isUsable
+
+			// Local mode: no server row, no id from the server, no upload. The
+			// browser mints the id so the meeting has a stable URL from the
+			// first moment, exactly as a server-created one would.
+			if (localModeRef.current && useOnDeviceNow) {
+				const id = crypto.randomUUID()
+				const startedAt = new Date().toISOString()
+				const seed = {
+					id,
+					title,
+					started_at: startedAt,
+					context: context || null,
+					summary_length: summaryLength,
+					summary_language_mode: languageState.mode,
+					summary_custom_language: languageState.lastCustomLanguage,
+					timezone,
+				}
+				await seedLocalMeeting(seed)
+				meetingId.current = id
+				onDeviceActiveRef.current = true
+				localMeetingRef.current = true
+				onDevice?.beginMeeting(id, createLocalSink(seed))
+				return id
+			}
+
 			const res = await fetch(apiUrl(`/api/meetings`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -164,7 +202,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			meetingId.current = data.id
 			onDeviceActiveRef.current = useOnDeviceNow
 			if (useOnDeviceNow) onDevice?.beginMeeting(data.id)
-			saveMeeting({ id: data.id, title, started_at: new Date().toISOString(), status: 'pending' })
+			saveMeeting({ id: data.id, title, started_at: new Date().toISOString(), status: 'pending', storage: 'cloud' })
 			return data.id
 		},
 		[summaryLength, languageState, onDevice],
@@ -172,6 +210,13 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 	const uploadChunk = useCallback(async (blob: Blob, index: number, isFinal = false) => {
 		if (!meetingId.current) return
+		// A local meeting keeps its audio. The blobs are held in memory for the
+		// session so a consented fallback can still upload them, and are dropped
+		// when the meeting finishes.
+		if (localMeetingRef.current) {
+			if (!isFinal) pendingAudioRef.current.push({ blob, index })
+			return
+		}
 		const fd = new FormData()
 		fd.append('meeting_id', meetingId.current)
 		fd.append('chunk_index', String(index))
@@ -274,10 +319,18 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				// exactly as it would for a server-processed meeting.
 				if (onDeviceActiveRef.current && onDevice) {
 					await onDevice.finish()
+					// A local meeting is never polled, so nothing else would move
+					// the user on. The summary page runs the model from here.
+					if (localMeetingRef.current) {
+						const id = meetingId.current
+						if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+						resetState()
+						if (id) navigate(`/summary/${id}`, { replace: true })
+					}
 				}
 			}
 		},
-		[uploadChunk, onDevice],
+		[uploadChunk, onDevice, navigate, resetState],
 	)
 
 	const pauseRecording = useCallback(() => {
@@ -291,7 +344,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 			if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current)
 			chunkTimerRef.current = null
 			heartbeatIntervalRef.current = setInterval(async () => {
-				if (!meetingId.current) return
+				if (!meetingId.current || localMeetingRef.current) return
 				try {
 					await fetch(apiUrl(`/api/meetings/${meetingId.current}/heartbeat`), { method: 'POST' })
 				} catch {
@@ -326,6 +379,9 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 
 	const startLiveRecording = useCallback(
 		async (source: 'mic' | 'system', drawWaveform: () => void, initialContext: string) => {
+			// Read once, here: flipping the switch mid-recording must not move a
+			// meeting that is already under way.
+			localModeRef.current = isLocalMode()
 			resetState()
 			let finalStream: MediaStream
 			try {

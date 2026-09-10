@@ -19,10 +19,13 @@ import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
 import OnDeviceStats from '../components/OnDeviceStats'
-import LocalSummaryPanel from '../components/LocalSummaryPanel'
-import { SummaryVersionTabs, SummaryComparison, MarkdownView, type SummaryView } from '../components/SummaryVersions'
+import { MarkdownView } from '../components/MarkdownView'
+import StorageBadge from '../components/StorageBadge'
+import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
-import { useLocalSummaryPrefs } from '../ondevice/summary/pref'
+import { isLocalMode } from '../local/mode'
+import { storageOf, getHistory } from '../utils/history'
+import { downloadMeetingMarkdown } from '../local/export'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 
@@ -40,6 +43,7 @@ export default function Summary() {
 	const isDark = theme !== 'light'
 	const { languageState, setLanguageState } = useSummaryLanguage()
 
+	const meeting = useMeetingSummary({ mid, languageState, setLanguageState })
 	const {
 		transcript,
 		summaryMarkdown,
@@ -66,16 +70,12 @@ export default function Summary() {
 		handleSummaryUpdate,
 		handleTitleUpdate,
 		loadedFromCache,
-	} = useMeetingSummary({ mid, languageState, setLanguageState })
+	} = meeting
 
-	// Experimental: the same transcript summarised in this browser, kept
-	// next to the Claude summary rather than replacing it.
-	const { enabled: localSummaryEnabled } = useLocalSummaryPrefs()
+	// For a local meeting this *is* the summary; there is no other one.
+
 	const localSummary = useLocalSummary(mid)
-	const [view, setView] = useState<SummaryView>('cloud')
-	// Which run the side-by-side view puts opposite Claude. Tracked apart
-	// from `view` so switching to compare and back keeps the same run.
-	const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
+
 	const [editedContext, setEditedContext] = useState<string | null>(null)
 	const [isTranscriptVisible, setIsTranscriptVisible] = useState(false)
 	const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied_md'>('idle')
@@ -114,19 +114,18 @@ export default function Summary() {
 	}, [])
 
 	// Sync markdown → HTML into the editor div whenever it changes, but never while the user is editing.
-	// `view` is a dependency because the editor is unmounted while an on-device
 	// version is on screen: coming back to the Claude tab remounts an empty div,
 	// and without a re-run the summary would simply not be there.
 	useEffect(() => {
 		if (!editorRef.current || isEditingRef.current) return
 		setEditorHtml(summaryMarkdown || '')
-	}, [summaryMarkdown, setEditorHtml, view])
+	}, [summaryMarkdown, setEditorHtml])
 
 	// Sync title text into the h1 whenever meetingTitle changes, but never while editing
 	useEffect(() => {
 		if (!titleRef.current || isEditingRef.current) return
 		titleRef.current.innerText = meetingTitle || ''
-	}, [meetingTitle, view])
+	}, [meetingTitle])
 
 	const enterEditMode = useCallback((e?: React.MouseEvent) => {
 		if (isEditingRef.current) return
@@ -274,48 +273,29 @@ export default function Summary() {
 	// Names the stage and its position, e.g. "Step 2 of 3 · Identifying speakers".
 	const stageLabel = stageText(processingStage, processingTotal, 'Processing summary')
 
-	// The run the non-cloud views show: the explicit pick, else the newest.
-	const localRuns = localSummary.runs
-	const activeRun = localRuns.find((r) => r.id === selectedRunId) ?? localRuns[localRuns.length - 1] ?? null
-	// A finished run is only interesting next to the cloud one, so land the
-	// user in the side-by-side view rather than making them find it.
-	//
-	// Once per run, tracked by id: the phase stays 'done' afterwards and the
-	// run list changes again whenever a verdict is saved, so a plain
-	// dependency check would keep dragging the view back to compare while
-	// the user was reading a single version.
-	const autoComparedRunRef = useRef<number | null>(null)
+	// Where this meeting is stored, for the badge and for the actions that
+	// only make sense on one side (translate, find speakers, feedback).
+	const isLocal = meeting.isLocal
+	const storage = isLocal ? 'local' : storageOf(getHistory().find((m) => m.id === mid) ?? {})
+	// Cloud badges stay quiet until the user has met Local mode at all.
+	const badgeLoud = isLocalMode() || isLocal
+
+	// A local meeting that has a transcript but no summary is waiting for the
+	// model. Run it without being asked: the user already chose Local mode,
+	// and a page that just sits there looks broken.
+	const needsLocalSummary = isLocal && !!transcript && !summaryMarkdown
+	const autoStartedRef = useRef(false)
 	useEffect(() => {
-		if (localSummary.state.phase !== 'done' || localRuns.length === 0) return
-		const newest = localRuns[localRuns.length - 1]
-		if (autoComparedRunRef.current === newest.id) return
-		autoComparedRunRef.current = newest.id
-		setSelectedRunId(newest.id)
-		setView('compare')
-	}, [localSummary.state.phase, localRuns])
-	// Deleting the last run, or opening a meeting that has none, must not
-	// leave the page stuck on a version that no longer exists.
-	useEffect(() => {
-		if (localRuns.length === 0 && view !== 'cloud') setView('cloud')
-	}, [localRuns.length, view])
+		if (!needsLocalSummary || autoStartedRef.current) return
+		if (localSummary.busy || localSummary.state.phase === 'error') return
+		autoStartedRef.current = true
+		localSummary.generate(currentMeetingLength)
+	}, [needsLocalSummary, localSummary, currentMeetingLength])
 
-	const selectView = useCallback((next: SummaryView) => {
-		if (typeof next === 'number') setSelectedRunId(next)
-		setView(next)
-	}, [])
-
-	const handleVerdict = useCallback(
-		async (verdict: string | null, note: string | null) => {
-			if (activeRun) await localSummary.setVerdict(activeRun.id, verdict, note)
-		},
-		[activeRun, localSummary],
-	)
-
-	// The panel only makes sense once there is a transcript to summarise.
-	const showLocalPanel = localSummaryEnabled && !!transcript && !busy
 	// Streaming output has nowhere to live until the run is saved, so it gets
 	// its own card while it arrives.
 	const showStreaming = localSummary.state.streaming.length > 0 && localSummary.state.phase !== 'done'
+	const showLocalPanel = isLocal && !!transcript && !summaryMarkdown && !showStreaming
 
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
@@ -339,7 +319,7 @@ export default function Summary() {
 		<div
 			className="page-container"
 			style={{
-				maxWidth: view === 'compare' ? 1400 : 800,
+				maxWidth: 800,
 				margin: '0 auto',
 				padding: '12px 24px 24px',
 				color: currentThemeColors.text,
@@ -359,12 +339,13 @@ export default function Summary() {
 					}}>
 					← Back
 				</button>
+				<StorageBadge storage={storage} theme={currentThemeColors} loud={badgeLoud} size="md" />
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
 					{/* Copy, edit, delete, tags and favourites all act on the real
 					    summary, so they only belong on the Claude tab — offering
 					    "edit" while an on-device run is on screen would imply the
 					    run is editable, and "copy" would quietly copy the other one. */}
-					{hasSummary && !isProcessing && view === 'cloud' && (
+					{hasSummary && !isProcessing && (
 						<>
 							{copyStatus !== 'idle' && <span style={{ color: currentThemeColors.secondaryText, fontSize: '13px', opacity: 0.7 }}>Copied!</span>}
 							<div
@@ -419,6 +400,17 @@ export default function Summary() {
 									<TrashIcon />
 								</button>
 							</div>
+							{isLocal && (
+								<button
+									onClick={async () => {
+										const record = meeting.localMeeting
+										if (record) downloadMeetingMarkdown(record)
+									}}
+									title="Export as Markdown — the only copy is in this browser"
+									style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
+									⬇︎
+								</button>
+							)}
 							{mid && (
 								<>
 									<TagsManager
@@ -462,7 +454,15 @@ export default function Summary() {
 								disabled={isRegenerating || isProcessing}
 								onSelect={(l: SummaryLength) => handleRegenerate({ newLength: l })}
 							/>
-							<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
+							{isLocal ? (
+								<span
+									title="Translation runs in the cloud, and this meeting never leaves your device."
+									style={{ fontSize: '13px', color: currentThemeColors.secondaryText }}>
+									Translation is cloud-only
+								</span>
+							) : (
+								<LanguageSelector disabled={isRegenerating || isProcessing} onSelectionChange={handleLanguageChange} />
+							)}
 						</div>
 						<div>
 							<textarea
@@ -598,15 +598,13 @@ export default function Summary() {
 			)}
 
 			{showLocalPanel && (
-				<LocalSummaryPanel
+				<LocalSummaryProgress
 					theme={currentThemeColors}
 					state={localSummary.state}
 					busy={localSummary.busy}
 					webgpuAvailable={localSummary.webgpuAvailable}
-					summaryLength={currentMeetingLength}
 					onGenerate={() => localSummary.generate(currentMeetingLength)}
 					onCancel={localSummary.cancel}
-					runs={localRuns}
 				/>
 			)}
 
@@ -626,10 +624,6 @@ export default function Summary() {
 				</div>
 			)}
 
-			{localRuns.length > 0 && hasSummary && (
-				<SummaryVersionTabs theme={currentThemeColors} runs={localRuns} view={view} onSelect={selectView} />
-			)}
-
 			{/* Summary */}
 			{displayLoading ? (
 				<p style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -638,16 +632,6 @@ export default function Summary() {
 				</p>
 			) : error ? (
 				<p style={{ color: currentThemeColors.button.danger }}>Error: {error}</p>
-			) : hasSummary && view !== 'cloud' && activeRun ? (
-				/* Read-only on purpose: an on-device run is evidence, not the
-				   meeting's summary, and editing it would imply otherwise. */
-				<SummaryComparison
-					theme={currentThemeColors}
-					cloudMarkdown={summaryMarkdown || ''}
-					run={activeRun}
-					compare={view === 'compare'}
-					onVerdict={handleVerdict}
-				/>
 			) : hasSummary ? (
 				<div
 					style={{
@@ -761,7 +745,9 @@ export default function Summary() {
 				<p>No summary is available for this meeting.</p>
 			)}
 
-			{hasSummary && !isLoading && (
+			{/* Feedback is stored against a server meeting row, which a local
+			    meeting has not got. */}
+			{hasSummary && !isLoading && !isLocal && (
 				<FeedbackComponent
 					submittedTypes={submittedFeedback}
 					onFeedbackToggle={handleFeedbackToggle}
