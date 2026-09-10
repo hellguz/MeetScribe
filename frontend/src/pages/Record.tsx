@@ -260,25 +260,16 @@ export default function Record() {
 	return (
 		<div className="page-container" style={{ padding: '12px 24px', maxWidth: 800, margin: '0 auto' }}>
 			<InfoPanel theme={currentThemeColors} open={infoOpen} setOpen={setInfoOpen} />
-			{/* Wraps rather than overflows. On a phone the title and the info
-			    button fill the first line and the switches drop to a second,
-			    still right-aligned by the group's own `flex-end`. The `flex: 1`
-			    on both side groups is what centres the title while they fit. */}
-			<div
-				style={{
-					display: 'flex',
-					flexWrap: 'wrap',
-					justifyContent: 'space-between',
-					alignItems: 'center',
-					columnGap: '8px',
-					rowGap: '8px',
-					marginBottom: '8px',
-				}}>
-				<div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
+			{/* Wraps rather than overflows; see `.app-header` for what happens
+			    to the title when it does. */}
+			<div className="app-header" style={{ marginBottom: '8px' }}>
+				<div className="app-header-info">
 					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
 				</div>
-				<h1 style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>🎙️ MeetScribe</h1>
-				<div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+				<h1 className="app-header-title" style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>
+					🎙️ MeetScribe
+				</h1>
+				<div className="app-header-actions">
 					{/* Renders nothing at all while the device is idle. */}
 					<LocalActivityBadge theme={currentThemeColors} />
 					<LocalModeToggle theme={currentThemeColors} locked={isUiLocked} />

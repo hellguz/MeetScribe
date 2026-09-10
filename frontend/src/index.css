@@ -283,6 +283,77 @@ body {
 	}
 }
 
+/* ── The record page's header ────────────────────────────────── */
+
+/*
+ * A grid, not flex, and the reason is the centred title.
+ *
+ * Centring it with flex means two `flex: 1` spacers either side, which share
+ * the row evenly whatever is in them — so the switches, which need ~210px,
+ * were handed half the row and wrapped their own theme toggle onto another
+ * line. `1fr auto 1fr` centres the middle column just as well, and a grid
+ * `1fr` will not shrink a column below its content.
+ *
+ * Below 760px there is no room for all three side by side, and the reason is
+ * the centring itself: equal outer columns mean the empty gutter on the left
+ * has to match the switches on the right, so ~490px of content needs ~713px
+ * of row. Measured, not guessed — 720px still wrapped.
+ *
+ * So under that, the title moves to a row of its own *under* the buttons and
+ * is centred there. Placement is explicit rather than by source order,
+ * because the title comes second in the markup and has to be last on screen.
+ *
+ * The dial that appears while the device is working is another ~150px on the
+ * right, which can push the title onto a second row on a mid-sized window
+ * while it is up. That is a graceful wrap of a transient thing, and chasing
+ * it would mean sizing the header for a badge that is usually absent.
+ *
+ * All of it lives here rather than inline: the override is a media query, and
+ * an inline `flex`/`grid-column` would beat it.
+ */
+.app-header {
+	display: grid;
+	grid-template-columns: 1fr auto 1fr;
+	align-items: center;
+	column-gap: 8px;
+	row-gap: 6px;
+}
+
+.app-header-info {
+	display: flex;
+	justify-content: flex-start;
+}
+
+.app-header-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+@media (max-width: 760px) {
+	.app-header {
+		grid-template-columns: auto 1fr;
+	}
+
+	.app-header-info {
+		grid-row: 1;
+		grid-column: 1;
+	}
+
+	.app-header-actions {
+		grid-row: 1;
+		grid-column: 2;
+	}
+
+	.app-header-title {
+		grid-row: 2;
+		grid-column: 1 / -1;
+		text-align: center;
+	}
+}
+
 /* ── Menus that hang off a button ──────────────────────────────────────── */
 
 /*
