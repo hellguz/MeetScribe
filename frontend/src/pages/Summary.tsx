@@ -18,6 +18,7 @@ import { isFavorite as checkFavorite, toggleFavorite, getMeetingTagIds, toggleMe
 import SummaryLengthSelector from '../components/SummaryLengthSelector'
 import LanguageSelector from '../components/LanguageSelector'
 import { useMeetingSummary } from '../hooks/useMeetingSummary'
+import OnDeviceStats from '../components/OnDeviceStats'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 
@@ -50,6 +51,7 @@ export default function Summary() {
 		canRediarize,
 		diarizationAttempted,
 		speakerCount,
+		clientStats,
 		processingStage,
 		processingTotal,
 		handleRediarize,
@@ -678,6 +680,7 @@ export default function Summary() {
 									{speakerCount} {speakerCount === 1 ? 'speaker' : 'speakers'}
 								</span>
 							) : null}
+							{clientStats ? <span style={{ marginLeft: '8px', fontSize: '12px' }} title="Transcribed on the recording device">⚡</span> : null}
 						</span>
 						<button
 							onClick={(e) => {
@@ -706,6 +709,7 @@ export default function Summary() {
 							{transcriptCopied ? <span>Copied!</span> : <CopyTextIcon size={13} />}
 						</button>
 					</h5>
+					{clientStats && <OnDeviceStats stats={clientStats} theme={currentThemeColors} />}
 					{isTranscriptVisible && (
 						<pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap', color: currentThemeColors.text, fontSize: '15px', lineHeight: '1.6' }}>{transcript}</pre>
 					)}

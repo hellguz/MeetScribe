@@ -10,6 +10,13 @@ const REPO_URL = 'https://github.com/hellguz/meetscribe'
  */
 const CHANGELOG: { when: string; lines: string[] }[] = [
 	{
+		when: 'September 2026',
+		lines: [
+			'⚡ Experimental: transcribe and label speakers right in your browser — only the finished text reaches the server, and Claude still writes the summary.',
+			'One model download of about 0.7 GB, cached for next time. Live recordings, 25 European languages.',
+		],
+	},
+	{
 		when: 'August 2026',
 		lines: [
 			'🗣️ Speaker labels — MeetScribe now works out who said what, on your own machine.',

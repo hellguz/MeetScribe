@@ -1,6 +1,7 @@
 from __future__ import annotations
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import json
 import logging
 import shutil
 import uuid
@@ -15,6 +16,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select, func
 from sqlalchemy import delete
@@ -37,8 +39,11 @@ from .models import (
     MeetingContextUpdate,
     MeetingTranslatePayload,
     SummaryUpdate,
+    ChunkTranscriptUpdate,
+    ClientFinalizePayload,
 )
 from . import tasks
+from . import diarization
 
 LOGGER = logging.getLogger("meetscribe")
 logging.basicConfig(
@@ -206,7 +211,10 @@ async def upload_chunk(
             )
         else:
             mc.path = str(chunk_path)
-            mc.text = None
+            # In on-device mode the browser may post a chunk's text before
+            # its audio finishes uploading; that text must survive.
+            if not mtg.client_processing:
+                mc.text = None
         db.add(mc)
 
         mtg.received_chunks += 1
@@ -228,13 +236,17 @@ async def upload_chunk(
 
         db.add(mtg)
         db.commit()
+        client_processing = mtg.client_processing
 
-    _executor.submit(
-        tasks.process_transcription_and_summary,
-        str(meeting_id),
-        chunk_index,
-        str(chunk_path.resolve()),
-    )
+    # On-device meetings are transcribed in the browser; the server only
+    # keeps the audio (for retention and a possible server-side re-run).
+    if not client_processing:
+        _executor.submit(
+            tasks.process_transcription_and_summary,
+            str(meeting_id),
+            chunk_index,
+            str(chunk_path.resolve()),
+        )
     return {"ok": True, "skipped": False}
 
 
@@ -296,6 +308,9 @@ def get_meeting(mid: uuid.UUID):
             and mtg.final_received
             and mtg.expected_chunks
             and transcribed_count >= mtg.expected_chunks
+            # On-device meetings finish through /finalize, once the browser
+            # has diarized. Until then every chunk having text means nothing.
+            and not (mtg.client_processing and not mtg.transcript_text)
         ):
             _executor.submit(tasks.generate_summary_only, str(mid))
             mtg.summary_task_queued = True
@@ -893,3 +908,143 @@ def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
     return {"ok": True, "message": "Translation task queued."}
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# On-device processing (experimental): the browser transcribes with Parakeet
+# and diarizes with the same ONNX models the server uses. Audio and chunk
+# texts are stored exactly as for a normal meeting; only summarization runs
+# here. See frontend/src/ondevice/.
+# ──────────────────────────────────────────────────────────────────────────────
+@app.put("/api/meetings/{mid}/chunks/{chunk_index}/transcript", status_code=200)
+def update_chunk_transcript(mid: uuid.UUID, chunk_index: int, payload: ChunkTranscriptUpdate):
+    """Store the text (and word timings) the browser produced for one chunk."""
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404, "Meeting not found")
+        if not mtg.client_processing:
+            raise HTTPException(409, "Meeting is not in on-device mode")
+
+        mc = db.exec(
+            select(MeetingChunk).where(
+                MeetingChunk.meeting_id == mid, MeetingChunk.chunk_index == chunk_index
+            )
+        ).first()
+        if not mc:
+            # Text can arrive before the audio upload; the path is filled in
+            # by /api/chunks when it lands.
+            mc = MeetingChunk(meeting_id=mid, chunk_index=chunk_index, path="")
+        mc.text = payload.text.strip()
+        mc.segments_json = (
+            json.dumps([s.model_dump() for s in payload.segments]) if payload.segments else None
+        )
+        mc.audio_seconds = payload.audio_seconds
+        mtg.last_activity = dt.datetime.utcnow()
+        db.add(mc)
+        db.add(mtg)
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/meetings/{mid}/finalize", status_code=202)
+def finalize_client_meeting(mid: uuid.UUID, payload: ClientFinalizePayload):
+    """The browser is done: take its labelled transcript and summarize it."""
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404, "Meeting not found")
+        if not mtg.client_processing:
+            raise HTTPException(409, "Meeting is not in on-device mode")
+        if mtg.done:
+            return {"ok": True, "already_done": True}
+
+        mtg.transcript_text = payload.transcript.strip()
+        mtg.speaker_count = payload.speaker_count
+        mtg.duration_seconds = payload.duration_seconds
+        mtg.client_stats = json.dumps(payload.client_stats) if payload.client_stats else None
+        mtg.diarization_attempted = payload.speaker_count is not None
+        mtg.final_received = True
+        if mtg.expected_chunks is None:
+            mtg.expected_chunks = mtg.received_chunks
+        mtg.last_activity = dt.datetime.utcnow()
+
+        queue = not mtg.summary_task_queued
+        mtg.summary_task_queued = True
+        db.add(mtg)
+        db.commit()
+
+    if queue:
+        _executor.submit(tasks.generate_summary_only, str(mid))
+    LOGGER.info("⚡ Meeting %s: on-device transcript received (%d chars). Summarizing.", mid, len(payload.transcript))
+    return {"ok": True}
+
+
+@app.post("/api/meetings/{mid}/client-fallback", status_code=202)
+def client_fallback(mid: uuid.UUID):
+    """
+    The browser gave up (model failed to load, tab ran out of memory, …).
+    Hand the meeting back to the normal server pipeline: transcribe every
+    chunk that has no text yet, then diarize and summarize as usual.
+    """
+    with Session(engine) as db:
+        mtg = db.get(Meeting, mid)
+        if not mtg:
+            raise HTTPException(404, "Meeting not found")
+        if not mtg.client_processing:
+            return {"ok": True, "requeued": 0}
+        mtg.client_processing = False
+        mtg.last_activity = dt.datetime.utcnow()
+        db.add(mtg)
+        db.commit()
+
+        pending = db.exec(
+            select(MeetingChunk.chunk_index, MeetingChunk.path)
+            .where(MeetingChunk.meeting_id == mid)
+            .where(MeetingChunk.text.is_(None))
+            .where(MeetingChunk.path != "")
+        ).all()
+
+    for chunk_index, path in pending:
+        _executor.submit(tasks.process_transcription_and_summary, str(mid), chunk_index, path)
+    LOGGER.warning("⚡ Meeting %s: browser fell back to server processing (%d chunk(s) re-queued).", mid, len(pending))
+    return {"ok": True, "requeued": len(pending)}
+
+
+@app.get("/api/models")
+def list_model_files():
+    """
+    What the browser needs to diarize on-device: the two ONNX models the
+    server already caches (served below — GitHub releases send no CORS
+    headers) and the tunables from .env, so both sides agree.
+    """
+    seg, emb = diarization.model_paths()
+    if not seg.exists() or not emb.exists():
+        raise HTTPException(
+            404, "Diarization models are not downloaded on the server (utils/fetch_diarization_models.py)."
+        )
+    return {
+        "segmentation": {"url": "/api/models/segmentation", "name": seg.name, "bytes": seg.stat().st_size},
+        "embedding": {"url": "/api/models/embedding", "name": emb.name, "bytes": emb.stat().st_size},
+        "config": {
+            "window_shift_ratio": settings.diarization_window_shift_ratio,
+            "cluster_threshold": settings.diarization_cluster_threshold,
+            "min_speaker_share": settings.diarization_min_speaker_share,
+            "min_duration_on": settings.diarization_min_duration_on,
+            "min_duration_off": settings.diarization_min_duration_off,
+        },
+    }
+
+
+@app.get("/api/models/{name}")
+def get_model_file(name: str):
+    seg, emb = diarization.model_paths()
+    path = {"segmentation": seg, "embedding": emb}.get(name)
+    if path is None:
+        raise HTTPException(404, "Unknown model")
+    if not path.exists():
+        raise HTTPException(404, "Model not downloaded on the server")
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=path.name,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
