@@ -1,6 +1,6 @@
 import React from 'react'
 import { AppTheme } from '../styles/theme'
-import { formatBytes } from './OnDevicePanel'
+import { formatBytes } from '../utils/formatBytes'
 
 /** What the browser measured for an on-device meeting (meeting.client_stats). */
 export interface ClientStats {

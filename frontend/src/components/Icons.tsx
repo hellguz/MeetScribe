@@ -122,3 +122,46 @@ export const CloseIcon: React.FC<IconProps> = ({ size = 14 }) => (
 		<line x1="6" y1="6" x2="18" y2="18" />
 	</svg>
 )
+
+export const ShareIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+		<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+	</svg>
+)
+
+export const LockIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+		<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+	</svg>
+)
+
+export const UnlockIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+		<path d="M7 11V7a5 5 0 0 1 9.9-1" />
+	</svg>
+)
+
+export const CloudIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+	</svg>
+)
+
+export const DownloadIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+		<polyline points="7 10 12 15 17 10" />
+		<line x1="12" y1="15" x2="12" y2="3" />
+	</svg>
+)
+
+export const AlertIcon: React.FC<IconProps> = ({ size = 14 }) => (
+	<svg {...iconProps(size)}>
+		<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+		<line x1="12" y1="9" x2="12" y2="13" />
+		<line x1="12" y1="17" x2="12.01" y2="17" />
+	</svg>
+)

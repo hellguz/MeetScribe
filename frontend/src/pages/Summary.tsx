@@ -10,7 +10,7 @@ import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, DownloadIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -292,6 +292,40 @@ export default function Summary() {
 		localSummary.generate(currentMeetingLength)
 	}, [needsLocalSummary, localSummary, currentMeetingLength])
 
+	/**
+	 * Save the meeting as a file. Offered for cloud meetings too — the fact
+	 * that the server has a copy is not a reason to make someone copy-paste
+	 * their own notes into a document.
+	 */
+	const handleDownload = useCallback(() => {
+		const record = meeting.localMeeting
+		if (record) {
+			downloadMeetingMarkdown(record)
+			return
+		}
+		// A cloud meeting has no stored record, so build one from what is on
+		// screen. Same file either way.
+		downloadMeetingMarkdown({
+			id: mid ?? 'meeting',
+			title: meetingTitle ?? 'Meeting',
+			started_at: meetingStartedAt || new Date().toISOString(),
+			transcript: transcript ?? '',
+			segments: [],
+			summary_markdown: summaryMarkdown,
+			context: context ?? null,
+			summary_length: currentMeetingLength,
+			summary_language_mode: 'auto',
+			summary_custom_language: null,
+			timezone: null,
+			duration_seconds: null,
+			word_count: null,
+			speaker_count: speakerCount,
+			client_stats: clientStats,
+			updated_at: new Date().toISOString(),
+			unfinished: false,
+		})
+	}, [meeting.localMeeting, mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats])
+
 	// Streaming output has nowhere to live until the run is saved, so it gets
 	// its own card while it arrives.
 	const showStreaming = localSummary.state.streaming.length > 0 && localSummary.state.phase !== 'done'
@@ -373,6 +407,15 @@ export default function Summary() {
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 									<CopyMarkdownIcon />
 								</button>
+								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+								<button
+									onClick={handleDownload}
+									style={copyButtonStyle}
+									title="Download as Markdown"
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<DownloadIcon />
+								</button>
 							</div>
 							<div
 								style={{
@@ -400,17 +443,6 @@ export default function Summary() {
 									<TrashIcon />
 								</button>
 							</div>
-							{isLocal && (
-								<button
-									onClick={async () => {
-										const record = meeting.localMeeting
-										if (record) downloadMeetingMarkdown(record)
-									}}
-									title="Export as Markdown — the only copy is in this browser"
-									style={{ ...copyButtonStyle, border: `1px solid ${currentThemeColors.border}`, borderRadius: '6px' }}>
-									⬇︎
-								</button>
-							)}
 							{mid && (
 								<>
 									<TagsManager

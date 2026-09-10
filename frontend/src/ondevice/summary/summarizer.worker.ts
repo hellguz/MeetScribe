@@ -107,7 +107,20 @@ export interface SummarizeRequest {
 	maxNewTokens: number
 }
 
-export type SummarizerRequest = SummarizeRequest
+/**
+ * Fetch and warm the model without generating anything.
+ *
+ * The download is ~3 GB and a meeting is usually half an hour, so starting it
+ * when the recording starts means the model is ready the moment the transcript
+ * is. Starting it when the user reaches the summary page means watching a
+ * progress bar for five minutes after the meeting they just sat through.
+ */
+export interface PreloadRequest {
+	type: 'preload'
+	model: string
+}
+
+export type SummarizerRequest = SummarizeRequest | PreloadRequest
 
 /** What the run is actually executing on, asked of the browser itself. */
 export interface AdapterInfo {
@@ -135,6 +148,7 @@ export type SummarizerResponse =
 	/** Running count while writing, so the panel can show a live rate. */
 	| { type: 'decode'; tokens: number; ms: number }
 	| { type: 'done'; text: string; outputTokens: number; decodeMs: number; totalMs: number; truncated: boolean }
+	| { type: 'preloaded'; cached: boolean }
 	| { type: 'error'; message: string }
 
 const post = (msg: SummarizerResponse) => self.postMessage(msg)
@@ -513,6 +527,14 @@ async function summarize(req: SummarizeRequest) {
 
 self.addEventListener('message', async (event: MessageEvent<SummarizerRequest>) => {
 	try {
+		if (event.data.type === 'preload') {
+			// `load` is idempotent and keeps the model in module scope, so a
+			// later 'summarize' for the same id costs nothing.
+			const before = await cachedBytesFor(event.data.model)
+			await load(event.data.model)
+			post({ type: 'preloaded', cached: before > 0 })
+			return
+		}
 		await summarize(event.data)
 	} catch (e) {
 		post({ type: 'error', message: e instanceof Error ? e.message : String(e) })
