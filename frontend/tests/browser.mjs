@@ -161,6 +161,14 @@ await check('a meeting nobody can reach offers no Copy link', async () => {
 	if (!/Create link/.test(text)) throw new Error(`no way to create one:\n${text}`)
 })
 
+await check('Create link is amber, like Update link', async () => {
+	const bg = await page.evaluate(() => {
+		const b = [...document.querySelectorAll('[role="dialog"] button')].find((x) => x.textContent.trim() === 'Create link')
+		return b ? getComputedStyle(b).backgroundColor : null
+	})
+	if (!/245, 158, 11/.test(bg ?? '')) throw new Error(`Create link is ${bg}`)
+})
+
 await page.screenshot({ path: `${OUT}/share-panel.png` })
 await page.keyboard.press('Escape')
 

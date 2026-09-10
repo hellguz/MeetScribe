@@ -1,7 +1,6 @@
 import React from 'react'
 import { AppTheme } from '../styles/theme'
 import type { LocalSummaryState } from '../ondevice/summary/useLocalSummary'
-import { formatBytes } from '../utils/formatBytes'
 import Spinner from './Spinner'
 import { LockIcon } from './Icons'
 
@@ -34,24 +33,40 @@ interface Props {
 }
 
 const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud, blocked = false }) => {
-	const { phase, statusText, error, download, prefill, decode, measured } = state
+	const { phase, statusText, error, download, measured } = state
 
-	const detail = (): string | null => {
-		if (download && !download.total) return 'Downloading the model…'
-		if (download && download.total > 0 && phase === 'loading') {
-			const pct = Math.round((download.loaded / download.total) * 100)
-			return `Downloading the model — ${formatBytes(download.loaded)} of ${formatBytes(download.total)} (${pct}%)`
+	/**
+	 * What is happening, in words and nothing else.
+	 *
+	 * The numbers used to live here as well — megabytes downloaded of
+	 * megabytes, the prefill percentage and its ETA, the decode rate — from
+	 * before there was anywhere else to put them. The dial in the top bar now
+	 * carries all of it, and having both meant reading
+	 * "Downloading the model — 3.05 GB of 3.05 GB (100%)" underneath a dial
+	 * that had just said the same thing more briefly.
+	 *
+	 * So this line names the step and this card keeps the Stop button, which
+	 * is the thing the dial cannot be.
+	 */
+	const detail = (): string => {
+		switch (phase) {
+			case 'prompt':
+				return 'Reading the transcript'
+			case 'loading':
+				// "Downloading" only while bytes are actually moving; a model
+				// already on disk goes straight to loading it into the GPU.
+				return download && download.total > 0 && download.loaded < download.total ? 'Downloading the model' : 'Loading the model'
+			case 'prefilling':
+				return 'Reading the transcript'
+			case 'generating':
+				return 'Writing the summary'
+			case 'titling':
+				return 'Naming the meeting'
+			case 'saving':
+				return 'Saving to this device'
+			default:
+				return statusText ?? 'Summarizing on this device'
 		}
-		if (phase === 'prefilling' && prefill) {
-			const pct = prefill.total > 0 ? Math.round((prefill.processed / prefill.total) * 100) : 0
-			const eta = prefill.etaMs ? ` · ~${fmtMs(prefill.etaMs)} left` : ''
-			return `Reading the transcript — ${pct}%${eta}`
-		}
-		if (phase === 'generating' && decode) {
-			const rate = decode.tokensPerSecond ? ` · ${decode.tokensPerSecond.toFixed(1)} words/s` : ''
-			return `Writing the summary${rate}`
-		}
-		return statusText
 	}
 
 	const card: React.CSSProperties = {
@@ -114,7 +129,7 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 			<div style={card}>
 				<div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
 					<Spinner label="Summarizing on this device" />
-					<span style={{ flex: 1, minWidth: 0 }}>{detail() ?? 'Summarizing on this device…'}</span>
+					<span style={{ flex: 1, minWidth: 0 }}>{detail()}</span>
 					{button('Stop', onCancel)}
 				</div>
 				{measured.totalMs !== null && (

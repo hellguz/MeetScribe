@@ -180,9 +180,10 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, onChan
 						padding: '7px 11px',
 						borderRadius: '6px',
 						border: '1px solid transparent',
-						// Amber for an update, the colour this app gives a share
-						// that is being held open on a clock.
-						backgroundColor: alreadyShared ? AMBER : theme.button.primary,
+						// Amber, either way: this is the button that puts the
+						// meeting somewhere other people can reach, and that is
+						// the state the app colours amber everywhere else.
+						backgroundColor: AMBER,
 						color: '#ffffff',
 						font: 'inherit',
 						fontSize: '12px',

@@ -75,8 +75,11 @@ export function localSummaryView(input: LocalSummaryViewInput): LocalSummaryView
 		showPanel,
 		showStreaming,
 		dimStale,
-		// The card is a better version of this message, so they never both show.
-		showRegeneratingBanner: dimStale && !showStreaming,
+		// Both the card and the panel are better versions of this message: the
+		// card shows the text arriving, and the panel names the step and
+		// offers Stop. The banner is what is left for a cloud meeting, where
+		// there is no panel at all.
+		showRegeneratingBanner: dimStale && !showStreaming && !showPanel,
 		// A local run reports itself through the panel and the card, which say
 		// what is happening; this generic line would sit above them adding
 		// nothing but the word "Processing".
