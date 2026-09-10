@@ -1,7 +1,7 @@
 import React from 'react'
 import { AppTheme } from '../styles/theme'
 import type { LocalSummaryState } from '../ondevice/summary/useLocalSummary'
-import { formatBytes } from './OnDevicePanel'
+import { formatBytes } from '../utils/formatBytes'
 import Spinner from './Spinner'
 import { LockIcon } from './Icons'
 

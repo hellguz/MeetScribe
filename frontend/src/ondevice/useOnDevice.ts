@@ -19,9 +19,9 @@ import { labelTranscript, pruneMinorSpeakers, renumberByFirstAppearance, type Sp
 import type { ParakeetWorkerRequest, ParakeetWorkerResponse } from './parakeet.worker'
 import type { DiarizationWorkerRequest, DiarizationWorkerResponse } from './diarization.worker'
 import type { TranscribeWord } from './types'
+import { isLocalMode } from '../local/mode'
 
 const SAMPLE_RATE = 16_000
-const STORAGE_ENABLED = 'meetscribe_ondevice'
 const STORAGE_PLAN = 'meetscribe_ondevice_plan'
 
 export type OnDevicePhase = 'idle' | 'loading' | 'ready' | 'diarizing' | 'finalizing' | 'error' | 'fallback'
@@ -58,12 +58,17 @@ export interface OnDeviceState {
 	backend: 'webgpu' | 'wasm' | null
 	threads: number | null
 	transcription: { done: number; queued: number; audioSeconds: number; processMs: number }
+	/**
+	 * Everything transcribed so far, in chunk order. A local meeting is never
+	 * polled, so without this the recording page had no live transcript at all
+	 * — the text existed, it just never left the worker's bookkeeping.
+	 */
+	transcript: string
 	diarization: { stage: string | null; done: number; total: number; ms: number | null; speakers: number | null; modelBytes: number | null; modelLoadMs: number | null }
 }
 
 export interface OnDeviceController {
 	state: OnDeviceState
-	setEnabled: (enabled: boolean) => void
 	setPlanChoice: (choice: PlanChoice) => void
 	/** True when a meeting started now would be processed on this device. */
 	isUsable: boolean
@@ -80,13 +85,10 @@ export interface OnDeviceController {
 }
 
 const initialState = (): OnDeviceState => ({
-	enabled: (() => {
-		try {
-			return localStorage.getItem(STORAGE_ENABLED) === 'true'
-		} catch {
-			return false
-		}
-	})(),
+	// Driven by Local mode, not a switch of its own. There used to be a
+	// separate "transcribe on device" toggle, which meant a meeting could be
+	// half-private — transcribed here, summarized in the cloud.
+	enabled: isLocalMode(),
 	planChoice: (() => {
 		try {
 			const v = localStorage.getItem(STORAGE_PLAN)
@@ -108,6 +110,7 @@ const initialState = (): OnDeviceState => ({
 	backend: null,
 	threads: null,
 	transcription: { done: 0, queued: 0, audioSeconds: 0, processMs: 0 },
+	transcript: '',
 	diarization: { stage: null, done: 0, total: 0, ms: null, speakers: null, modelBytes: null, modelLoadMs: null },
 })
 
@@ -327,19 +330,19 @@ export function useOnDevice(): OnDeviceController {
 		if (state.plan !== plan || state.phase === 'idle') loadWorkers(plan)
 	}, [state.enabled, plan, state.plan, state.phase, loadWorkers, terminateWorkers, patch])
 
-	useEffect(() => () => terminateWorkers(), [terminateWorkers])
+	// Local mode lives in localStorage and can be flipped from the toggle or
+	// another tab; this keeps the pipeline in step with it.
+	useEffect(() => {
+		const sync = () => patch({ enabled: isLocalMode() })
+		window.addEventListener('storage', sync)
+		window.addEventListener('meetscribe:localmode', sync)
+		return () => {
+			window.removeEventListener('storage', sync)
+			window.removeEventListener('meetscribe:localmode', sync)
+		}
+	}, [patch])
 
-	const setEnabled = useCallback(
-		(enabled: boolean) => {
-			try {
-				localStorage.setItem(STORAGE_ENABLED, String(enabled))
-			} catch {
-				/* private mode */
-			}
-			patch({ enabled })
-		},
-		[patch],
-	)
+	useEffect(() => () => terminateWorkers(), [terminateWorkers])
 
 	const setPlanChoice = useCallback(
 		(choice: PlanChoice) => {
@@ -382,7 +385,16 @@ export function useOnDevice(): OnDeviceController {
 			})
 			record.text = result.text
 			record.segments = wordsToSegments(result.words, result.text, result.audioSeconds)
+			// Rebuilt from the chunk map rather than appended, because chunks
+			// finish out of order and the transcript has to read in order.
+			const soFar = [...chunksRef.current.keys()]
+				.sort((a, b) => a - b)
+				.map((i) => chunksRef.current.get(i)?.text ?? '')
+				.filter(Boolean)
+				.join(' ')
+				.trim()
 			patch((s) => ({
+				transcript: soFar,
 				transcription: {
 					done: s.transcription.done + 1,
 					queued: Math.max(0, s.transcription.queued - 1),
@@ -417,6 +429,7 @@ export function useOnDevice(): OnDeviceController {
 			decodingRef.current = 0
 			drainWaitersRef.current = []
 			patch({
+				transcript: '',
 				transcription: { done: 0, queued: 0, audioSeconds: 0, processMs: 0 },
 				diarization: { ...stateRef.current.diarization, stage: null, done: 0, total: 0, ms: null, speakers: null },
 			})
@@ -583,5 +596,5 @@ export function useOnDevice(): OnDeviceController {
 	const isUsable = state.enabled && state.phase !== 'error' && state.phase !== 'fallback' && state.phase !== 'idle'
 	const localStage = state.phase === 'diarizing' ? 'diarizing' : state.phase === 'finalizing' ? 'summarizing' : null
 
-	return { state: { ...state, plan }, setEnabled, setPlanChoice, isUsable, beginMeeting, addChunk, finish, localStage }
+	return { state: { ...state, plan }, setPlanChoice, isUsable, beginMeeting, addChunk, finish, localStage }
 }

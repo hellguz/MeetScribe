@@ -17,6 +17,7 @@ import { buildSummaryPrompt } from '../../local/prompt'
 import { getLocalMeeting, patchLocalMeeting } from '../../local/store'
 import { saveMeeting } from '../../utils/history'
 import { getLocalSummaryModel } from './pref'
+import { getSummaryWorker, terminateSummaryWorker } from './worker'
 import type { SummaryLength as LocalSummaryLength } from '../../contexts/SummaryLengthContext'
 
 export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | 'generating' | 'saving' | 'done' | 'error'
@@ -103,13 +104,11 @@ export function useLocalSummary(meetingId: string | undefined) {
 	/** WebGPU is not optional here: 4-bit weights on WASM would take hours. */
 	const webgpuAvailable = useMemo(() => typeof navigator !== 'undefined' && 'gpu' in navigator, [])
 
-	useEffect(
-		() => () => {
-			workerRef.current?.terminate()
-			workerRef.current = null
-		},
-		[],
-	)
+	// Deliberately not terminated on unmount: the worker is shared and holds a
+	// ~3 GB model that the next page would otherwise have to load again.
+	useEffect(() => () => {
+		workerRef.current = null
+	}, [])
 
 	const generate = useCallback(
 		async (summaryLength: string) => {
@@ -151,7 +150,9 @@ export function useLocalSummary(meetingId: string | undefined) {
 			}))
 
 			if (!workerRef.current) {
-				workerRef.current = new Worker(new URL('./summarizer.worker.ts', import.meta.url), { type: 'module' })
+				// Shared with the preloader, so a model fetched while the meeting
+				// was still recording is already resident here.
+				workerRef.current = getSummaryWorker()
 				workerRef.current.addEventListener('message', async (event: MessageEvent) => {
 					const msg = event.data as import('./summarizer.worker').SummarizerResponse
 					switch (msg.type) {
@@ -287,7 +288,7 @@ export function useLocalSummary(meetingId: string | undefined) {
 	 * which also drops the loaded model — the next run pays the load again.
 	 */
 	const cancel = useCallback(() => {
-		workerRef.current?.terminate()
+		terminateSummaryWorker()
 		workerRef.current = null
 		// The log and the hardware survive: what this machine is does not
 		// change because a run was stopped, and the log is the only record

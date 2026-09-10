@@ -25,12 +25,21 @@ interface Props {
 	theme: AppTheme
 	meeting: LocalMeeting
 	status: PublishStatus | null
+	/** A local meeting is not on the server until it is published; a cloud one already is. */
+	isLocal: boolean
+	/** Offered only when there is somewhere to put the meeting afterwards. */
+	canMakePrivate?: boolean
+	onMakePrivate?: () => void
 	onChange: (status: PublishStatus | null) => void
 	onClose: () => void
 }
 
-const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClose }) => {
-	const [seconds, setSeconds] = useState<number | null>(DEFAULT_DURATION_SECONDS)
+const SharePopover: React.FC<Props> = ({ theme, meeting, status, isLocal, canMakePrivate, onMakePrivate, onChange, onClose }) => {
+	// A cloud meeting is already shared, with no expiry — that is precisely
+	// what "cloud" means here — so it opens on `Never` rather than pretending
+	// nothing has been shared yet.
+	const alreadyShared = !isLocal || !!status?.expires_at
+	const [seconds, setSeconds] = useState<number | null>(isLocal ? DEFAULT_DURATION_SECONDS : null)
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [copied, setCopied] = useState(false)
@@ -120,10 +129,12 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 			}}>
 			<div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '6px' }}>
 				<ShareIcon size={13} />
-				<strong style={{ fontSize: '13px' }}>{status?.published ? 'Shared' : 'Share this meeting'}</strong>
+				<strong style={{ fontSize: '13px' }}>{alreadyShared ? 'Shared' : 'Share this meeting'}</strong>
 			</div>
 			<p style={{ margin: '6px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
-				Anyone with the link can read it. They get their own copy — edits don't travel in either direction.
+				{alreadyShared
+					? 'Anyone with the link can read it. Set an expiry to have the copy deleted automatically.'
+					: "Anyone with the link can read it. They get their own copy — edits don't travel in either direction."}
 			</p>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
@@ -136,7 +147,7 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 				</p>
 			)}
 
-			{status?.published && (
+			{(alreadyShared || status?.published) && (
 				<>
 					<div
 						style={{
@@ -170,7 +181,8 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 						</button>
 					</div>
 					<p style={{ margin: '0 0 10px', color: theme.secondaryText, lineHeight: 1.45 }}>
-						{status.expires_at ? `Expires ${formatExpiry(status.expires_at)}` : 'No expiry set'} · people who open it keep their own copy
+						{status?.expires_at ? `Expires ${formatExpiry(status.expires_at)}` : 'No expiry — stays until you remove it'} · people who open it keep
+						their own copy
 					</p>
 				</>
 			)}
@@ -178,7 +190,28 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 			{error && <p style={{ margin: '0 0 10px', color: '#b45309', lineHeight: 1.45 }}>{error}</p>}
 
 			<div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-				{status?.published && (
+				{canMakePrivate && onMakePrivate && (
+					<button
+						type="button"
+						disabled={busy}
+						onClick={() => {
+							onClose()
+							onMakePrivate()
+						}}
+						style={{
+							padding: '7px 11px',
+							borderRadius: '6px',
+							border: `1px solid ${theme.border}`,
+							backgroundColor: theme.backgroundSecondary,
+							color: theme.text,
+							font: 'inherit',
+							fontSize: '12px',
+							cursor: busy ? 'wait' : 'pointer',
+						}}>
+						Make private
+					</button>
+				)}
+				{isLocal && status?.published && (
 					<button
 						type="button"
 						disabled={busy}
@@ -222,7 +255,7 @@ const SharePopover: React.FC<Props> = ({ theme, meeting, status, onChange, onClo
 						cursor: busy ? 'wait' : 'pointer',
 						opacity: busy ? 0.7 : 1,
 					}}>
-					{busy ? 'Working…' : status?.published ? 'Update link' : 'Create link'}
+					{busy ? 'Working…' : alreadyShared ? 'Update link' : 'Create link'}
 				</button>
 			</div>
 		</div>

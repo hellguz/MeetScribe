@@ -27,6 +27,9 @@ const write = (value: boolean) => {
 	} catch {
 		/* private mode; the choice just does not survive a reload */
 	}
+	// `storage` only fires in *other* tabs, and the on-device pipeline lives in
+	// this one. Announce it here too so the model starts loading immediately.
+	window.dispatchEvent(new Event('meetscribe:localmode'))
 }
 
 export const isLocalMode = (): boolean => read()
@@ -99,8 +102,13 @@ export function useLocalMode() {
 		const onStorage = (e: StorageEvent) => {
 			if (e.key === KEY) setEnabledState(read())
 		}
+		const onLocal = () => setEnabledState(read())
 		window.addEventListener('storage', onStorage)
-		return () => window.removeEventListener('storage', onStorage)
+		window.addEventListener('meetscribe:localmode', onLocal)
+		return () => {
+			window.removeEventListener('storage', onStorage)
+			window.removeEventListener('meetscribe:localmode', onLocal)
+		}
 	}, [])
 
 	/**

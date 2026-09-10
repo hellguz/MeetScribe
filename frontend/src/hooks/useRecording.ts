@@ -7,6 +7,8 @@ import { SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { apiUrl } from '../utils/api'
 import { isLocalMode } from '../local/mode'
 import { createLocalSink, seedLocalMeeting } from '../local/sink'
+import { preloadSummaryModel } from '../ondevice/summary/worker'
+import { getLocalSummaryModel } from '../ondevice/summary/pref'
 import type { OnDeviceController } from '../ondevice/useOnDevice'
 
 const CHUNK_DURATION_MS = 30_000
@@ -117,6 +119,14 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		heartbeatIntervalRef.current = null
 	}
 
+	// A local meeting is never polled, so the live transcript has to come from
+	// the on-device controller instead of the server's status payload.
+	useEffect(() => {
+		if (!localMeetingRef.current || !onDevice) return
+		setLiveTranscript(onDevice.state.transcript)
+		setTranscribedChunks(onDevice.state.transcription.done)
+	}, [onDevice, onDevice?.state.transcript, onDevice?.state.transcription.done])
+
 	const pollMeetingStatus = useCallback(async () => {
 		if (!meetingId.current) return
 		// A local meeting has no server row to poll. Its progress comes from
@@ -180,6 +190,11 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 				meetingId.current = id
 				onDeviceActiveRef.current = true
 				localMeetingRef.current = true
+				// Start the ~3 GB summary download now rather than when the user
+				// reaches the summary page. The meeting will run for far longer
+				// than the download, so by the time there is a transcript the
+				// model is usually already resident in the shared worker.
+				preloadSummaryModel(getLocalSummaryModel())
 				onDevice?.beginMeeting(id, createLocalSink(seed))
 				return id
 			}

@@ -5,7 +5,7 @@ import { NOTABLE_MISSING, PARAKEET_LANGUAGES, SUPPORTED_COUNT } from '../local/l
 import { measurePlanBytes } from '../ondevice/hub'
 import { detectCapabilities, resolvePlan, type DeviceCapabilities } from '../ondevice/capabilities'
 import { SUMMARY_MODELS } from '../ondevice/summary/models'
-import { formatBytes } from './OnDevicePanel'
+import { formatBytes } from '../utils/formatBytes'
 import { LockIcon, UnlockIcon, AlertIcon } from './Icons'
 
 /**
@@ -123,8 +123,10 @@ const LocalModeToggle: React.FC<Props> = ({ theme, locked = false }) => {
 				disabled={locked}
 				aria-expanded={open}
 				onClick={() => !locked && setOpen((v) => !v)}
-				title={enabled ? 'Local mode is on' : 'Local mode is off'}
-				style={pill}>
+				title={enabled ? 'Local mode is on — meetings stay in this browser' : 'Local mode is off — meetings are stored on the server'}
+				style={pill}
+				onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.background)}
+				onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = enabled ? `${theme.text}12` : theme.backgroundSecondary)}>
 				{enabled ? <LockIcon size={13} /> : <UnlockIcon size={13} />}
 				{enabled ? 'Local' : 'Cloud'}
 				{enabled && (noWebgpu || mobile) && <AlertIcon size={12} />}

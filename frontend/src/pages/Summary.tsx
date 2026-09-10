@@ -10,7 +10,7 @@ import { formatMeetingDateTime } from '../utils/datetime'
 import { useTheme } from '../contexts/ThemeContext'
 import { lightTheme, darkTheme, AppTheme } from '../styles/theme'
 import FeedbackComponent from '../components/FeedbackComponent'
-import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, LockIcon, DownloadIcon } from '../components/Icons'
+import { CopyTextIcon, CopyMarkdownIcon, EditIcon, TrashIcon, SpeakersIcon, CloseIcon, ShareIcon, DownloadIcon } from '../components/Icons'
 import { removeMeeting } from '../utils/history'
 import FavoriteButton from '../components/FavoriteButton'
 import TagsManager from '../components/TagsManager'
@@ -30,7 +30,7 @@ import SharePopover from '../components/SharePopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
 import TombstoneNotice from '../components/TombstoneNotice'
 import { hasOwnerToken, type PublishStatus } from '../local/publish'
-import { putLocalMeeting } from '../local/store'
+import { putLocalMeeting, type LocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
 
@@ -316,10 +316,10 @@ export default function Summary() {
 	// going away, and after that there is nothing to come back to.
 	const viewingSharedCopy = !isLocal && !!meeting.expiresAt && !hasOwnerToken(mid ?? '')
 
-	const saveSharedCopy = useCallback(async () => {
-		if (!mid) return
-		await putLocalMeeting({
-			id: mid,
+	/** The meeting as a portable record, for saving or exporting. */
+	const asRecord = useCallback(
+		(): LocalMeeting => ({
+			id: mid ?? 'meeting',
 			title: meetingTitle ?? 'Meeting',
 			started_at: meetingStartedAt || new Date().toISOString(),
 			transcript: transcript ?? '',
@@ -336,9 +336,24 @@ export default function Summary() {
 			client_stats: clientStats,
 			updated_at: new Date().toISOString(),
 			unfinished: false,
-		})
+		}),
+		[mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats],
+	)
+
+	const saveSharedCopy = useCallback(async () => {
+		if (!mid) return
+		await putLocalMeeting(asRecord())
 		setSavedCopy(true)
-	}, [mid, meetingTitle, meetingStartedAt, transcript, summaryMarkdown, context, currentMeetingLength, speakerCount, clientStats])
+	}, [mid, asRecord])
+
+	/**
+	 * Save the meeting as a file. Offered for cloud meetings too — the fact
+	 * that the server has a copy is not a reason to make someone copy-paste
+	 * their own notes into a document.
+	 */
+	const handleDownload = useCallback(() => {
+		downloadMeetingMarkdown(meeting.localMeeting ?? asRecord())
+	}, [meeting.localMeeting, asRecord])
 
 	const handleMakePrivate = useCallback(async () => {
 		if (
@@ -358,6 +373,20 @@ export default function Summary() {
 			setConvertError(e instanceof Error ? e.message : String(e))
 		}
 	}, [meeting])
+
+	/**
+	 * One control for both modes, because they are the same thing.
+	 *
+	 * A cloud meeting *is* a meeting shared with no expiry — the server holds a
+	 * copy and anyone with the link can read it. So there is no separate "share"
+	 * and "make private" button: the popover shows the current state and offers
+	 * the moves out of it, whichever state you are in.
+	 */
+	const shareTitle = isLocal
+		? share?.expires_at
+			? 'Shared — manage the link'
+			: 'Share this meeting with a link'
+		: 'Shared — anyone with the link can read it'
 
 	// Streaming output has nowhere to live until the run is saved, so it gets
 	// its own card while it arrives.
@@ -449,15 +478,36 @@ export default function Summary() {
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 									<CopyMarkdownIcon />
 								</button>
+								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
+								<button
+									onClick={handleDownload}
+									style={copyButtonStyle}
+									title="Download as Markdown"
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<DownloadIcon />
+								</button>
 							</div>
 							<div
 								style={{
 									display: 'flex',
 									borderRadius: '6px',
-									overflow: 'hidden',
+									// `overflow: hidden` would clip the share popover this
+									// group now anchors, so the ends are rounded per-button
+									// by the group's own radius instead.
 									border: `1px solid ${currentThemeColors.border}`,
 									backgroundColor: currentThemeColors.backgroundSecondary,
+									position: 'relative',
 								}}>
+								<button
+									onClick={() => setShareOpen((v) => !v)}
+									title={shareTitle}
+									style={{ ...copyButtonStyle, color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText }}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
+									<ShareIcon />
+								</button>
+								<div style={{ width: '1px', backgroundColor: currentThemeColors.border }} />
 								<button
 									onClick={() => enterEditMode()}
 									title="Edit summary"
@@ -475,67 +525,19 @@ export default function Summary() {
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
 									<TrashIcon />
 								</button>
+								{shareOpen && (
+									<SharePopover
+										theme={currentThemeColors}
+										meeting={meeting.localMeeting ?? asRecord()}
+										status={share}
+										isLocal={isLocal}
+										canMakePrivate={!isLocal && hasSummary}
+										onMakePrivate={handleMakePrivate}
+										onChange={setShare}
+										onClose={() => setShareOpen(false)}
+									/>
+								)}
 							</div>
-							{isLocal && meeting.localMeeting && (
-								<div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-									<button
-										onClick={() => setShareOpen((v) => !v)}
-										title={share?.expires_at ? 'Sharing — manage the link' : 'Share this meeting with a link'}
-										style={{
-											...copyButtonStyle,
-											border: `1px solid ${share?.expires_at ? '#f59e0b88' : currentThemeColors.border}`,
-											borderRadius: '6px',
-											backgroundColor: share?.expires_at ? '#f59e0b14' : currentThemeColors.backgroundSecondary,
-											color: share?.expires_at ? '#b45309' : currentThemeColors.secondaryText,
-										}}
-										onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-										onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = share?.expires_at ? '#f59e0b14' : currentThemeColors.backgroundSecondary)}>
-										<ShareIcon />
-									</button>
-									{shareOpen && (
-										<SharePopover
-											theme={currentThemeColors}
-											meeting={meeting.localMeeting}
-											status={share}
-											onChange={setShare}
-											onClose={() => setShareOpen(false)}
-										/>
-									)}
-								</div>
-							)}
-							{!isLocal && hasSummary && (
-								<button
-									onClick={handleMakePrivate}
-									title="Make private — copy into this browser and remove from the server"
-									style={{
-										...copyButtonStyle,
-										border: `1px solid ${currentThemeColors.border}`,
-										borderRadius: '6px',
-										backgroundColor: currentThemeColors.backgroundSecondary,
-									}}
-									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}>
-									<LockIcon />
-								</button>
-							)}
-							{isLocal && (
-								<button
-									onClick={async () => {
-										const record = meeting.localMeeting
-										if (record) downloadMeetingMarkdown(record)
-									}}
-									title="Export as Markdown — the only copy is in this browser"
-									style={{
-										...copyButtonStyle,
-										border: `1px solid ${currentThemeColors.border}`,
-										borderRadius: '6px',
-										backgroundColor: currentThemeColors.backgroundSecondary,
-									}}
-									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.backgroundSecondary)}>
-									<DownloadIcon />
-								</button>
-							)}
 							{mid && (
 								<>
 									<TagsManager

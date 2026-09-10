@@ -15,9 +15,7 @@ import InfoPanel, { InfoButton } from '../components/InfoPanel'
 import LanguageSelector from '../components/LanguageSelector'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
 import { useOnDevice } from '../ondevice/useOnDevice'
-import { useLocalMode } from '../local/mode'
 import { deleteLocalMeeting } from '../local/store'
-import OnDevicePanel from '../components/OnDevicePanel'
 import LocalModeToggle from '../components/LocalModeToggle'
 
 export default function Record() {
@@ -27,7 +25,6 @@ export default function Record() {
 	const { languageState, setLanguageState } = useSummaryLanguage()
 	const [context, setContext] = useState('')
 	const onDevice = useOnDevice()
-	const { enabled: localMode } = useLocalMode()
 
 	const {
 		isRecording,
@@ -280,11 +277,9 @@ export default function Record() {
 							<FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
 						</div>
 					)}
-					{localMode && audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={false} />}
+
 				</>
 			)}
-
-			{isUiLocked && onDevice.state.enabled && audioSource !== 'file' && <OnDevicePanel controller={onDevice} theme={currentThemeColors} locked={true} />}
 
 			{isRecording && (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '10px' }}>
