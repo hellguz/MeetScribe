@@ -27,6 +27,7 @@ import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
 import { isLocalMode } from '../local/mode'
 import { storageOf, getHistory, saveMeeting as saveMeetingMeta } from '../utils/history'
+import { localSummaryView } from '../utils/localSummaryView'
 import { downloadMeetingMarkdown } from '../local/export'
 import SharePopover from '../components/SharePopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
@@ -316,13 +317,24 @@ export default function Summary() {
 	 */
 	const regenerating = isRegenerating || (meeting.isLocal && localSummary.busy)
 	const busy = isProcessing || regenerating
-	// Regenerating with a summary already on screen used to show nothing at all,
-	// so changing the language looked like a no-op. Announce it over the stale text.
-	const showRegeneratingBanner = busy && !!summaryMarkdown
-	// A local first run reports itself through `LocalSummaryProgress` and the
-	// streaming card, which say what is actually happening; this generic line
-	// would sit above them saying "Processing summary" and nothing more.
-	const showProcessingMessage = busy && !summaryMarkdown && !meeting.isLocal
+
+	// Which progress surfaces are on screen. Four flags with non-obvious
+	// interactions, so they live in one tested function; see the file.
+	const {
+		showPanel: showLocalPanel,
+		showStreaming,
+		dimStale: dimStaleSummary,
+		showRegeneratingBanner,
+		showProcessingMessage,
+	} = localSummaryView({
+		isLocal: meeting.isLocal,
+		hasTranscript: !!transcript,
+		hasSummary: !!summaryMarkdown,
+		phase: localSummary.state.phase,
+		streamingLength: localSummary.state.streaming.length,
+		localBusy: localSummary.busy,
+		serverBusy: isProcessing || isRegenerating,
+	})
 	// Whether this meeting already carries speaker labels.
 	const isDiarized = /^Speaker \d+:/m.test(transcript || '')
 	// Offer the re-run only for meetings that predate the feature. Inferring
@@ -352,6 +364,10 @@ export default function Summary() {
 	useEffect(() => {
 		if (!needsLocalSummary || autoStartedRef.current) return
 		if (localSummary.busy || localSummary.state.phase === 'error') return
+		// One model, one GPU: a second run started while the first is still
+		// going would have them both driving the same session. A run for
+		// another meeting is still a run.
+		if (localSummary.runningElsewhere) return
 		autoStartedRef.current = true
 		localSummary.generate(currentMeetingLength)
 	}, [needsLocalSummary, localSummary, currentMeetingLength])
@@ -507,16 +523,6 @@ export default function Summary() {
 			? 'Shared — manage the link or let it expire'
 			: 'Shared with no expiry — anyone with the link can read it'
 
-	// Streaming output has nowhere to live until the run is saved, so it gets
-	// its own card while it arrives — and gives it up the moment the stored
-	// summary exists, not when the phase reaches 'done'. The two used to be
-	// the same moment only because saving never reached the page: now that it
-	// does, and now that a title is generated after it, the phase is still
-	// 'saving' or 'titling' while the real summary is already on screen, and
-	// the card was rendering the same text again underneath it.
-	const showStreaming = localSummary.state.streaming.length > 0 && !summaryMarkdown
-	const showLocalPanel = isLocal && !!transcript && !summaryMarkdown && !showStreaming
-
 	const copyButtonStyle: React.CSSProperties = {
 		padding: '7px 9px',
 		border: 'none',
@@ -603,7 +609,15 @@ export default function Summary() {
 												? 'Stop sharing — keep this meeting in this browser alone'
 												: 'Only in this browser. Nobody else can reach it.',
 										},
-										{ value: 'shared', icon: ShareIcon, title: shareTitle },
+										{
+											value: 'shared',
+											icon: ShareIcon,
+											title: shareTitle,
+											// The same amber the history list uses for a share
+											// that is counting down. A share with no expiry
+											// is not going anywhere, so it stays plain.
+											accent: share?.expires_at ? '#f59e0b' : undefined,
+										},
 									]}
 									onSelect={() => setShareOpen((v) => !v)}
 								/>
@@ -899,6 +913,7 @@ export default function Summary() {
 					webgpuAvailable={localSummary.webgpuAvailable}
 					onGenerate={() => localSummary.generate(currentMeetingLength)}
 					onCancel={localSummary.cancel}
+					blocked={localSummary.runningElsewhere}
 				/>
 			)}
 
@@ -933,7 +948,7 @@ export default function Summary() {
 						borderRadius: '12px',
 						border: `1px solid ${currentThemeColors.border}`,
 						boxShadow: isEditing ? `0 0 0 2px ${currentThemeColors.input.border}` : 'none',
-						opacity: showRegeneratingBanner ? 0.5 : 1,
+						opacity: dimStaleSummary ? 0.5 : 1,
 						transition: 'box-shadow 0.15s ease, opacity 0.2s ease',
 					}}>
 					{/* Editable area: title + body share onBlur so focus can move between them freely */}

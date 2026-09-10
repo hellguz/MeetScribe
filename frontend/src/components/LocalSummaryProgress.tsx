@@ -25,9 +25,15 @@ interface Props {
 	onCancel: () => void
 	/** Offered when the run failed, or when the user declined earlier. */
 	onUseCloud?: () => void
+	/**
+	 * The summariser is busy with a different meeting. One model on one GPU,
+	 * so this one has to wait — and offering a button that quietly does
+	 * nothing would be worse than saying so.
+	 */
+	blocked?: boolean
 }
 
-const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud }) => {
+const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud, blocked = false }) => {
 	const { phase, statusText, error, download, prefill, decode, measured } = state
 
 	const detail = (): string | null => {
@@ -126,9 +132,18 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 				<strong>Summarize on this device</strong>
 			</span>
 			<p style={{ margin: '5px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
-				Runs Qwen3-4B on your graphics card. Nothing leaves this browser.
+				{blocked
+					? 'The summariser is finishing another meeting. This one starts as soon as it is free — there is one model and one graphics card.'
+					: 'Runs Qwen3-4B on your graphics card. Nothing leaves this browser.'}
 			</p>
-			{button('Generate summary', onGenerate, true)}
+			{blocked ? (
+				<span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: theme.secondaryText }}>
+					<Spinner label="Waiting for the summariser" />
+					Waiting its turn
+				</span>
+			) : (
+				button('Generate summary', onGenerate, true)
+			)}
 		</div>
 	)
 }

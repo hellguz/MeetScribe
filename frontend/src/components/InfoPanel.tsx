@@ -19,6 +19,7 @@ const CHANGELOG: { when: string; lines: string[] }[] = [
 			'Save a meeting somebody shared with you and it becomes yours — your own copy, at your own link, which you can edit and share on. Theirs is untouched, and the two never sync.',
 			'Editing a meeting you have shared now updates what the link shows, instead of leaving it on the version you shared.',
 			'Length, language and context now all work on a local meeting: each one rewrites the summary on your own graphics card. Translation is no longer cloud-only.',
+			'A summary being written on your device is readable as it arrives, rewrites included — the previous version stays on screen, dimmed, until the new one replaces it.',
 			'⚡ A small dial in the top bar says what your device is doing — fetching a model, transcribing, writing the summary — and disappears when it is done.',
 			'Every meeting in the list now shows the day of the week and how long it ran.',
 			'Summaries and titles there are written by a 4B model rather than Claude, and speech recognition covers fewer languages — the switch spells out the trade before you download anything.',

@@ -30,6 +30,11 @@ export interface Segment {
 	icon: React.FC<{ size?: number }>
 	/** A caution marker, shown only while this segment is the active one. */
 	warning?: boolean
+	/**
+	 * Overrides the active colour. For the one state that has a clock on it:
+	 * a share with an expiry, which the app colours amber wherever it appears.
+	 */
+	accent?: string
 }
 
 interface Props {
@@ -81,7 +86,7 @@ const SegmentedToggle: React.FC<Props> = ({ theme, value, options, onSelect, dis
 						border: 'none',
 						borderRadius: '5px',
 						backgroundColor: isActive ? theme.backgroundSecondary : 'transparent',
-						color: isActive ? theme.text : theme.secondaryText,
+						color: isActive ? (option.accent ?? theme.text) : theme.secondaryText,
 						fontWeight: isActive ? 600 : 400,
 						fontSize: '12px',
 						fontFamily: 'inherit',

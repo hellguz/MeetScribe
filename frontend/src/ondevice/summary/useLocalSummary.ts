@@ -100,6 +100,15 @@ const initialState = (): LocalSummaryState => ({
 	measured: emptyMeasured(),
 })
 
+/**
+ * What the page is shown while the in-flight run belongs to another meeting.
+ *
+ * One frozen instance rather than a fresh object per render: it goes into
+ * effect dependency arrays, and a new identity each time would re-run them
+ * forever.
+ */
+const IDLE_STATE: LocalSummaryState = Object.freeze(initialState())
+
 interface Options {
 	/**
 	 * Called with the stored record every time it changes — once for the
@@ -125,6 +134,38 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 	// read as "the meeting kept its date for a name" rather than as the
 	// summary having failed — the summary is already saved by then.
 	const titlingRef = useRef(false)
+	/**
+	 * Which meeting the in-flight run belongs to, and which one the page is
+	 * showing. Usually the same; they come apart when someone navigates
+	 * mid-run, and the whole point is that a run survives that — the worker
+	 * keeps going and the summary still lands on the meeting it was for.
+	 *
+	 * Both are needed because moving between `/summary/:mid` routes does not
+	 * remount this page, so one hook instance sees several meetings and one
+	 * worker listener sees several runs. Without them:
+	 *
+	 *   · the listener, attached on the first run, wrote every later run's
+	 *     summary onto that first meeting;
+	 *   · a finished run handed its record to `onSaved`, which applied it to
+	 *     whichever meeting was on screen by then;
+	 *   · and a run that was still loading its model kept the dial saying
+	 *     "Loading model" over a meeting the reader had just opened, with no
+	 *     panel to explain it, because that meeting was somebody's share and
+	 *     had nothing to do with it.
+	 */
+	const runMeetingIdRef = useRef<string | null>(null)
+	const pageMeetingIdRef = useRef(meetingId)
+	pageMeetingIdRef.current = meetingId
+	// The same fact as `runMeetingIdRef`, in state, because the render needs it.
+	const [runMeetingId, setRunMeetingId] = useState<string | null>(null)
+	const claimRun = useCallback((id: string | null) => {
+		runMeetingIdRef.current = id
+		setRunMeetingId(id)
+	}, [])
+	/** True while the run in flight is about some other meeting. */
+	const runningElsewhere = runMeetingId !== null && runMeetingId !== meetingId
+	/** Does a worker message concern the meeting currently on screen? */
+	const forThisPage = useCallback(() => runMeetingIdRef.current !== null && runMeetingIdRef.current === pageMeetingIdRef.current, [])
 	// Read through a ref so the worker listener, which is attached once, never
 	// closes over a stale callback.
 	const onSavedRef = useRef(onSaved)
@@ -148,6 +189,8 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 	// ---- the top bar's one-line "what is happening" ------------------------
 	const { phase, download, prefill, decode } = state
 	useEffect(() => {
+		// A run for another meeting is not this page's story to tell.
+		if (runningElsewhere) return setLocalActivity(null)
 		switch (phase) {
 			case 'prompt':
 				return setLocalActivity({ label: 'Preparing', progress: null })
@@ -178,7 +221,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 			default:
 				return setLocalActivity(null)
 		}
-	}, [phase, download, prefill, decode])
+	}, [runningElsewhere, phase, download, prefill, decode])
 
 	useEffect(() => () => setLocalActivity(null), [])
 
@@ -198,19 +241,28 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 			published: updated.published ?? !!updated.shared_until,
 			duration_seconds: updated.duration_seconds,
 		})
-		onSavedRef.current?.(updated)
+		// Only the page that is actually showing this meeting wants it.
+		if (id === pageMeetingIdRef.current) onSavedRef.current?.(updated)
 		return updated
 	}, [])
 
 	const generate = useCallback(
 		async (summaryLength: string) => {
 			if (!meetingId) return
+			// One model on one GPU. Two `generate` calls would drive the same
+			// session at once, and the second would also take ownership of the
+			// first's results.
+			if (runMeetingIdRef.current !== null && runMeetingIdRef.current !== meetingId) {
+				console.warn('The summariser is still working on another meeting; not starting a second run.')
+				return
+			}
 			// Read at click time, not from the hook's own state: the panel
 			// owns these controls and may have changed them since render.
 			const model = getLocalSummaryModel()
 
 			measuredRef.current = emptyMeasured()
 			titlingRef.current = false
+			claimRun(meetingId)
 			setState({ ...initialState(), phase: 'prompt', statusText: 'Reading the transcript…' })
 
 			let prompt: Awaited<ReturnType<typeof buildSummaryPrompt>>
@@ -248,17 +300,26 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 				workerRef.current = getSummaryWorker()
 				const listener = async (event: MessageEvent) => {
 					const msg = event.data as import('./summarizer.worker').SummarizerResponse
+					// The meeting this message is about — the run's, not the
+					// page's, and not the one whose `generate` call happened to
+					// attach this listener.
+					const runId = runMeetingIdRef.current
+					// Progress is only worth rendering if the reader is looking
+					// at the meeting it belongs to. Results are stored either
+					// way: navigating away must not throw the summary out.
+					const visible = forThisPage()
 					switch (msg.type) {
 						case 'log':
-							setState((s) => ({ ...s, log: [...s.log.slice(-60), msg.line] }))
+							if (visible) setState((s) => ({ ...s, log: [...s.log.slice(-60), msg.line] }))
 							break
 						case 'status':
-							setState((s) => ({ ...s, statusText: msg.text }))
+							if (visible) setState((s) => ({ ...s, statusText: msg.text }))
 							break
 						case 'download':
-							setState((s) => ({ ...s, download: { loaded: msg.loaded, total: msg.total, file: msg.file } }))
+							if (visible) setState((s) => ({ ...s, download: { loaded: msg.loaded, total: msg.total, file: msg.file } }))
 							break
 						case 'device': {
+							if (!visible) break
 							const adapter =
 								[msg.adapter?.vendor, msg.adapter?.architecture, msg.adapter?.device].filter(Boolean).join(' ') || msg.adapter?.description || null
 							Object.assign(measuredRef.current, { device: msg.device })
@@ -270,6 +331,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							break
 						}
 						case 'prefill': {
+							if (!visible) break
 							// Rate over the whole prefill so far, not the last
 							// slice: slices vary, the average does not.
 							const rate = msg.ms > 0 && msg.processed > 0 ? msg.processed / (msg.ms / 1000) : null
@@ -285,6 +347,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							break
 						}
 						case 'decode': {
+							if (!visible) break
 							const ctx = runContextRef.current
 							setState((s) => ({
 								...s,
@@ -303,7 +366,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							})
 							// A title run reuses the same model and re-announces
 							// it; that must not drag the phase back to prefill.
-							if (titlingRef.current) break
+							if (titlingRef.current || !visible) break
 							setState((s) => ({
 								...s,
 								phase: 'prefilling',
@@ -313,6 +376,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							break
 						case 'prefilled':
 							Object.assign(measuredRef.current, { promptTokens: msg.promptTokens, prefillMs: msg.prefillMs })
+							if (!visible) break
 							setState((s) => ({
 								...s,
 								phase: 'generating',
@@ -329,23 +393,28 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							}))
 							break
 						case 'token':
-							setState((s) => ({ ...s, streaming: s.streaming + msg.text }))
+							if (visible) setState((s) => ({ ...s, streaming: s.streaming + msg.text }))
 							break
 						case 'done': {
 							Object.assign(measuredRef.current, { outputTokens: msg.outputTokens, decodeMs: msg.decodeMs, totalMs: msg.totalMs })
 							const ctx = runContextRef.current
-							setState((s) => ({
-								...s,
-								phase: 'saving',
-								statusText: 'Saving to this device…',
-								streaming: msg.text,
-								measured: { ...s.measured, ...measuredRef.current },
-							}))
-							if (!ctx) return
+							if (visible) {
+								setState((s) => ({
+									...s,
+									phase: 'saving',
+									statusText: 'Saving to this device…',
+									streaming: msg.text,
+									measured: { ...s.measured, ...measuredRef.current },
+								}))
+							}
+							if (!ctx || !runId) {
+								claimRun(null)
+								return
+							}
 							try {
 								// The run *is* the summary now: it goes onto the
 								// meeting, not into a table beside it.
-								const updated = await persist(meetingId, {
+								const updated = await persist(runId, {
 									summary_markdown: msg.text,
 									summary_length: ctx.summaryLength as LocalSummaryLength,
 									unfinished: false,
@@ -356,7 +425,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 								// "Recording 10.9.2026, 14:59:33" for a title.
 								if (updated && msg.text.trim() && isDefaultTitle(updated.title) && workerRef.current) {
 									titlingRef.current = true
-									setState((s) => ({ ...s, phase: 'titling', statusText: 'Naming the meeting…' }))
+									if (visible) setState((s) => ({ ...s, phase: 'titling', statusText: 'Naming the meeting…' }))
 									workerRef.current.postMessage({
 										type: 'title',
 										prompt: buildTitlePrompt(msg.text, updated.transcript),
@@ -368,12 +437,17 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 								// Once, at the end, rather than after each write:
 								// the sync uploads the whole record, and a run
 								// that also names the meeting writes twice.
-								void syncSharedCopy(updated ?? (await getLocalMeeting(meetingId))!)
-								setState((s) => ({ ...s, phase: 'done', statusText: null }))
+								const stored = updated ?? (await getLocalMeeting(runId))
+								if (stored) void syncSharedCopy(stored)
+								claimRun(null)
+								if (visible) setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							} catch (e) {
+								claimRun(null)
 								// The summary is on screen either way; say plainly
 								// that it will not survive a reload.
-								setState((s) => ({ ...s, phase: 'error', error: `Generated, but could not be saved: ${e instanceof Error ? e.message : String(e)}` }))
+								if (visible) {
+									setState((s) => ({ ...s, phase: 'error', error: `Generated, but could not be saved: ${e instanceof Error ? e.message : String(e)}` }))
+								}
 							}
 							break
 						}
@@ -383,12 +457,15 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							try {
 								// An empty or unusable answer leaves the date in
 								// place, which is a fine name for a meeting.
-								const updated = title ? await persist(meetingId, { title }) : await getLocalMeeting(meetingId)
-								if (updated) void syncSharedCopy(updated)
+								if (runId) {
+									const updated = title ? await persist(runId, { title }) : await getLocalMeeting(runId)
+									if (updated) void syncSharedCopy(updated)
+								}
 							} catch (e) {
 								console.warn('Could not store the generated title:', e)
 							}
-							setState((s) => ({ ...s, phase: 'done', statusText: null }))
+							claimRun(null)
+							if (visible) setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							break
 						}
 						case 'error':
@@ -396,11 +473,15 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							// already in IndexedDB and on screen.
 							if (titlingRef.current) {
 								titlingRef.current = false
+								claimRun(null)
 								console.warn('On-device title generation failed:', msg.message)
-								setState((s) => ({ ...s, phase: 'done', statusText: null, log: [...s.log.slice(-60), `[title] ${msg.message}`] }))
+								if (visible) {
+									setState((s) => ({ ...s, phase: 'done', statusText: null, log: [...s.log.slice(-60), `[title] ${msg.message}`] }))
+								}
 								break
 							}
-							setState((s) => ({ ...s, phase: 'error', error: msg.message }))
+							claimRun(null)
+							if (visible) setState((s) => ({ ...s, phase: 'error', error: msg.message }))
 							break
 					}
 				}
@@ -410,7 +491,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 
 			workerRef.current.postMessage({ type: 'summarize', prompt: prompt.prompt, model, thinking: false, maxNewTokens })
 		},
-		[meetingId, persist],
+		[meetingId, persist, claimRun, forThisPage],
 	)
 
 	/**
@@ -422,13 +503,31 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 		workerRef.current = null
 		listenerRef.current = null
 		titlingRef.current = false
+		claimRun(null)
 		// The log and the hardware survive: what this machine is does not
 		// change because a run was stopped, and the log is the only record
 		// of why it was.
 		setState((s) => ({ ...initialState(), log: s.log, hardware: s.hardware }))
-	}, [])
+	}, [claimRun])
 
-	const busy = state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'error'
+	const busy = !runningElsewhere && state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'error'
 
-	return { state, busy, webgpuAvailable, generate, cancel }
+	return {
+		/**
+		 * Idle while the run belongs to another meeting. The page asks this
+		 * hook "what is happening with the meeting I am showing", and the
+		 * honest answer then is "nothing" — the run is still going and will
+		 * still save, it is simply not about what the reader is looking at.
+		 *
+		 * Nothing is thrown away: navigating back restores the real state,
+		 * which is also what stops a second run being started over the first.
+		 */
+		state: runningElsewhere ? IDLE_STATE : state,
+		busy,
+		/** A run is in flight, for some meeting. Blocks starting another. */
+		runningElsewhere,
+		webgpuAvailable,
+		generate,
+		cancel,
+	}
 }
