@@ -217,6 +217,16 @@ const HistoryList: React.FC<HistoryListProps> = ({ history, onTitleUpdate, onDel
 														<span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDuration(m.duration_seconds)}</span>
 													</>
 												)}
+												{m.summary_pending && storageOf(m) === 'local' && (
+													<>
+														<span aria-hidden style={{ opacity: 0.5 }}>·</span>
+														{/* Not an error: the transcript is safe and
+														    opening the meeting starts the summary. It
+														    is here so a meeting waiting on one is not
+														    indistinguishable from a finished one. */}
+														<span title="The transcript is saved. Open the meeting to finish the summary on this device.">Summary pending</span>
+													</>
+												)}
 												<StorageBadge
 													storage={storageOf(m)}
 													theme={currentThemeColors}

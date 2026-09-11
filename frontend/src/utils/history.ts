@@ -42,6 +42,17 @@ export interface MeetingMeta {
 	 * being processed; the list simply omits it then.
 	 */
 	duration_seconds?: number | null
+	/**
+	 * A local meeting whose transcript is stored but whose summary is not.
+	 *
+	 * Mirrors `LocalMeeting.summary_run`, because the list renders from this
+	 * index alone and IndexedDB is not readable synchronously here. Without
+	 * it a meeting left summary-less by a closed tab looked exactly like a
+	 * finished one, so nobody would ever open it to find out.
+	 *
+	 * `undefined` on cloud rows and on rows written before this existed.
+	 */
+	summary_pending?: boolean
 }
 
 /** Treat a missing `storage` as 'cloud': that is what every old entry is. */

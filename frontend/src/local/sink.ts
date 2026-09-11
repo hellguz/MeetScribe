@@ -12,7 +12,7 @@
 import type { MeetingSink, FinalizeResult } from '../ondevice/api'
 import type { TranscriptSegment } from '../ondevice/diarization/label'
 import type { SummaryLength } from '../contexts/SummaryLengthContext'
-import { putLocalMeeting, type LocalMeeting } from './store'
+import { putLocalMeeting, mergeLocalMeeting, type LocalMeeting } from './store'
 import { saveMeeting } from '../utils/history'
 
 export interface LocalMeetingSeed {
@@ -26,6 +26,7 @@ export interface LocalMeetingSeed {
 	timezone: string | null
 }
 
+/** The record as it looks before a single chunk has been transcribed. */
 const blank = (seed: LocalMeetingSeed): LocalMeeting => ({
 	...seed,
 	transcript: '',
@@ -36,6 +37,9 @@ const blank = (seed: LocalMeetingSeed): LocalMeeting => ({
 	speaker_count: null,
 	client_stats: null,
 	updated_at: new Date().toISOString(),
+	// No transcript yet, so nothing is owed a summary. `finalize` moves this
+	// to 'pending', which is what makes the summary page pick the meeting up.
+	summary_run: { status: 'pending', attempts: 0, heartbeat_at: null, error: null },
 	unfinished: true,
 })
 
@@ -64,28 +68,39 @@ export function createLocalSink(seed: LocalMeetingSeed): MeetingSink {
 			texts.set(index, text)
 			segments.set(index, chunkSegments)
 			const transcript = joined()
-			await putLocalMeeting({
-				...blank(seed),
-				transcript,
-				word_count: transcript ? transcript.split(/\s+/).filter(Boolean).length : 0,
-				unfinished: true,
-			})
+			// A patch, not a whole record. Writing `{...blank(seed), transcript}`
+			// here meant every 30 seconds put `summary_markdown: null`,
+			// `duration_seconds: null`, the seed's title and a blank share
+			// state back over whatever the record had — so a chunk write that
+			// landed late, after `finalize` or after a summary had been
+			// stored, silently threw that work away.
+			const merged = await mergeLocalMeeting(
+				seed.id,
+				{ transcript, word_count: transcript ? transcript.split(/\s+/).filter(Boolean).length : 0, unfinished: true },
+				blank(seed),
+			)
+			// Only if the record is gone entirely — the meeting must not lose
+			// the chunks it already has because its row went missing.
+			if (!merged) await putLocalMeeting({ ...blank(seed), transcript })
 		},
 
 		async finalize({ transcript, segments: absolute, speakerCount, durationSeconds, clientStats }: FinalizeResult) {
 			const finalTranscript = transcript || joined()
-			await putLocalMeeting({
-				...blank(seed),
+			const patch: Partial<LocalMeeting> = {
 				transcript: finalTranscript,
 				segments: absolute,
 				speaker_count: speakerCount,
 				duration_seconds: durationSeconds,
 				word_count: finalTranscript ? finalTranscript.split(/\s+/).filter(Boolean).length : 0,
 				client_stats: (clientStats ?? null) as LocalMeeting['client_stats'],
-				// The transcript is done; the summary has not run yet. The
-				// summary page picks it up from here and clears this.
+				// The transcript is done and the summary has not run yet. This
+				// is the state any tab that opens the meeting resumes from,
+				// including one opened tomorrow after this one was closed.
+				summary_run: { status: 'pending', attempts: 0, heartbeat_at: null, error: null },
 				unfinished: true,
-			})
+			}
+			const updated = await mergeLocalMeeting(seed.id, patch, blank(seed))
+			if (!updated) await putLocalMeeting({ ...blank(seed), ...patch })
 			saveMeeting({
 				id: seed.id,
 				title: seed.title,
@@ -93,6 +108,9 @@ export function createLocalSink(seed: LocalMeetingSeed): MeetingSink {
 				status: 'complete',
 				storage: 'local',
 				duration_seconds: durationSeconds,
+				// The transcript is in; the summary is not. The list says so
+				// until a run clears it.
+				summary_pending: true,
 			})
 		},
 

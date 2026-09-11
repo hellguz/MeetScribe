@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getCached, saveCached } from '../utils/summaryCache'
 import { getHistory, saveMeeting } from '../utils/history'
 import { SummaryLength } from '../contexts/SummaryLengthContext'
@@ -56,9 +56,27 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	 */
 	const [publishedLocally, setPublishedLocally] = useState(false)
 
+	// Read through a ref so `applyLocalMeeting` can stay dependency-free: it
+	// is handed to effects and to the resume hook, and a new identity on every
+	// language change would churn all of them.
+	const languageSync = useRef({ languageState, setLanguageState })
+	languageSync.current = { languageState, setLanguageState }
+
 	/** Populate every piece of page state from a stored local meeting. */
 	const applyLocalMeeting = useCallback((m: LocalMeeting) => {
 		setLocalMeeting(m)
+		// The language selector shows a context that outlives the page and is
+		// shared by every meeting. A server meeting syncs it from the row it
+		// loaded (see below); a local one did not, so the selector could sit
+		// on "Auto" while the record said `custom`/Arabic — and the record is
+		// what the summariser reads. Changing the summary type then re-ran the
+		// meeting in a language the page had never offered and did not show.
+		if (m.summary_language_mode) {
+			languageSync.current.setLanguageState({
+				mode: m.summary_language_mode as SummaryLanguageState['mode'],
+				lastCustomLanguage: m.summary_custom_language || languageSync.current.languageState.lastCustomLanguage,
+			})
+		}
 		setTranscript(m.transcript || null)
 		setSummaryMarkdown(m.summary_markdown)
 		setMeetingTitle(m.title)

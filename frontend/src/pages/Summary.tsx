@@ -25,6 +25,7 @@ import StorageBadge from '../components/StorageBadge'
 import LocalActivityBadge from '../components/LocalActivityBadge'
 import LocalSummaryProgress from '../components/LocalSummaryProgress'
 import { useLocalSummary } from '../ondevice/summary/useLocalSummary'
+import { useSummaryResume } from '../ondevice/summary/useSummaryResume'
 import { isLocalMode } from '../local/mode'
 import { storageOf, getHistory, saveMeeting as saveMeetingMeta } from '../utils/history'
 import { localSummaryView } from '../utils/localSummaryView'
@@ -234,7 +235,10 @@ export default function Summary() {
 		async (patch: Partial<LocalMeeting>, nextLength?: SummaryLength) => {
 			if (!mid) return
 			await meeting.updateLocalMeeting(patch)
-			localSummary.generate(nextLength ?? currentMeetingLength)
+			// Asked for, so it starts the attempt count over: a meeting that
+			// had used up its automatic retries must still re-run when the
+			// reader changes the length or the context.
+			localSummary.generate(nextLength ?? currentMeetingLength, { manual: true })
 		},
 		[mid, meeting, localSummary, currentMeetingLength],
 	)
@@ -360,18 +364,39 @@ export default function Summary() {
 	// A local meeting that has a transcript but no summary is waiting for the
 	// model. Run it without being asked: the user already chose Local mode,
 	// and a page that just sits there looks broken.
-	const needsLocalSummary = isLocal && !!transcript && !summaryMarkdown
-	const autoStartedRef = useRef(false)
-	useEffect(() => {
-		if (!needsLocalSummary || autoStartedRef.current) return
-		if (localSummary.busy || localSummary.state.phase === 'error') return
-		// One model, one GPU: a second run started while the first is still
-		// going would have them both driving the same session. A run for
-		// another meeting is still a run.
-		if (localSummary.runningElsewhere) return
-		autoStartedRef.current = true
-		localSummary.generate(currentMeetingLength)
-	}, [needsLocalSummary, localSummary, currentMeetingLength])
+	//
+	// The question "is a summary still owed" is asked of the stored record,
+	// not of this page's state, which is what makes it survive the tab being
+	// closed mid-run — see `useSummaryResume`.
+	const startLocalSummary = useCallback(() => localSummary.generate(currentMeetingLength), [localSummary, currentMeetingLength])
+	/** Waiting on the one graphics card — this meeting's, or another's. */
+	const summariserBusyElsewhere = localSummary.runningElsewhere || !!localSummary.state.blockedBy
+	useSummaryResume({
+		meetingId: mid,
+		record: meeting.localMeeting ?? null,
+		busy: localSummary.busy,
+		// Only this tab's own "busy with another meeting", not the
+		// graphics card being busy generally: waiting for the card is
+		// exactly the case this hook is meant to keep re-checking, and
+		// `generate` refuses harmlessly until it is free.
+		blocked: localSummary.runningElsewhere,
+		failed: localSummary.state.phase === 'error',
+		start: startLocalSummary,
+		onRecord: meeting.applyLocalMeeting,
+	})
+
+	/**
+	 * The last attempt's error, as the *record* remembers it.
+	 *
+	 * `localSummary.state.error` only covers a run this page watched. A run
+	 * that failed in a tab since closed left the meeting summary-less with no
+	 * word of why, and after the attempt cap nothing would try again either —
+	 * an idle card offering "Generate summary" as if nothing had happened.
+	 */
+	const storedSummaryError =
+		isLocal && !summaryMarkdown && !localSummary.busy && localSummary.state.phase !== 'error'
+			? (meeting.localMeeting?.summary_run?.status === 'failed' ? meeting.localMeeting.summary_run.error : null)
+			: null
 
 	// ── Sharing ──────────────────────────────────────────────────────────
 	/**
@@ -951,9 +976,10 @@ export default function Summary() {
 					state={localSummary.state}
 					busy={localSummary.busy}
 					webgpuAvailable={localSummary.webgpuAvailable}
-					onGenerate={() => localSummary.generate(currentMeetingLength)}
+					onGenerate={() => localSummary.generate(currentMeetingLength, { manual: true })}
 					onCancel={localSummary.cancel}
-					blocked={localSummary.runningElsewhere}
+					blocked={summariserBusyElsewhere}
+					storedError={storedSummaryError}
 				/>
 			)}
 

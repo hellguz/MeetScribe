@@ -183,7 +183,13 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 					context: context || null,
 					summary_length: summaryLength,
 					summary_language_mode: languageState.mode,
-					summary_custom_language: languageState.lastCustomLanguage,
+					// Only when the mode actually is 'custom'. The selector
+					// remembers the last language picked in *any* meeting, so
+					// writing it unconditionally stamped every recording with
+					// a language nobody had chosen for it — invisible while
+					// the mode stayed 'auto', and a summary in that language
+					// the moment anything set the mode.
+					summary_custom_language: languageState.mode === 'custom' ? languageState.lastCustomLanguage : null,
 					timezone,
 				}
 				await seedLocalMeeting(seed)
@@ -206,7 +212,7 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 					title,
 					summary_length: summaryLength,
 					summary_language_mode: languageState.mode,
-					summary_custom_language: languageState.lastCustomLanguage,
+					summary_custom_language: languageState.mode === 'custom' ? languageState.lastCustomLanguage : null,
 					context: context,
 					timezone: timezone,
 					client_processing: useOnDeviceNow,
@@ -263,7 +269,8 @@ export const useRecording = (summaryLength: SummaryLength, languageState: Summar
 		const payload = {
 			summary_length: config.summaryLength,
 			summary_language_mode: config.mode,
-			summary_custom_language: config.lastCustomLanguage,
+			// Same rule as the seed: a remembered language is not a chosen one.
+			summary_custom_language: config.mode === 'custom' ? config.lastCustomLanguage : null,
 		}
 
 		try {

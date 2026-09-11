@@ -20,7 +20,16 @@ interface SummaryLanguageProviderProps {
 	children: ReactNode
 }
 
-const defaultLanguage = 'Arabic' // Default custom language if none is stored
+/**
+ * The language the custom-language button offers before anyone has picked one.
+ *
+ * It used to be 'Arabic', which was not a decision — Arabic is simply first in
+ * the alphabetical list the selector renders. A fresh install therefore showed
+ * a button reading "Arabic" next to Auto and English, and one stray click in
+ * that dropdown set the mode to 'custom' for every meeting afterwards, because
+ * this state is global and lives in localStorage.
+ */
+const defaultLanguage = 'English'
 
 export const SummaryLanguageProvider: React.FC<SummaryLanguageProviderProps> = ({ children }) => {
 	const [languageState, setLanguageStateInternal] = useState<SummaryLanguageState>(() => {

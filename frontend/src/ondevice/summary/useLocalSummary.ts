@@ -16,12 +16,22 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildSummaryPrompt, buildTitlePrompt, cleanTitle, isDefaultTitle } from '../../local/prompt'
-import { getLocalMeeting, patchLocalMeeting, type LocalMeeting } from '../../local/store'
+import {
+	getLocalMeeting,
+	patchLocalMeeting,
+	beginSummaryRun,
+	touchSummaryRun,
+	endSummaryRun,
+	summaryRunOf,
+	summaryRunIsLive,
+	liveSummaryRunElsewhere,
+	type LocalMeeting,
+} from '../../local/store'
 import { syncSharedCopy } from '../../local/publish'
 import { saveMeeting } from '../../utils/history'
 import { setLocalActivity } from '../../local/activity'
 import { getLocalSummaryModel } from './pref'
-import { getSummaryWorker, terminateSummaryWorker } from './worker'
+import { getSummaryWorker, setSummaryListener, terminateSummaryWorker } from './worker'
 import type { SummaryLength as LocalSummaryLength } from '../../contexts/SummaryLengthContext'
 
 export type LocalSummaryPhase = 'idle' | 'prompt' | 'loading' | 'prefilling' | 'generating' | 'saving' | 'titling' | 'done' | 'error'
@@ -36,6 +46,15 @@ const MAX_NEW_TOKENS = 3072
 
 /** A title is 6–15 words. Anything past this is a model ignoring the brief. */
 const TITLE_MAX_TOKENS = 64
+
+/**
+ * How often the run's claim on the meeting is written to disk.
+ *
+ * Well under `SUMMARY_RUN_STALE_MS`, so a live run is never mistaken for a
+ * dead one, and well over a token, so the write does not compete with the
+ * decode loop for the main thread.
+ */
+const HEARTBEAT_MS = 15_000
 
 export interface LocalSummaryState {
 	phase: LocalSummaryPhase
@@ -55,6 +74,13 @@ export interface LocalSummaryState {
 	decode: { tokens: number; max: number; tokensPerSecond: number | null } | null
 	/** Markdown as it streams in, before the run is saved. */
 	streaming: string
+	/**
+	 * The other meeting holding the graphics card, if a start was refused.
+	 *
+	 * Not an error: nothing has gone wrong and nothing needs doing. The run
+	 * is waiting, and `useSummaryResume` starts it when the card is free.
+	 */
+	blockedBy: string | null
 	/** Filled progressively so the panel can show numbers as they land. */
 	measured: {
 		device: string | null
@@ -97,6 +123,7 @@ const initialState = (): LocalSummaryState => ({
 	prefill: null,
 	decode: null,
 	streaming: '',
+	blockedBy: null,
 	measured: emptyMeasured(),
 })
 
@@ -174,13 +201,18 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 	/** WebGPU is not optional here: 4-bit weights on WASM would take hours. */
 	const webgpuAvailable = useMemo(() => typeof navigator !== 'undefined' && 'gpu' in navigator, [])
 
-	// The worker is deliberately *not* terminated: it is shared and holds a
-	// ~3 GB model the next page would otherwise have to load again. The
-	// listener does go, or a second mount would write every result twice.
+	// The worker is deliberately *not* terminated on unmount: it is shared and
+	// holds a ~3 GB model the next page would otherwise have to load again.
+	//
+	// Nor is the listener detached any more. It used to be, to stop a second
+	// mount writing every result twice — but that also meant leaving the
+	// summary page mid-run dropped the result on the floor. `setSummaryListener`
+	// keeps exactly one attached instead, so the run that outlives this page
+	// still writes its summary to IndexedDB (and still beats, so no other tab
+	// starts a second one over the top of it). The `setState` calls it makes
+	// afterwards land on an unmounted component, which React ignores.
 	useEffect(
 		() => () => {
-			if (workerRef.current && listenerRef.current) workerRef.current.removeEventListener('message', listenerRef.current)
-			listenerRef.current = null
 			workerRef.current = null
 		},
 		[],
@@ -241,21 +273,43 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 			shared_until: updated.shared_until ?? null,
 			published: updated.published ?? !!updated.shared_until,
 			duration_seconds: updated.duration_seconds,
+			summary_pending: !updated.summary_markdown,
 		})
 		// Only the page that is actually showing this meeting wants it.
 		if (id === pageMeetingIdRef.current) onSavedRef.current?.(updated)
 		return updated
 	}, [])
 
+	/**
+	 * Keep the stored run's claim alive while the GPU is busy.
+	 *
+	 * Throttled hard: this is an IndexedDB write on the same thread as a page
+	 * rendering streamed tokens, and its only reader is another tab deciding
+	 * whether this run is still alive — which it does against a 90-second
+	 * staleness window.
+	 */
+	const lastBeatRef = useRef(0)
+	/** Set when a start was refused because another run holds the meeting. */
+	const liveElsewhereRef = useRef(false)
+	const beat = useCallback((id: string | null) => {
+		if (!id) return
+		const now = Date.now()
+		if (now - lastBeatRef.current < HEARTBEAT_MS) return
+		lastBeatRef.current = now
+		void touchSummaryRun(id).catch(() => {
+			/* a missed beat costs nothing; the next one covers it */
+		})
+	}, [])
+
 	const generate = useCallback(
-		async (summaryLength: string) => {
-			if (!meetingId) return
+		async (summaryLength: string, options: { manual?: boolean } = {}): Promise<boolean> => {
+			if (!meetingId) return false
 			// One model on one GPU. Two `generate` calls would drive the same
 			// session at once, and the second would also take ownership of the
 			// first's results.
 			if (runMeetingIdRef.current !== null && runMeetingIdRef.current !== meetingId) {
 				console.warn('The summariser is still working on another meeting; not starting a second run.')
-				return
+				return false
 			}
 			// Read at click time, not from the hook's own state: the panel
 			// owns these controls and may have changed them since render.
@@ -271,6 +325,33 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 				const meeting = await getLocalMeeting(meetingId)
 				if (!meeting) throw new Error('This meeting is not stored on this device.')
 				if (!meeting.transcript.trim()) throw new Error('There is no transcript to summarize.')
+				// Somebody is already writing this one — another tab, or a run
+				// this browser started on a page since navigated away from,
+				// which keeps going and keeps beating. Starting a second run
+				// would put two sessions on one graphics card and have them
+				// race to store the result.
+				//
+				// A run whose heartbeat has stopped is *not* live, which is
+				// what makes the closed-tab case resumable rather than locked
+				// out by its own leftover claim.
+				if (summaryRunIsLive(summaryRunOf(meeting))) {
+					liveElsewhereRef.current = true
+					throw new Error('A summary for this meeting is already being written in this browser. It will appear here as soon as it finishes.')
+				}
+				// And no other meeting may be on the GPU either. The worker's
+				// replies do not say which meeting they belong to, so a second
+				// run started over a first one files the first one's summary
+				// against the second one's meeting.
+				const otherMeeting = await liveSummaryRunElsewhere(meetingId)
+				if (otherMeeting) {
+					// Left idle rather than failed, so `useSummaryResume` keeps
+					// asking and starts this one the moment the card is free.
+					// An error phase would stop it, and the panel would be
+					// promising a wait that nothing was going to end.
+					claimRun(null)
+					setState({ ...initialState(), blockedBy: otherMeeting })
+					return false
+				}
 				prompt = await buildSummaryPrompt({
 					transcript: meeting.transcript,
 					summaryLength: summaryLength || meeting.summary_length,
@@ -281,8 +362,30 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 					durationSeconds: meeting.duration_seconds,
 				})
 			} catch (e) {
-				setState((s) => ({ ...s, phase: 'error', error: e instanceof Error ? e.message : String(e) }))
-				return
+				const message = e instanceof Error ? e.message : String(e)
+				// A run already in flight is not a failure of the record: its
+				// own `running` claim is correct and must be left alone.
+				// Anything else is worth writing down, so the panel is not
+				// left offering a button that will fail the same way with no
+				// explanation of why.
+				if (liveElsewhereRef.current) liveElsewhereRef.current = false
+				else void endSummaryRun(meetingId, 'failed', message).catch(() => {})
+				claimRun(null)
+				setState((s) => ({ ...s, phase: 'error', error: message }))
+				return false
+			}
+
+			// Claim the meeting on disk before touching the GPU. This is what
+			// survives the tab: a record left saying `running` with a
+			// heartbeat that stops is exactly how the next tab to open the
+			// meeting knows a summary is owed and nobody is producing it.
+			try {
+				await beginSummaryRun(meetingId, options.manual === true)
+				lastBeatRef.current = Date.now()
+			} catch (e) {
+				// Not fatal. The run can still produce a summary; it just
+				// cannot be resumed automatically if this tab goes away.
+				console.warn('Could not record the start of the summary run:', e)
 			}
 
 			const maxNewTokens = MAX_NEW_TOKENS
@@ -295,7 +398,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 				measured: { ...s.measured, promptChars: prompt.promptChars },
 			}))
 
-			if (!workerRef.current) {
+			{
 				// Shared with the preloader, so a model fetched while the meeting
 				// was still recording is already resident here.
 				workerRef.current = getSummaryWorker()
@@ -314,9 +417,14 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							if (visible) setState((s) => ({ ...s, log: [...s.log.slice(-60), msg.line] }))
 							break
 						case 'status':
+							// Loading a cached model reports little else for
+							// tens of seconds at a time, and a run whose beat
+							// lapses looks dead to every other tab.
+							beat(runId)
 							if (visible) setState((s) => ({ ...s, statusText: msg.text }))
 							break
 						case 'download':
+							beat(runId)
 							if (visible) setState((s) => ({ ...s, download: { loaded: msg.loaded, total: msg.total, file: msg.file } }))
 							break
 						case 'device': {
@@ -332,6 +440,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							break
 						}
 						case 'prefill': {
+							beat(runId)
 							if (!visible) break
 							// Rate over the whole prefill so far, not the last
 							// slice: slices vary, the average does not.
@@ -348,6 +457,7 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							break
 						}
 						case 'decode': {
+							beat(runId)
 							if (!visible) break
 							const ctx = runContextRef.current
 							setState((s) => ({
@@ -438,16 +548,26 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 								// Once, at the end, rather than after each write:
 								// the sync uploads the whole record, and a run
 								// that also names the meeting writes twice.
-								const stored = updated ?? (await getLocalMeeting(runId))
+								// The summary is stored and nothing else is
+								// outstanding, so release the claim. Until this
+								// lands the record still reads `running`, which
+								// is correct — a tab that dies between the
+								// summary write and here has already saved the
+								// summary, and `needsSummaryRun` looks at the
+								// summary before it looks at the run.
+								await endSummaryRun(runId, 'done')
+								const stored = (await getLocalMeeting(runId)) ?? updated
 								if (stored) void syncSharedCopy(stored)
 								claimRun(null)
 								if (visible) setState((s) => ({ ...s, phase: 'done', statusText: null }))
 							} catch (e) {
+								const message = e instanceof Error ? e.message : String(e)
+								void endSummaryRun(runId, 'failed', `Could not be saved: ${message}`).catch(() => {})
 								claimRun(null)
 								// The summary is on screen either way; say plainly
 								// that it will not survive a reload.
 								if (visible) {
-									setState((s) => ({ ...s, phase: 'error', error: `Generated, but could not be saved: ${e instanceof Error ? e.message : String(e)}` }))
+									setState((s) => ({ ...s, phase: 'error', error: `Generated, but could not be saved: ${message}` }))
 								}
 							}
 							break
@@ -459,7 +579,12 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 								// An empty or unusable answer leaves the date in
 								// place, which is a fine name for a meeting.
 								if (runId) {
-									const updated = title ? await persist(runId, { title }) : await getLocalMeeting(runId)
+									if (title) await persist(runId, { title })
+									// The summary landed before the title was
+									// even asked for, so the run is done
+									// whether or not the name came back.
+									await endSummaryRun(runId, 'done')
+									const updated = await getLocalMeeting(runId)
 									if (updated) void syncSharedCopy(updated)
 								}
 							} catch (e) {
@@ -474,6 +599,8 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 							// already in IndexedDB and on screen.
 							if (titlingRef.current) {
 								titlingRef.current = false
+								// The summary is stored; only the name is missing.
+								if (runId) void endSummaryRun(runId, 'done').catch(() => {})
 								claimRun(null)
 								console.warn('On-device title generation failed:', msg.message)
 								if (visible) {
@@ -481,18 +608,22 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 								}
 								break
 							}
+							if (runId) void endSummaryRun(runId, 'failed', msg.message).catch(() => {})
 							claimRun(null)
 							if (visible) setState((s) => ({ ...s, phase: 'error', error: msg.message }))
 							break
 					}
 				}
 				listenerRef.current = listener
-				workerRef.current.addEventListener('message', listener)
+				// Replaces whatever was there, including a listener left behind
+				// by a page that has since unmounted.
+				setSummaryListener(listener)
 			}
 
 			workerRef.current.postMessage({ type: 'summarize', prompt: prompt.prompt, model, thinking: false, maxNewTokens })
+			return true
 		},
-		[meetingId, persist, claimRun, forThisPage],
+		[meetingId, persist, claimRun, forThisPage, beat],
 	)
 
 	/**
@@ -500,6 +631,11 @@ export function useLocalSummary(meetingId: string | undefined, { onSaved }: Opti
 	 * which also drops the loaded model — the next run pays the load again.
 	 */
 	const cancel = useCallback(() => {
+		// Recorded as 'stopped', not 'failed': automatic resume must not
+		// restart a run the reader has just cancelled. The panel still offers
+		// "Generate summary", which starts a fresh, counted attempt.
+		const stopped = runMeetingIdRef.current
+		if (stopped) void endSummaryRun(stopped, 'stopped', null).catch(() => {})
 		terminateSummaryWorker()
 		workerRef.current = null
 		listenerRef.current = null

@@ -14,6 +14,7 @@ import type { SummarizerRequest, SummarizerResponse } from './summarizer.worker'
 
 let worker: Worker | null = null
 let preloadedModel: string | null = null
+let runListener: ((event: MessageEvent) => void) | null = null
 
 export function getSummaryWorker(): Worker {
 	if (!worker) worker = new Worker(new URL('./summarizer.worker.ts', import.meta.url), { type: 'module' })
@@ -21,10 +22,33 @@ export function getSummaryWorker(): Worker {
 }
 
 /**
+ * Install the one handler for a summary run's messages.
+ *
+ * The listener lives here rather than on the hook because it has to outlive
+ * the page. It used to be attached in `useLocalSummary` and removed on
+ * unmount, which meant navigating away from the summary page mid-run threw
+ * the result away: the model went on writing, finished, posted `done` — and
+ * nobody was listening, so the summary was never written to IndexedDB. The
+ * user came back to a meeting that still had no summary and no explanation.
+ *
+ * Exactly one is attached at a time, which is the other half of the same
+ * problem: leaving the old one on and adding a new one on the next mount
+ * would store every result twice.
+ */
+export function setSummaryListener(listener: (event: MessageEvent) => void): void {
+	const w = getSummaryWorker()
+	if (runListener) w.removeEventListener('message', runListener)
+	runListener = listener
+	w.addEventListener('message', listener)
+}
+
+/**
  * Terminating is the only way to stop generation already on the GPU, and it
  * drops the loaded model with it — the next run pays the load again.
  */
 export function terminateSummaryWorker(): void {
+	if (worker && runListener) worker.removeEventListener('message', runListener)
+	runListener = null
 	worker?.terminate()
 	worker = null
 	preloadedModel = null

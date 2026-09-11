@@ -30,9 +30,18 @@ interface Props {
 	 * nothing would be worse than saying so.
 	 */
 	blocked?: boolean
+	/**
+	 * Why the *stored* record says the last attempt stopped.
+	 *
+	 * Set when this page never saw the run — it happened in a tab that has
+	 * since been closed. Without it a meeting whose automatic retries had all
+	 * failed showed the plain "Summarize on this device" card, as though it
+	 * had simply never been tried.
+	 */
+	storedError?: string | null
 }
 
-const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud, blocked = false }) => {
+const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvailable, onGenerate, onCancel, onUseCloud, blocked = false, storedError = null }) => {
 	const { phase, statusText, error, download, measured } = state
 
 	/**
@@ -141,15 +150,17 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 
 	// Idle with no summary yet: the meeting has a transcript and is waiting.
 	return (
-		<div style={card}>
+		<div style={{ ...card, border: `1px solid ${storedError ? '#f59e0b66' : theme.border}` }}>
 			<span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
 				<LockIcon size={13} />
-				<strong>Summarize on this device</strong>
+				<strong>{storedError ? 'This summary needs another go' : 'Summarize on this device'}</strong>
 			</span>
-			<p style={{ margin: '5px 0 10px', color: theme.secondaryText, lineHeight: 1.5 }}>
+			<p style={{ margin: '5px 0 10px', color: theme.secondaryText, lineHeight: 1.5, wordBreak: 'break-word' }}>
 				{blocked
 					? 'The summariser is finishing another meeting. This one starts as soon as it is free — there is one model and one graphics card.'
-					: 'Runs Qwen3-4B on your graphics card. Nothing leaves this browser.'}
+					: storedError
+						? `The last attempt stopped: ${storedError} Your transcript is saved on this device either way.`
+						: 'Runs Qwen3-4B on your graphics card. Nothing leaves this browser.'}
 			</p>
 			{blocked ? (
 				<span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: theme.secondaryText }}>
@@ -157,7 +168,7 @@ const LocalSummaryProgress: React.FC<Props> = ({ theme, state, busy, webgpuAvail
 					Waiting its turn
 				</span>
 			) : (
-				button('Generate summary', onGenerate, true)
+				button(storedError ? 'Try again' : 'Generate summary', onGenerate, true)
 			)}
 		</div>
 	)
