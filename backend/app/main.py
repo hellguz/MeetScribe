@@ -8,7 +8,7 @@ import shutil
 import uuid
 import datetime as dt
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
@@ -42,7 +42,6 @@ from .models import (
     MeetingGone,
     RegeneratePayload,
     MeetingConfigUpdate,
-    FeedbackStatusUpdate,
     MeetingContextUpdate,
     MeetingTranslatePayload,
     SummaryUpdate,
@@ -93,6 +92,8 @@ async def lifespan(app: FastAPI):
     # Every 5 minutes: a share that says "until 14:32" should not still be
     # readable at 15:00.
     _scheduler.add_job(tasks.sweep_expired_shares, "interval", minutes=5, id="share_sweep")
+    # Daily: meetings recorded in cloud mode are kept for 90 days, then gone.
+    _scheduler.add_job(tasks.purge_old_meetings, "cron", hour=3, minute=0, id="retention")
     _scheduler.add_job(tasks.backup_database, "cron", hour=0, minute=0, id="backup")
     _scheduler.start()
     LOGGER.info("APScheduler started.")
@@ -151,6 +152,30 @@ def _build_live_transcript(db: Session, meeting_id: uuid.UUID) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # Ownership, without accounts
 # ──────────────────────────────────────────────────────────────────────────────
+def _os_family(user_agent: str | None) -> str | None:
+    """
+    Reduce a User-Agent to the one thing the dashboard ever reads from it.
+
+    A full UA string is a fingerprint: browser build, OS version, device model.
+    Nothing here needs any of that, so nothing here keeps it. Idempotent, so
+    it can be run over rows that already hold a family name.
+    """
+    if not user_agent:
+        return None
+    ua = user_agent.lower()
+    if "iphone" in ua or "ipad" in ua:
+        return "iPhone"
+    if "android" in ua:
+        return "Android"
+    if "windows" in ua:
+        return "Windows"
+    if "macintosh" in ua or ua == "mac":
+        return "Mac"
+    if "linux" in ua:
+        return "Linux"
+    return "Other"
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -219,7 +244,7 @@ def create_meeting(body: MeetingCreate, request: Request):
         if not is_valid_summary_length(body.summary_length):
             raise HTTPException(status_code=400, detail="Invalid summary_length value.")
 
-        user_agent = request.headers.get("user-agent")
+        user_agent = _os_family(request.headers.get("user-agent"))
         mtg_data = body.model_dump()
         
         # Set defaults if not provided by client
@@ -694,12 +719,25 @@ def create_feedback(body: FeedbackCreate):
 
 
 @app.delete("/api/feedback", status_code=200)
-def delete_feedback_by_type(body: FeedbackDelete):
+def delete_feedback_by_type(body: FeedbackDelete, request: Request):
+    """
+    Un-toggle one of the standard feedback types on a meeting you own.
+
+    This is the only way feedback is ever removed over the API. The dashboard
+    used to be able to delete any entry by id and flip its status; it is a
+    public page, so it can no longer change anything.
+    """
     with Session(engine) as db:
+        meeting = db.get(Meeting, body.meeting_id)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        _require_owner(meeting, request)
+
         feedback_to_delete = db.exec(
             select(Feedback).where(
                 Feedback.meeting_id == body.meeting_id,
                 Feedback.feedback_type == body.feedback_type,
+                Feedback.feedback_type != "feature_suggestion",
             )
         ).first()
 
@@ -710,29 +748,6 @@ def delete_feedback_by_type(body: FeedbackDelete):
         else:
             # It's okay if the feedback is already gone.
             return {"ok": True, "message": "Feedback not found, nothing to delete"}
-
-
-@app.delete("/api/feedback/{fid}", status_code=204)
-def delete_feedback_by_id(fid: int):
-    with Session(engine) as db:
-        feedback_item = db.get(Feedback, fid)
-        if feedback_item:
-            db.delete(feedback_item)
-            db.commit()
-    return Response(status_code=204)
-
-
-@app.put("/api/feedback/{fid}/status", response_model=Feedback)
-def update_feedback_status(fid: int, payload: FeedbackStatusUpdate):
-    with Session(engine) as db:
-        feedback_item = db.get(Feedback, fid)
-        if not feedback_item:
-            raise HTTPException(status_code=404, detail="Feedback not found")
-        feedback_item.status = payload.status
-        db.add(feedback_item)
-        db.commit()
-        db.refresh(feedback_item)
-        return feedback_item
 
 
 @app.get("/api/dashboard/stats")
@@ -788,21 +803,7 @@ def get_dashboard_stats():
         user_agent_results = db.exec(
             select(Meeting.user_agent).where(Meeting.user_agent.is_not(None))
         ).all()
-        device_counts = Counter()
-        for ua in user_agent_results:
-            ua_lower = ua.lower()
-            if "iphone" in ua_lower:
-                device_counts["iPhone"] += 1
-            elif "android" in ua_lower:
-                device_counts["Android"] += 1
-            elif "windows" in ua_lower:
-                device_counts["Windows"] += 1
-            elif "macintosh" in ua_lower:
-                device_counts["Mac"] += 1
-            elif "linux" in ua_lower:
-                device_counts["Linux"] += 1
-            else:
-                device_counts["Other"] += 1
+        device_counts = Counter(_os_family(ua) for ua in user_agent_results)
 
         feedback_counts_query = db.exec(
             select(Feedback.feedback_type, func.count(Feedback.id))
@@ -811,39 +812,29 @@ def get_dashboard_stats():
         ).all()
         feedback_counts = {ftype: count for ftype, count in feedback_counts_query}
 
+        # The dashboard is public. Nothing in it may identify a meeting: no
+        # id (a meeting is readable by anyone who has its id), no title.
         suggestions_query = db.exec(
-            select(Feedback, Meeting.title)
-            .join(Meeting, Feedback.meeting_id == Meeting.id)
+            select(Feedback)
             .where(Feedback.feedback_type == "feature_suggestion")
             .where(Feedback.suggestion_text.is_not(None))
             .order_by(Feedback.created_at.desc())
         ).all()
         feature_suggestions = [
-            {
-                "id": f.id,
-                "suggestion": f.suggestion_text,
-                "submitted_at": f.created_at,
-                "meeting_id": f.meeting_id,
-                "meeting_title": title,
-                "status": f.status,
-            }
-            for f, title in suggestions_query
+            {"id": f.id, "suggestion": f.suggestion_text, "submitted_at": f.created_at, "status": f.status}
+            for f in suggestions_query
         ]
+
         all_feedback_query = db.exec(
-            select(Feedback, Meeting.title, Meeting.started_at)
+            select(Feedback, Meeting.started_at)
             .join(Meeting, Feedback.meeting_id == Meeting.id)
             .order_by(Meeting.started_at.desc(), Feedback.created_at.desc())
         ).all()
-
-        meetings_with_feedback = defaultdict(lambda: {"feedback": []})
-        for feedback, title, started_at in all_feedback_query:
-            mid_str = str(feedback.meeting_id)
-            if "id" not in meetings_with_feedback[mid_str]:
-                meetings_with_feedback[mid_str]["id"] = mid_str
-                meetings_with_feedback[mid_str]["title"] = title
-                meetings_with_feedback[mid_str]["started_at"] = started_at
-
-            meetings_with_feedback[mid_str]["feedback"].append(
+        # One entry per meeting, keyed internally only; the key never leaves.
+        feedback_log: dict[str, dict] = {}
+        for feedback, started_at in all_feedback_query:
+            entry = feedback_log.setdefault(str(feedback.meeting_id), {"started_at": started_at, "feedback": []})
+            entry["feedback"].append(
                 {
                     "id": feedback.id,
                     "type": feedback.feedback_type,
@@ -852,7 +843,7 @@ def get_dashboard_stats():
                     "status": feedback.status,
                 }
             )
-        
+
         meetings_by_day = db.exec(
             select(func.date(Meeting.started_at), func.count(Meeting.id))
             .group_by(func.date(Meeting.started_at))
@@ -934,7 +925,7 @@ def get_dashboard_stats():
         "device_distribution": dict(device_counts),
         "feedback_counts": feedback_counts,
         "feature_suggestions": feature_suggestions,
-        "meetings_with_feedback": list(meetings_with_feedback.values()),
+        "feedback_log": list(feedback_log.values()),
         "usage_timeline": [
             {"date": str(date), "count": count} for date, count in meetings_by_day
         ],
@@ -1122,7 +1113,7 @@ def publish_meeting(mid: uuid.UUID, body: PublishPayload, request: Request):
                 origin="published",
                 expires_at=expires_at,
                 owner_hash=_hash_token(body.owner_token),
-                user_agent=request.headers.get("user-agent"),
+                user_agent=_os_family(request.headers.get("user-agent")),
                 # Finished on arrival: never queue a summary for one of these.
                 done=True,
                 final_received=True,

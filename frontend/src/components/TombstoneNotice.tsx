@@ -17,7 +17,7 @@ export interface Tombstone {
 	id: string
 	title: string
 	removed_at: string
-	reason: 'made_private' | 'expired' | 'deleted' | string
+	reason: 'made_private' | 'expired' | 'retention' | 'deleted' | string
 }
 
 const when = (iso: string) =>
@@ -40,14 +40,18 @@ const TombstoneNotice: React.FC<Props> = ({ theme, tombstone, recovered, onBack,
 			? 'The shared link expired.'
 			: tombstone.reason === 'made_private'
 				? 'This meeting was made private.'
-				: 'This meeting is no longer available.'
+				: tombstone.reason === 'retention'
+					? 'This meeting reached the one-year limit.'
+					: 'This meeting is no longer available.'
 
 	const body =
 		tombstone.reason === 'expired'
 			? `The link to “${tombstone.title}” stopped working on ${removed}.`
 			: tombstone.reason === 'made_private'
 				? `Whoever recorded “${tombstone.title}” removed it from the server on ${removed}.`
-				: `“${tombstone.title}” was removed from the server on ${removed}.`
+				: tombstone.reason === 'retention'
+					? `Recordings are kept on the server for one year. “${tombstone.title}” was deleted on ${removed}.`
+					: `“${tombstone.title}” was removed from the server on ${removed}.`
 
 	return (
 		<div

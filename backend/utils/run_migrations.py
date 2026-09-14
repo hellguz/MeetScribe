@@ -34,6 +34,7 @@ MIGRATIONS = [
     "add_client_processing_columns.py",
     "drop_local_summary_table.py",
     "add_publish_columns.py",
+    "scrub_user_agents.py",
 ]
 
 

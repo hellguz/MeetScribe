@@ -34,6 +34,7 @@ import SharePopover from '../components/SharePopover'
 import KeepLocalPopover from '../components/KeepLocalPopover'
 import SaveCopyBanner from '../components/SaveCopyBanner'
 import TombstoneNotice from '../components/TombstoneNotice'
+import LegalFooter from '../components/LegalFooter'
 import { hasOwnerToken, unpublishMeeting, type PublishStatus } from '../local/publish'
 import { putLocalMeeting, type LocalMeeting } from '../local/store'
 import { useSummaryLanguage, SummaryLanguageState } from '../contexts/SummaryLanguageContext'
@@ -1194,6 +1195,7 @@ export default function Summary() {
 					)}
 				</div>
 			)}
+			<LegalFooter theme={currentThemeColors} />
 		</div>
 	)
 }

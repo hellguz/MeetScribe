@@ -1,4 +1,10 @@
-import '@fontsource/inter'
+// Self-hosted, served from our own origin. Loading them from Google Fonts
+// sent every visitor's IP address to Google before the page had said a word,
+// which in the EU needs consent nobody had given.
+import '@fontsource-variable/inter'
+import '@fontsource-variable/jost'
+import '@fontsource-variable/lora'
+import '@fontsource-variable/lora/wght-italic.css'
 
 export interface AppTheme {
 	fontFamily: string
@@ -31,7 +37,7 @@ export interface AppTheme {
 }
 
 export const lightTheme: AppTheme = {
-	fontFamily: "'Inter', sans-serif",
+	fontFamily: "'Inter Variable', 'Inter', sans-serif",
 	fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
 	body: '#FFFFFF', // White background for the page
 	text: '#1f2937', // Dark gray for primary text (Tailwind gray-800)
@@ -60,7 +66,7 @@ export const lightTheme: AppTheme = {
 }
 
 export const darkTheme: AppTheme = {
-	fontFamily: "'Inter', sans-serif",
+	fontFamily: "'Inter Variable', 'Inter', sans-serif",
 	fontFeatureSettings: "'ss01' on, 'ss02' on, 'ss03' on",
 	body: '#121315', // Deep blue-black — easier on eyes than flat zinc
 	text: '#dde1e7', // Soft cool white — reduces harshness vs pure white

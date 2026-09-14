@@ -4,11 +4,13 @@ import { ThemeContext } from '../contexts/ThemeContext'
 import { apiUrl } from '../utils/api'
 import { AppTheme, lightTheme, darkTheme } from '../styles/theme'
 import { DashboardStats, FeatureSuggestion } from '../types'
+import { formatMeetingDateShort } from '../utils/datetime'
 import Spinner from '../components/Spinner'
 import StatCard from '../components/dashboard/StatCard'
 import BarChart from '../components/dashboard/BarChart'
 import PieChart from '../components/dashboard/PieChart'
 import FeedbackTable from '../components/dashboard/FeedbackTable'
+import LegalFooter from '../components/LegalFooter'
 
 export default function Dashboard() {
 	const navigate = useNavigate()
@@ -38,30 +40,6 @@ export default function Dashboard() {
 		document.body.style.backgroundColor = currentThemeColors.background
 		fetchStats()
 	}, [currentThemeColors.background, fetchStats])
-
-	const handleFeedbackAction = async (action: 'delete' | 'update_status', id: number, newStatus?: string) => {
-		let url = apiUrl(`/api/feedback/${id}`)
-		let options: RequestInit = { method: 'DELETE' }
-
-		if (action === 'update_status') {
-			url += '/status'
-			options = {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ status: newStatus }),
-			}
-		}
-
-		try {
-			const response = await fetch(url, options)
-			if (!response.ok) throw new Error(`Failed to ${action} feedback.`)
-			// Refresh stats from server to show changes
-			await fetchStats()
-		} catch (err) {
-			console.error(err)
-			alert(`Could not perform action: ${err instanceof Error ? err.message : 'Unknown error'}`)
-		}
-	}
 
 	const cardColors = {
 		green: {
@@ -109,7 +87,7 @@ export default function Dashboard() {
 				backgroundColor: currentThemeColors.background,
 				color: currentThemeColors.text,
 				padding: '24px',
-				fontFamily: "'Inter', sans-serif",
+				fontFamily: "'Inter Variable', 'Inter', sans-serif",
 				minHeight: '100vh',
 			}}>
 			<button
@@ -222,38 +200,22 @@ export default function Dashboard() {
 										padding: '12px',
 										borderBottom: `1px solid ${currentThemeColors.backgroundSecondary}`,
 										display: 'flex',
-										alignItems: 'center',
+										alignItems: 'baseline',
 										gap: '12px',
-										transition: 'background-color 0.2s ease',
-									}}
-									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = currentThemeColors.background)}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}>
-									<input
-										type="checkbox"
-										checked={item.status === 'done'}
-										onChange={(e) => handleFeedbackAction('update_status', item.id, e.target.checked ? 'done' : 'new')}
-										style={{ flexShrink: 0, width: '18px', height: '18px', cursor: 'pointer' }}
-									/>
-									<div onClick={() => navigate(`/summary/${item.meeting_id}`)} style={{ flexGrow: 1, cursor: 'pointer' }}>
-										<p
-											style={{
-												margin: 0,
-												fontWeight: 500,
-												textDecoration: item.status === 'done' ? 'line-through' : 'none',
-												color: item.status === 'done' ? currentThemeColors.secondaryText : currentThemeColors.text,
-											}}>
-											{item.suggestion}
-										</p>
-										<p style={{ margin: '4px 0 0', fontSize: '12px', color: currentThemeColors.secondaryText }}>
-											From: <span style={{ fontWeight: '500' }}>{item.meeting_title}</span>
-										</p>
-									</div>
-									<button
-										onClick={() => handleFeedbackAction('delete', item.id)}
-										title="Delete suggestion"
-										style={{ background: 'none', border: 'none', cursor: 'pointer', color: currentThemeColors.secondaryText, fontSize: '16px' }}>
-										✕
-									</button>
+									}}>
+									<p
+										style={{
+											margin: 0,
+											flexGrow: 1,
+											fontWeight: 500,
+											textDecoration: item.status === 'done' ? 'line-through' : 'none',
+											color: item.status === 'done' ? currentThemeColors.secondaryText : currentThemeColors.text,
+										}}>
+										{item.suggestion}
+									</p>
+									<span style={{ flexShrink: 0, fontSize: '12px', color: currentThemeColors.secondaryText, whiteSpace: 'nowrap' }}>
+										{formatMeetingDateShort(item.submitted_at)}
+									</span>
 								</li>
 							))}
 						</ul>
@@ -265,13 +227,9 @@ export default function Dashboard() {
 
 			<div style={{ backgroundColor: currentThemeColors.body, padding: '20px', borderRadius: '12px', border: `1px solid ${currentThemeColors.border}` }}>
 				<h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold' }}>Feedback Log</h2>
-				<FeedbackTable
-					meetings={stats.meetings_with_feedback}
-					theme={currentThemeColors}
-					navigate={navigate}
-					onDeleteFeedback={(id) => handleFeedbackAction('delete', id)}
-				/>
+				<FeedbackTable entries={stats.feedback_log} theme={currentThemeColors} />
 			</div>
+			<LegalFooter theme={currentThemeColors} style={{ marginTop: '24px' }} />
 		</div>
 	)
 }

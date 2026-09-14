@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .config import settings
-from .models import Meeting, MeetingChunk, Feedback, MeetingTombstone
+from .models import Meeting, MeetingChunk, Feedback, MeetingTombstone, MeetingSection
 from . import prompts as P
 from . import diarization
 
@@ -851,6 +851,63 @@ def sweep_expired_shares() -> None:
                 )
     except Exception:
         LOGGER.exception("Share expiry sweep failed.")
+
+
+RETENTION_DAYS = 365
+
+
+def purge_old_meetings() -> None:
+    """
+    Forget meetings recorded in cloud mode once they are a year old.
+
+    A recording sent to the server holds other people's words, and the person
+    who pressed record is rarely the only one in it. Keeping that forever was
+    never a promise anyone made; it was the absence of a decision. This is the
+    decision: audio, transcript, summary, feedback and sections all go, and a
+    tombstone explains why to anyone who still holds the link.
+
+    Only `origin == 'recorded'` is touched. A published copy of a local meeting
+    has its own clock (`expires_at`, swept separately), and "until I take it
+    back" is what the share sheet offered — so that promise is kept.
+    """
+    engine = get_db_engine()
+    cutoff = dt.datetime.utcnow() - dt.timedelta(days=RETENTION_DAYS)
+
+    try:
+        with Session(engine) as db:
+            due = db.exec(
+                select(Meeting).where(
+                    Meeting.origin == "recorded",
+                    Meeting.started_at < cutoff,
+                )
+            ).all()
+            for mtg in due:
+                chunks = db.exec(select(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id)).all()
+                for chunk in chunks:
+                    if chunk.path:
+                        Path(chunk.path).unlink(missing_ok=True)
+                # The chunk files live in one directory per meeting; take the
+                # directory too so a stray concatenated WAV does not outlive it.
+                if chunks and chunks[0].path:
+                    shutil.rmtree(Path(chunks[0].path).parent, ignore_errors=True)
+                db.exec(delete(MeetingChunk).where(MeetingChunk.meeting_id == mtg.id))
+                db.exec(delete(Feedback).where(Feedback.meeting_id == mtg.id))
+                db.exec(delete(MeetingSection).where(MeetingSection.meeting_id == mtg.id))
+                if not db.get(MeetingTombstone, mtg.id):
+                    db.add(
+                        MeetingTombstone(
+                            id=mtg.id,
+                            title=mtg.title,
+                            started_at=mtg.started_at,
+                            reason="retention",
+                        )
+                    )
+                db.delete(mtg)
+            if due:
+                db.commit()
+                LOGGER.info("Retention: %d meeting(s) older than %d days removed.", len(due), RETENTION_DAYS)
+    except Exception:
+        LOGGER.exception("Retention purge failed.")
 
 
 def backup_database() -> None:

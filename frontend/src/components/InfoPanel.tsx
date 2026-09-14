@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { AppTheme } from '../styles/theme'
 import { InfoIcon, CloseIcon } from './Icons'
+import { Link } from 'react-router-dom'
 
 const REPO_URL = 'https://github.com/hellguz/meetscribe'
 
@@ -49,6 +50,7 @@ const CHANGELOG: ChangelogEntry[] = [
 			'🌍 Summary length, language and extra context all work on a local meeting too.',
 			'🤖 Summaries and titles written here come from a small model on your graphics card — shorter and plainer than Claude, and weaker outside English.',
 			'🗓️ Your meeting list now shows the weekday and how long each one ran.',
+			'🧹 Recordings made in cloud mode are deleted from the server after one year. The privacy notice, imprint and terms are linked at the bottom of every page.',
 		],
 	},
 	{
@@ -301,9 +303,7 @@ const InfoPanel: React.FC<InfoPanelProps> = ({ theme, open, setOpen }) => {
 					</button>
 				</div>
 
-				<p style={{ margin: '10px 0 0' }}>
-					Hit record, focus on the conversation, and get a clean summary plus the full transcript when you're done.
-				</p>
+				<p style={{ margin: '10px 0 0' }}>Hit record, focus on the conversation, and get a clean summary plus the full transcript when you're done.</p>
 
 				<div style={{ borderTop: `1px solid ${theme.border}`, margin: '14px 0 12px' }} />
 
@@ -347,7 +347,10 @@ const InfoPanel: React.FC<InfoPanelProps> = ({ theme, open, setOpen }) => {
 					<a href={REPO_URL} target="_blank" rel="noreferrer" style={{ color: theme.button.primary }}>
 						Source on GitHub
 					</a>
-					. A pet project by Egor Gavrilov · MIT licensed.
+					. A pet project by Egor Gavrilov · MIT licensed ·{' '}
+					<Link to="/legal" onClick={close} style={{ color: theme.secondaryText }}>
+						Privacy, imprint &amp; terms
+					</Link>
 				</p>
 			</div>
 		</div>

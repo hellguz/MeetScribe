@@ -27,6 +27,7 @@ class Meeting(SQLModel, table=True):
     # --- NEW COLUMNS ---
     word_count: int | None = None
     duration_seconds: int | None = None
+    # OS family only ('Windows', 'Android', ...), never the raw User-Agent.
     user_agent: str | None = None
     summary_length: str = Field(default="narrative")
     summary_language_mode: str = Field(default="auto")
@@ -88,6 +89,7 @@ class MeetingTombstone(SQLModel, table=True):
     started_at: dt.datetime
     removed_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     # 'made_private' — the owner pulled it into their browser.
+    # 'retention'   — a cloud recording reached the one-year limit.
     # 'expired'     — a share window ran out. Not the same thing, and the UI
     #                 says so: a schedule ending is not access being revoked.
     # 'deleted'     — plainly deleted.
@@ -172,14 +174,6 @@ class FeedbackDelete(SQLModel):
 
     meeting_id: uuid.UUID
     feedback_type: str
-
-
-class FeedbackStatusUpdate(SQLModel):
-    """
-    Payload for updating the status of a feedback item.
-    """
-
-    status: str
 
 
 class MeetingStatus(SQLModel):

@@ -18,6 +18,7 @@ import { useOnDevice } from '../ondevice/useOnDevice'
 import { deleteLocalMeeting } from '../local/store'
 import LocalModeToggle from '../components/LocalModeToggle'
 import LocalActivityBadge from '../components/LocalActivityBadge'
+import LegalFooter from '../components/LegalFooter'
 
 export default function Record() {
 	const { theme } = useTheme()
@@ -266,7 +267,7 @@ export default function Record() {
 				<div className="app-header-info">
 					<InfoButton theme={currentThemeColors} onClick={() => setInfoOpen(true)} />
 				</div>
-				<h1 className="app-header-title" style={{ margin: 0, color: currentThemeColors.text, fontFamily: 'Jost, sans-serif' }}>
+				<h1 className="app-header-title" style={{ margin: 0, color: currentThemeColors.text, fontFamily: "'Jost Variable', Jost, sans-serif" }}>
 					🎙️ MeetScribe
 				</h1>
 				<div className="app-header-actions">
@@ -296,13 +297,12 @@ export default function Record() {
 							<FileUpload selectedFile={selectedFile} onFileSelect={setSelectedFile} disabled={isUiLocked} theme={currentThemeColors} />
 						</div>
 					)}
-
 				</>
 			)}
 
 			{isRecording && (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '10px' }}>
-					<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', fontFamily: 'Jost, serif' }}>
+					<div style={{ display: 'flex', flexDirection: 'row', gap: '10px', justifyContent: 'space-between', fontFamily: "'Jost Variable', Jost, sans-serif" }}>
 						<SummaryLengthSelector value={summaryLength} onSelect={handleLengthChange} disabled={false} />
 						<LanguageSelector onSelectionChange={handleLanguageChange} disabled={false} />
 					</div>
@@ -406,7 +406,14 @@ export default function Record() {
 				)}
 			</div>
 
+			{!isUiLocked && audioSource !== 'file' && (
+				<p style={{ margin: '10px 0 0', textAlign: 'center', fontSize: '12px', color: currentThemeColors.secondaryText }}>
+					Make sure everyone in the meeting agrees to being recorded.
+				</p>
+			)}
+
 			{!isUiLocked && <HistoryList history={history} onTitleUpdate={handleTitleUpdate} onDelete={handleMeetingDelete} />}
+			<LegalFooter theme={currentThemeColors} />
 		</div>
 	)
 }

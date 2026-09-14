@@ -19,9 +19,8 @@ export interface Feedback {
 	status: string
 }
 
-export interface MeetingWithFeedback {
-	id: string
-	title: string
+/** One meeting's feedback, with nothing that could identify the meeting. */
+export interface FeedbackLogEntry {
 	started_at: string
 	feedback: Feedback[]
 }
@@ -30,8 +29,6 @@ export interface FeatureSuggestion {
 	id: number
 	suggestion: string
 	submitted_at: string
-	meeting_id: string
-	meeting_title: string
 	status: string
 }
 export interface DashboardStats {
@@ -40,7 +37,7 @@ export interface DashboardStats {
 	device_distribution: { [key: string]: number }
 	feedback_counts: { [key: string]: number }
 	feature_suggestions: FeatureSuggestion[]
-	meetings_with_feedback: MeetingWithFeedback[]
+	feedback_log: FeedbackLogEntry[]
 	interesting_facts: InterestingFacts
 	length_distribution: { [key: string]: number }
 	language_distribution: { [key: string]: number }

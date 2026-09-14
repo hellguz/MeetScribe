@@ -214,10 +214,10 @@ const RecordingStatus: React.FC<RecordingStatusProps> = ({
 				</div>
 			</div>
 
-			<div style={{ minHeight: '42px' }}>
-				{!isUiLocked ? (
-					<p style={instructionStyle}>Choose your audio source and click “Start Recording” to begin.</p>
-				) : isRecording ? (
+			{/* Idle needs no instruction: the source picker and the big green
+			    button say it. The box only speaks once something is happening. */}
+			<div style={{ minHeight: isUiLocked ? '42px' : 0 }}>
+				{!isUiLocked ? null : isRecording ? (
 					<>
 						<p style={instructionStyle}>Live transcript will appear above as audio is processed.</p>
 						{audioSource !== 'file' && wakeLockStatus === 'active' && (
