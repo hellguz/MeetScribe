@@ -56,6 +56,18 @@ _groq_client: Groq | None = (
 _anthropic_client: anthropic.Anthropic = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
+def response_text(response) -> str:
+    """The text of a Messages response, ignoring non-text blocks.
+
+    With an `output_config` effort setting the model may emit a thinking
+    block first, so `content[0]` is not reliably the answer - reading
+    `.text` off it raised AttributeError and lost whole summaries.
+    """
+    return "\n".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+
+
 def get_db_engine():
     global _db_engine_instance
     if _db_engine_instance is None:
@@ -236,7 +248,7 @@ Based on the content, generate the title now.
 
 {title_prompt}"""}],
         )
-        generated_title = response.content[0].text.strip().strip('"')
+        generated_title = response_text(response).strip('"')
         LOGGER.info("Generated meeting title: '%s'", generated_title)
         return generated_title
     except Exception as e:
@@ -391,7 +403,10 @@ def summarise_transcript_in_worker(
             output_config={"effort": "low"},
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text.strip()
+        summary = response_text(response)
+        if not summary:
+            raise RuntimeError("Summariser returned no text")
+        return summary
     except Exception as e:
         LOGGER.error("Summary generation failed: %s", e, exc_info=True)
         return "Error: Summary generation failed."
@@ -1176,11 +1191,7 @@ Only return the translated text.
 {text}
 </text_to_translate>"""}],
     )
-    # Join every text block: with an effort setting the first block is not
-    # guaranteed to be the answer, and `content[0].text` raised on anything else.
-    translated = "\n".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    ).strip()
+    translated = response_text(response)
     if not translated:
         raise RuntimeError(f"Translator returned no text for target language {target_language!r}")
     return translated
