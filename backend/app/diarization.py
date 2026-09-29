@@ -230,15 +230,35 @@ def _prune_minor_speakers(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
 
 def diarize_file(raw_path: Path) -> tuple[list[SpeakerTurn], int]:
     """Diarize a raw float32 mono stream. Returns (turns, speaker_count)."""
-    samples = np.fromfile(raw_path, dtype=np.float32)
-    if samples.size == 0:
+    n_samples = raw_path.stat().st_size // 4
+    if n_samples == 0:
         return [], 0
+
+    # Every copy has a ceiling. Past it, skip rather than take the host down:
+    # the caller falls back to the plain transcript, which costs speaker labels
+    # but keeps the summary -- and keeps every other container on the box alive.
+    seconds = n_samples / SAMPLE_RATE
+    if seconds > settings.diarization_max_audio_seconds:
+        LOGGER.warning(
+            "Recording is %.0f min, over the %.0f min diarization ceiling; "
+            "keeping the plain transcript.",
+            seconds / 60,
+            settings.diarization_max_audio_seconds / 60,
+        )
+        return [], 0
+
+    # Mapped, not read. `np.fromfile` would pull the whole recording into
+    # anonymous memory -- 230 MB per recorded hour, and the OOM-killer scores
+    # processes on exactly that. A memmap leaves those pages file-backed and
+    # reclaimable, so only sherpa's own copy counts against us.
+    samples = np.memmap(raw_path, dtype=np.float32, mode="r", shape=(n_samples,))
 
     slot = _acquire_diarizer()
     try:
         result = slot.process(samples)
     finally:
         _release_diarizer(slot)
+        del samples  # drop the mapping before the turns list is built
 
     turns = [
         SpeakerTurn(start=seg.start, end=seg.end, speaker=seg.speaker)

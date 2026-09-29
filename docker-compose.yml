@@ -11,6 +11,15 @@ services:
       - whisper-cache:/root/.cache
     env_file: [.env]
     stop_grace_period: 1m
+    # A crash must not leave prod down until someone notices. On 2026-09-29 the
+    # backend was OOM-killed and stayed dead for three hours because of this.
+    restart: unless-stopped
+    # Bound the blast radius. Without a ceiling the process grows until the
+    # *host* OOM-killer fires, which picks its own victim -- it has taken out
+    # other stacks on this box. With a limit, only this container dies, and the
+    # restart policy brings it straight back.
+    mem_limit: 3g
+    memswap_limit: 3g
 
   frontend:
     build:
@@ -25,6 +34,7 @@ services:
       - "4132:80"
     env_file: [.env]
     depends_on: [backend]
+    restart: unless-stopped
 
 volumes:
   whisper-cache: {}

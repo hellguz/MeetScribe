@@ -86,8 +86,15 @@ class Settings(BaseSettings):
     # ONNX threads per diarization job. Kept small so several concurrent
     # meetings can share a modest CPU without thrashing.
     diarization_threads: int = 2
-    # How many meetings may diarize at once; the rest queue.
-    diarization_max_concurrent: int = 2
+    # How many meetings may diarize at once; the rest queue. Each concurrent
+    # job holds a copy of its whole recording, so this multiplies peak memory --
+    # raise it only alongside the container's mem_limit.
+    diarization_max_concurrent: int = 1
+    # Refuse to diarize past this length. sherpa's offline API wants the entire
+    # recording in one array (~230 MB per hour, plus its own copy), so an
+    # unbounded meeting is an unbounded allocation. Past the ceiling we keep the
+    # plain transcript instead of risking the process.
+    diarization_max_audio_seconds: float = 4 * 60 * 60
 
 
 @lru_cache

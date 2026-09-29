@@ -477,8 +477,17 @@ def finalize_meeting_processing(
         if mtg.processing_total is None:
             mtg.processing_total = 2
         mtg.processing_stage = "diarizing"
+        # Claim the pass BEFORE running it, not after. The flag used to be set
+        # only on the way out (below), which left a multi-minute window where a
+        # second caller re-read it as False and started its own diarization of
+        # the same audio. That is not merely wasted work: each run holds the
+        # whole recording in RAM, so two at once doubles peak memory. On
+        # 2026-09-29 a 108-minute meeting finalized twice within two seconds
+        # (the final chunk arriving, and a history sync regenerating), the
+        # backend reached ~1.9 GB RSS and the host OOM-killer killed it.
+        mtg.diarization_attempted = True
         db.add(mtg)
-        db.commit()  # publish the stage before a multi-minute job
+        db.commit()  # publish the stage and the claim before a multi-minute job
 
         chunk_rows = db.exec(
             select(
@@ -541,8 +550,10 @@ def finalize_meeting_processing(
     mtg.processing_stage = None
     mtg.processing_total = None
     # Mark it seen even when diarization produced nothing (silent recording,
-    # empty transcript): the pipeline had its chance, so the "find speakers"
-    # hint must not keep offering a re-run that would change nothing.
+    # empty transcript) or was skipped entirely: the pipeline had its chance, so
+    # the "find speakers" hint must not keep offering a re-run that would change
+    # nothing. A diarizing run already claimed the flag above; this covers the
+    # paths that never entered that branch.
     if diarization.is_enabled() and not mtg.client_processing:
         mtg.diarization_attempted = True
     mtg.done = True
