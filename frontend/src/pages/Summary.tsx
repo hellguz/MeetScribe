@@ -293,8 +293,9 @@ export default function Summary() {
 			})
 			return
 		}
-		const targetLanguage = newState.mode === 'custom' ? newState.lastCustomLanguage : newState.mode
-		await handleTranslate(targetLanguage, newState.mode)
+		// Only 'custom' names a language; 'auto' and 'english' are modes the
+		// server resolves ('auto' from the transcript's own language).
+		await handleTranslate(newState.mode, newState.mode === 'custom' ? newState.lastCustomLanguage : null)
 	}
 
 	const handleDelete = async () => {

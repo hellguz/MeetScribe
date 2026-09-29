@@ -276,7 +276,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 	 * re-fetch below the page sat on a stale summary until a manual refresh.
 	 */
 	const handleTranslate = useCallback(
-		async (targetLanguage: string, languageMode: string) => {
+		async (languageMode: string, customLanguage: string | null) => {
 			if (!mid) return
 			setIsRegenerating(true)
 			setError(null)
@@ -284,7 +284,7 @@ export const useMeetingSummary = ({ mid, languageState, setLanguageState }: UseM
 				const res = await fetch(apiUrl(`/api/meetings/${mid}/translate`), {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ target_language: targetLanguage, language_mode: languageMode }),
+					body: JSON.stringify({ language_mode: languageMode, target_language: customLanguage }),
 				})
 				if (!res.ok) throw new Error('Could not start translation.')
 				setIsProcessing(true)

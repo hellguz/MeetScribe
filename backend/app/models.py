@@ -367,10 +367,14 @@ class MeetingConfigUpdate(SQLModel):
 
 
 class MeetingTranslatePayload(SQLModel):
-    """Payload for translating a meeting."""
+    """Payload for translating a meeting.
 
-    target_language: str
+    `target_language` only carries meaning for the 'custom' mode; 'auto' and
+    'english' resolve server-side, so it is optional.
+    """
+
     language_mode: str
+    target_language: str | None = None
 
 
 class MeetingSection(SQLModel, table=True):

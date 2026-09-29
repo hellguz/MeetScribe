@@ -1226,8 +1226,16 @@ def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
     """
     Triggers a translation of the meeting summary to a new language.
     """
-    target_language = payload.target_language
     language_mode = payload.language_mode
+    if language_mode not in ("auto", "english", "custom"):
+        raise HTTPException(status_code=400, detail=f"Unknown language mode {language_mode!r}")
+
+    # Only 'custom' carries a language name; for 'auto' and 'english' the mode
+    # itself decides, and older clients send the mode string here ("auto") —
+    # which must never reach the translator as a language.
+    custom_language = payload.target_language if language_mode == "custom" else None
+    if language_mode == "custom" and not (custom_language or "").strip():
+        raise HTTPException(status_code=400, detail="A custom language mode needs a target language.")
 
     with Session(engine) as db:
         mtg = db.get(Meeting, mid)
@@ -1235,15 +1243,16 @@ def translate_meeting(mid: uuid.UUID, payload: MeetingTranslatePayload):
             raise HTTPException(status_code=404, detail="Meeting not found")
 
         mtg.summary_language_mode = language_mode
-        mtg.summary_custom_language = (
-            target_language if language_mode == "custom" else None
-        )
+        mtg.summary_custom_language = custom_language
         mtg.done = False  # Mark as processing so the frontend polls for completion
         db.add(mtg)
         db.commit()
 
-        _executor.submit(tasks.translate_meeting_markdown, str(mid), target_language)
-        LOGGER.info(f"Queued translation task for meeting {mid} to {target_language}")
+        _executor.submit(tasks.translate_meeting_markdown, str(mid), language_mode, custom_language)
+        LOGGER.info(
+            "Queued translation task for meeting %s (mode=%s, language=%s)",
+            mid, language_mode, custom_language or "auto-detected",
+        )
 
     return {"ok": True, "message": "Translation task queued."}
 

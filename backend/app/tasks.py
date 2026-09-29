@@ -56,6 +56,18 @@ _groq_client: Groq | None = (
 _anthropic_client: anthropic.Anthropic = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
+def response_text(response) -> str:
+    """The text of a Messages response, ignoring non-text blocks.
+
+    With an `output_config` effort setting the model may emit a thinking
+    block first, so `content[0]` is not reliably the answer - reading
+    `.text` off it raised AttributeError and lost whole summaries.
+    """
+    return "\n".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+
+
 def get_db_engine():
     global _db_engine_instance
     if _db_engine_instance is None:
@@ -236,7 +248,7 @@ Based on the content, generate the title now.
 
 {title_prompt}"""}],
         )
-        generated_title = response.content[0].text.strip().strip('"')
+        generated_title = response_text(response).strip('"')
         LOGGER.info("Generated meeting title: '%s'", generated_title)
         return generated_title
     except Exception as e:
@@ -391,7 +403,10 @@ def summarise_transcript_in_worker(
             output_config={"effort": "low"},
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text.strip()
+        summary = response_text(response)
+        if not summary:
+            raise RuntimeError("Summariser returned no text")
+        return summary
     except Exception as e:
         LOGGER.error("Summary generation failed: %s", e, exc_info=True)
         return "Error: Summary generation failed."
@@ -1129,7 +1144,33 @@ def generate_summary_only(meeting_id_str: str) -> None:
                 time.sleep(60)
 
 
+def resolve_target_language(
+    language_mode: str | None,
+    custom_language: str | None,
+    text_for_detection: str | None,
+) -> str:
+    """Turn a language *mode* into an actual language name.
+
+    'auto' and 'english' are UI modes, not languages: handing them to the
+    translator verbatim asked the model to "translate into auto", which is
+    what produced summaries reading "Error: Translation to auto failed."
+    Mirrors the resolution `build_summary_prompt` already does, so switching
+    language on a finished summary lands on the same language a fresh
+    summary would have used.
+    """
+    if language_mode == "custom" and custom_language and custom_language.strip():
+        return custom_language.strip()
+    if language_mode == "english":
+        return "English"
+    return detect_language_local((text_for_detection or "")[:2000])
+
+
 def translate_text(text: str, target_language: str, context: str | None) -> str:
+    """Translate `text`, or raise — never return an error string.
+
+    The caller writes the result straight back into `summary_markdown`, so a
+    failure message returned here would replace the user's whole summary.
+    """
     if not text or not text.strip():
         return text
     context_prompt = ""
@@ -1137,12 +1178,11 @@ def translate_text(text: str, target_language: str, context: str | None) -> str:
         context_prompt = (
             f"Use this context for consistent terminology: <context>{context}</context>"
         )
-    try:
-        response = _anthropic_client.messages.create(
-            model=settings.summary_model,
-            max_tokens=8096,
-            output_config={"effort": "low"},
-            messages=[{"role": "user", "content": f"""Translate the following text into {target_language}.
+    response = _anthropic_client.messages.create(
+        model=settings.summary_model,
+        max_tokens=8096,
+        output_config={"effort": "low"},
+        messages=[{"role": "user", "content": f"""Translate the following text into {target_language}.
 Maintain original formatting (like markdown headers and lists).
 {context_prompt}
 Only return the translated text.
@@ -1150,21 +1190,28 @@ Only return the translated text.
 <text_to_translate>
 {text}
 </text_to_translate>"""}],
-        )
-        return response.content[0].text.strip()
-    except Exception as e:
-        LOGGER.error("Text translation failed: %s", e, exc_info=True)
-        return f"Error: Translation to {target_language} failed."
+    )
+    translated = response_text(response)
+    if not translated:
+        raise RuntimeError(f"Translator returned no text for target language {target_language!r}")
+    return translated
 
 
-def translate_meeting_markdown(meeting_id_str: str, target_language: str) -> None:
-    """Translates the full summary_markdown of a meeting to a new language."""
+def translate_meeting_markdown(
+    meeting_id_str: str,
+    language_mode: str,
+    custom_language: str | None = None,
+) -> None:
+    """Translate a meeting's summary_markdown into the language `language_mode` asks for.
+
+    Takes the mode rather than a language name so 'auto' can be resolved here,
+    where the transcript is available, exactly as summarisation resolves it.
+    """
     engine = get_db_engine()
     meeting_id = uuid.UUID(meeting_id_str)
 
     for attempt in range(3):
         try:
-            LOGGER.info("Starting markdown translation for meeting %s to %s", meeting_id, target_language)
             with Session(engine) as db:
                 meeting = db.get(Meeting, meeting_id)
                 if not meeting:
@@ -1173,6 +1220,33 @@ def translate_meeting_markdown(meeting_id_str: str, target_language: str) -> Non
 
                 if not meeting.summary_markdown:
                     LOGGER.warning("No summary markdown to translate for meeting %s.", meeting_id)
+                    meeting.done = True
+                    db.add(meeting)
+                    db.commit()
+                    return
+
+                # For 'auto' the meeting's own language is the target, so detect
+                # it from the transcript — falling back to the summary itself for
+                # meetings stored without one.
+                target_language = resolve_target_language(
+                    language_mode,
+                    custom_language,
+                    meeting.transcript_text or meeting.summary_markdown,
+                )
+                LOGGER.info(
+                    "Starting markdown translation for meeting %s to %s (mode=%s)",
+                    meeting_id, target_language, language_mode,
+                )
+
+                if language_mode == "auto" and detect_language_local(
+                    meeting.summary_markdown[:2000]
+                ) == target_language:
+                    # Already in the meeting's own language: re-translating it
+                    # would only burn a model call and risk degrading the text.
+                    LOGGER.info(
+                        "Meeting %s summary is already in %s, skipping translation.",
+                        meeting_id, target_language,
+                    )
                     meeting.done = True
                     db.add(meeting)
                     db.commit()
@@ -1194,7 +1268,9 @@ def translate_meeting_markdown(meeting_id_str: str, target_language: str) -> Non
             if attempt < 2:
                 time.sleep(60)
 
-    # Ensure meeting is marked done even if all attempts failed
+    # Every attempt failed. Mark the meeting done again so the frontend stops
+    # polling — the original summary stays exactly as it was; a failed
+    # translation must never cost the user their summary.
     try:
         with Session(engine) as db:
             meeting = db.get(Meeting, meeting_id)
@@ -1203,4 +1279,4 @@ def translate_meeting_markdown(meeting_id_str: str, target_language: str) -> Non
                 db.add(meeting)
                 db.commit()
     except Exception:
-        pass
+        LOGGER.exception("Could not reset done flag for meeting %s after failed translation.", meeting_id)
