@@ -23,8 +23,8 @@ export interface PromptTemplates {
 	context_wrapper: string
 }
 
-export type SummaryMode = 'briefing' | 'essence' | 'narrative' | 'minutes'
-const MODES: SummaryMode[] = ['briefing', 'essence', 'narrative', 'minutes']
+export type SummaryMode = 'briefing' | 'essence' | 'recap' | 'narrative' | 'minutes'
+const MODES: SummaryMode[] = ['briefing', 'essence', 'recap', 'narrative', 'minutes']
 
 /**
  * franc returns ISO 639-3; the server's `detect_language_local` uses
