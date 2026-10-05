@@ -337,7 +337,7 @@ Critical context from the user — use as source of truth for names, projects, a
 """
 
     # Map legacy / unknown modes to narrative
-    mode = summary_length if summary_length in ("briefing", "essence", "narrative", "minutes") else "narrative"
+    mode = summary_length if summary_length in ("briefing", "essence", "recap", "narrative", "minutes") else "narrative"
 
     date_str = meeting_date or dt.datetime.utcnow().strftime("%Y-%m-%d")
     duration_str = f"~{duration_seconds // 60} min" if duration_seconds else "unknown"
@@ -345,6 +345,7 @@ Critical context from the user — use as source of truth for names, projects, a
     template_map = {
         "briefing": P.BRIEFING,
         "essence": P.ESSENCE,
+        "recap": P.RECAP,
         "narrative": P.NARRATIVE,
         "minutes": P.MINUTES,
     }

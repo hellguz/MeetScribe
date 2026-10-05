@@ -31,6 +31,17 @@ interface ChangelogEntry {
  */
 const CHANGELOG: ChangelogEntry[] = [
 	{
+		when: 'October 2026',
+		highlights: [
+			{
+				icon: '📝',
+				title: 'Recap: the summary you would post to the team',
+				body: 'A new summary style. One short paragraph per topic, each with an emoji header, then a list of to-dos. Paste it straight into Slack or an email.',
+			},
+		],
+		lines: ['🎨 Emoji in summary headings now show in full colour instead of greyed out.'],
+	},
+	{
 		when: 'September 2026',
 		highlights: [
 			{

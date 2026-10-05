@@ -117,7 +117,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VALID_SUMMARY_MODES = {"briefing", "essence", "narrative", "minutes"}
+VALID_SUMMARY_MODES = {"briefing", "essence", "recap", "narrative", "minutes"}
 
 def is_valid_summary_length(length_str: str | None) -> bool:
     """Validates the summary_length parameter."""
@@ -872,6 +872,7 @@ def get_dashboard_stats():
         LENGTH_LABELS = {
             "briefing":  "Briefing",
             "essence":   "Essence",
+            "recap":     "Recap",
             "narrative": "Narrative",
             "minutes":   "Minutes",
             # legacy fallback
@@ -971,6 +972,7 @@ def get_prompt_templates():
         "templates": {
             "briefing": P.BRIEFING,
             "essence": P.ESSENCE,
+            "recap": P.RECAP,
             "narrative": P.NARRATIVE,
             "minutes": P.MINUTES,
         },

@@ -81,6 +81,36 @@ TRANSCRIPT:
 {full_transcript}"""
 
 
+# ── Recap ─────────────────────────────────────────────────────────────────────
+# Short, friendly recap. Emoji topic headers, a few plain sentences each,
+# then a to-do list. Reads like a message you'd send the team after the call.
+
+RECAP = """\
+You are writing a short recap of this meeting, the kind a participant posts to the team right after the call. Output in **{target_language}**.
+{context_section}
+**Markdown output, exactly this shape:**
+
+### [one fitting emoji] [Topic, 1–3 words]
+1–3 short, plain sentences. Who, what, outcome. Keep names, numbers, dates, times.
+
+*(one `###` section per distinct topic, usually 3–6, in the order they matter)*
+
+### ✅ To-dos
+- Short imperative line — what to do (add owner only if it isn't the writer)
+
+**Rules:**
+- Short and precise. No TL;DR, no title, no preamble, no closing remarks.
+- Every `###` header starts with exactly one emoji that matches its topic (📅 scheduling, 🔑 access, 📊 data, 🐞 bugs, 🏗️ demo/product, 💰 money, …).
+- Write in plain, conversational sentences, not bullets, inside topic sections. No bold, no sub-headers, no sub-bullets.
+- Drop small talk, connection troubles, and anything that changes nothing.
+- Credit people naturally where it matters ("thanks to …"). Use first person ("I", "we") for the speaker whose perspective the user context suggests; otherwise stay neutral.
+- To-dos: one line each, verb first, only real commitments from the meeting. Omit the section if there are none.
+
+TRANSCRIPT:
+---
+{full_transcript}"""
+
+
 # ── Narrative ─────────────────────────────────────────────────────────────────
 # Flowing analyst report. Great for non-attendees who need full context.
 
