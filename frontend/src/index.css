@@ -90,6 +90,9 @@ body {
 	line-height: 1.25;
 }
 
+/* Headings are dimmed through their text colour, not `opacity`: opacity
+ * fades colour emoji too, and Recap summaries lead every header with one. */
+
 /* Top-level heading (## Title) */
 .markdown-content h2 {
 	font-size: 1.15em;
@@ -97,7 +100,7 @@ body {
 	letter-spacing: 0.01em;
 	margin: 1.8em 0 0.5em;
 	text-transform: uppercase;
-	opacity: 0.9;
+	color: color-mix(in srgb, currentColor 90%, transparent);
 }
 
 /* Section headings (### Topic) */
@@ -107,7 +110,7 @@ body {
 	letter-spacing: 0.01em;
 	margin: 1.8em 0 0.5em;
 	text-transform: uppercase;
-	opacity: 0.7;
+	color: color-mix(in srgb, currentColor 70%, transparent);
 }
 
 /* Subtitle / context line (#### Project — Team) */
@@ -115,7 +118,7 @@ body {
 	font-size: 0.88em;
 	font-weight: 500;
 	margin: 0.2em 0 0.8em;
-	opacity: 0.6;
+	color: color-mix(in srgb, currentColor 60%, transparent);
 }
 
 .markdown-content p {
