@@ -14,12 +14,29 @@ services:
     # A crash must not leave prod down until someone notices. On 2026-09-29 the
     # backend was OOM-killed and stayed dead for three hours because of this.
     restart: unless-stopped
-    # Bound the blast radius. Without a ceiling the process grows until the
-    # *host* OOM-killer fires, which picks its own victim -- it has taken out
-    # other stacks on this box. With a limit, only this container dies, and the
-    # restart policy brings it straight back.
-    mem_limit: 3g
+    # Bound the blast radius, and bound it *below* what makes the host panic.
+    # A global OOM picks whichever process is fattest, ignoring per-container
+    # limits -- on 2026-10-08 that was this backend at 1.17 GB, well under the
+    # 3g ceiling it had at the time. The ceiling has to be low enough that this
+    # container's own cgroup kills it first: a targeted kill plus the restart
+    # policy is a blip, a global OOM is a lottery among every stack on the box.
+    # Legitimate peak is ~1.2 GB (a 110-minute meeting), so 2g leaves headroom
+    # without putting the host in danger. The extra 1g of memswap_limit lets a
+    # spike page out instead of dying at the line.
+    mem_limit: 2g
     memswap_limit: 3g
+    # Tell the kernel this container is a preferred victim relative to the
+    # databases and photo libraries sharing the box. If something must die when
+    # memory runs out, better the thing that restarts clean in 8 seconds.
+    oom_score_adj: 500
+    # The restart policy only catches a dead process. This catches a live one
+    # that has stopped serving.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=5).status==200 else 1)\""]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 90s
 
   frontend:
     build:

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sqlite3
 import re
+import threading
 
 from faster_whisper import WhisperModel
 from groq import Groq
@@ -426,7 +427,41 @@ def rebuild_full_transcript(
     return transcript_text, len(chunks)
 
 
+# One finalize per meeting at a time. Callers race as a matter of course: the
+# final chunk landing and a context update both arrive within a second or two,
+# and the janitor can pile on. Two runs duplicate an LLM call and hold two
+# copies of the transcript and audio, which is how the backend got fat enough
+# to be the host OOM-killer's pick on 2026-09-29 and again on 2026-10-08.
+# Every caller is in this process's executor, so an in-process claim suffices.
+_finalizing: set[uuid.UUID] = set()
+_finalizing_lock = threading.Lock()
+
+
 def finalize_meeting_processing(
+    db: Session, mtg: Meeting, *, rediarize: bool = False
+) -> None:
+    """Serialized entry point for `_finalize_meeting_processing`.
+
+    A second caller for a meeting already being finalized returns immediately
+    rather than queueing: whatever it wanted done is what the in-flight run is
+    already doing.
+    """
+    with _finalizing_lock:
+        if mtg.id in _finalizing:
+            LOGGER.info(
+                "Meeting %s is already being finalized; skipping duplicate run.",
+                mtg.id,
+            )
+            return
+        _finalizing.add(mtg.id)
+    try:
+        _finalize_meeting_processing(db, mtg, rediarize=rediarize)
+    finally:
+        with _finalizing_lock:
+            _finalizing.discard(mtg.id)
+
+
+def _finalize_meeting_processing(
     db: Session, mtg: Meeting, *, rediarize: bool = False
 ) -> None:
     """Build the transcript, summarize it, and title the meeting.
